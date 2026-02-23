@@ -22,6 +22,8 @@ CREATE INDEX IF NOT EXISTS idx_rj ON rows(job_id,idx);
 CREATE INDEX IF NOT EXISTS idx_rs ON rows(job_id,status);
 CREATE INDEX IF NOT EXISTS idx_ju ON jobs(user_id);`);
 try{db.exec(`ALTER TABLE jobs ADD COLUMN user_id INTEGER DEFAULT 0`);}catch{}
+try{db.exec(`ALTER TABLE jobs ADD COLUMN sections_json TEXT`);}catch{}
+try{db.exec(`ALTER TABLE rows ADD COLUMN quality INT DEFAULT 0`);}catch{}
 
 // ─── Auth helpers ───
 function hashPw(pw){const salt=randomBytes(16).toString('hex');return salt+':'+scryptSync(pw,salt,64).toString('hex');}
@@ -40,7 +42,7 @@ const S={
   getUserKey:db.prepare(`SELECT key_value FROM user_keys WHERE user_id=? AND key_name=?`),
   delUserKey:db.prepare(`DELETE FROM user_keys WHERE user_id=? AND key_name=?`),
   getUserKeys:db.prepare(`SELECT key_name FROM user_keys WHERE user_id=?`),
-  iJ:db.prepare(`INSERT INTO jobs(user_id,name,provider,template_id,system_prompt,use_web_search,col_map,total_rows)VALUES(?,?,?,?,?,?,?,?)`),
+  iJ:db.prepare(`INSERT INTO jobs(user_id,name,provider,template_id,system_prompt,use_web_search,col_map,total_rows,sections_json)VALUES(?,?,?,?,?,?,?,?,?)`),
   uJ:db.prepare(`UPDATE jobs SET succeeded=?,failed=?,status=?,total_in=?,total_out=?,total_cr=?,total_cw=?,cost=?,elapsed=?,updated_at=datetime('now')WHERE id=?`),
   gJ:db.prepare(`SELECT*FROM jobs WHERE id=?`),
   lJ:db.prepare(`SELECT id,name,provider,template_id,total_rows,succeeded,failed,status,cost,elapsed,created_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 50`),
@@ -169,6 +171,23 @@ prompt:`You are a recruiting industry researcher. For each company:
 4. **Culture & Employer Brand** - Glassdoor rating, review themes, remote policy, perks/concerns
 5. **Hiring Pain Points** (top 2-3): Scaling post-funding, high turnover, competing for talent, niche roles, leadership building, geographic limits
 6. **Outreach Recommendation** - Best angle for recruiter/staffing firm, sample opening line`},
+'website-audit':{name:'Website Services Prospecting',icon:'\u{1F310}',desc:'Website audit, technical issues, and pain points for web agency outreach',
+sections:[
+  {key:'company_snapshot',label:'Company Snapshot'},
+  {key:'website_audit',label:'Website Audit'},
+  {key:'issue_1',label:'Issue 1'},
+  {key:'issue_2',label:'Issue 2'},
+  {key:'issue_3',label:'Issue 3'},
+  {key:'pain_points',label:'Pain Points'}
+],
+prompt:`You are an expert B2B sales researcher selling website services (design, development, SEO, security, performance optimization). For each prospect, provide:
+1. **Company Snapshot** (2-3 sentences) - What they do, who they serve, approximate size
+2. **Website Audit** - Visit their website and provide a technical surface-level analysis covering SEO health (meta tags, headings, structured data), security indicators (HTTPS, mixed content), and performance observations (page weight, render speed, mobile responsiveness). Be specific with what you observe.
+3. **Issue 1** - The single most impactful technical website issue you found. Be very specific: name the exact problem, where it appears, and the business impact (e.g. "Missing H1 tag on homepage forces Google to guess page topic, likely costing organic rankings for their primary service keywords").
+4. **Issue 2** - The second most impactful website issue. Same level of specificity.
+5. **Issue 3** - The third most impactful website issue. Same level of specificity.
+6. **Pain Points** (2-3) - Specific operational challenges this business likely faces. Be specific: not "need better marketing" but "as a 15-person agency scaling past founder-led sales, they likely struggle with consistent lead generation beyond referrals."
+Be specific and actionable. Generic research is useless for cold email. Every observation should reference something concrete from their actual website or business.`},
 'custom':{name:'Custom Prompt',icon:'\u270F\uFE0F',desc:'Write your own research prompt',
 sections:[],
 prompt:`You are an expert B2B sales researcher. For each prospect, provide:\n1. **Company Overview** (2-3 sentences)\n2. **Recent News & Activity** (2-3 points)\n3. **Pain Points & Opportunities** (2-3 points)\n4. **Personalization Hooks** (2-3 suggestions)\n5. **Outreach Recommendation**\nKeep responses concise but actionable.`}
@@ -254,9 +273,22 @@ function callLLM(p,prov,sys,web,apiKey){
 function extractSectionsFromPrompt(promptText){
   if(!promptText)return[];
   const sections=[];const seen=new Set();
+  const addSec=(rawLabel)=>{
+    const label=rawLabel.replace(/\*\*/g,'').replace(/\s*\(.*$/,'').replace(/[-:]+$/,'').trim();
+    if(!label||label.length<2||label.length>60)return;
+    const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+    if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
+  };
+  // Strategy 0: numbered items — any "N. <text>" line, strips all ** markers post-hoc
+  // Handles: "1. **Company Snapshot** (2-3 sentences)", "3. Issue 1 from **Website Audit**", "2. Website Audit - Provide..."
+  let m;
+  const numberedAny=/(?:^|\n)\s*\d+\.\s+(.+?)(?:\n|$)/g;
+  while((m=numberedAny.exec(promptText))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
   // Strategy 1: numbered bold — e.g. "1. **Company Snapshot**" or "1. **Company Snapshot** (2-3 sentences)"
+  sections.length=0;seen.clear();
   const numberedBold=/(?:^|\n)\s*(\d+)\.\s*\*\*(.+?)\*\*/g;
-  let m;while((m=numberedBold.exec(promptText))!==null){
+  while((m=numberedBold.exec(promptText))!==null){
     const label=m[2].replace(/\s*\(.*$/, '').replace(/[-:]+$/, '').trim();
     const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
     if(key&&!seen.has(key)){seen.add(key);sections.push({key,label});}
@@ -368,7 +400,21 @@ function extractSectionsFromOutput(rawText){
 function wrapPromptForStructuredOutput(systemPrompt,sections){
   if(!sections||!sections.length)return systemPrompt;
   const keyList=sections.map(s=>`"${s.key}"`).join(', ');
-  return systemPrompt+`\n\nIMPORTANT OUTPUT FORMAT: You MUST return your response as a valid JSON object with these exact keys: ${keyList}.\nEach value should be a string containing the content for that section.\nDo NOT wrap in markdown code fences. Return ONLY the raw JSON object, no other text before or after it.`;
+  const sampleObj={};sections.forEach(s=>{sampleObj[s.key]=`[Your ${s.label} content here]`;});
+  const sampleJson=JSON.stringify(sampleObj,null,2);
+  return systemPrompt+`
+
+CRITICAL OUTPUT FORMAT INSTRUCTIONS:
+1. Return your response as a single valid JSON object.
+2. Use EXACTLY these keys: ${keyList}
+3. Each value MUST be a plain text string. No markdown formatting (no **, no ##, no bullet points).
+4. If information for a section is unavailable, write "No data found" instead of leaving it empty.
+5. Do NOT wrap the JSON in code fences or add any text before or after it.
+6. Keep each section concise (2-4 sentences or a short paragraph) unless the prompt specifies otherwise.
+7. For lists, use semicolons to separate items (e.g. "Item 1; Item 2; Item 3").
+
+Example format:
+${sampleJson}`;
 }
 
 // Parse LLM response into structured sections (multi-layer, robust)
@@ -380,16 +426,32 @@ function parseStructuredResponse(rawText,sections){
   let cleaned=rawText.trim();
   // Strip markdown code fences
   cleaned=cleaned.replace(/^```(?:json)?\s*\n?/i,'').replace(/\n?\s*```\s*$/,'').trim();
+  const jsonVal=v=>{
+    if(typeof v==='string')return v.trim();
+    if(Array.isArray(v))return v.map(x=>typeof x==='string'?x.trim():JSON.stringify(x)).join('; ');
+    if(typeof v==='object'&&v!==null)return Object.entries(v).map(([k,x])=>`${k}: ${x}`).join('; ');
+    return String(v);
+  };
   try{
     const parsed=JSON.parse(cleaned);
     if(typeof parsed==='object'&&parsed!==null){
       const result={_raw:rawText,_parsed:true};
       let hits=0;
+      // Exact key match first
       for(const s of sections){
-        if(parsed[s.key]!==undefined){
-          result[s.key]=typeof parsed[s.key]==='string'?parsed[s.key].trim():JSON.stringify(parsed[s.key]);
-          hits++;
-        }else result[s.key]='';
+        if(parsed[s.key]!==undefined){result[s.key]=jsonVal(parsed[s.key]);hits++;}
+        else result[s.key]='';
+      }
+      if(hits>=Math.ceil(sections.length/2))return result;
+      // Fuzzy key match: normalize keys and try substring matching
+      const pKeys=Object.keys(parsed).filter(k=>!k.startsWith('_'));
+      const normLookup={};
+      for(const pk of pKeys)normLookup[pk.toLowerCase().replace(/[^a-z0-9]/g,'')]=pk;
+      for(const s of sections){
+        if(result[s.key])continue;
+        const normKey=s.key.replace(/[^a-z0-9]/g,'');
+        const match=normLookup[normKey]||pKeys.find(pk=>{const n=pk.toLowerCase().replace(/[^a-z0-9]/g,'');return n.includes(normKey)||normKey.includes(n);})||null;
+        if(match&&parsed[match]!==undefined){result[s.key]=jsonVal(parsed[match]);hits++;}
       }
       if(hits>=Math.ceil(sections.length/2))return result;
     }
@@ -443,6 +505,37 @@ function parseStructuredResponse(rawText,sections){
   return{_raw:rawText,_parsed:false};
 }
 
+// Quality scoring for research results (0-100)
+function scoreQuality(parsed,sections){
+  if(!parsed||!sections||!sections.length)return 0;
+  if(!parsed._parsed)return 10;
+  const filled=sections.filter(s=>parsed[s.key]&&parsed[s.key].trim().length>10);
+  const fillRate=filled.length/sections.length;
+  let score=0;
+  score+=fillRate*40; // section fill rate
+  const avgLen=filled.reduce((sum,s)=>sum+parsed[s.key].length,0)/Math.max(filled.length,1);
+  score+=Math.min(avgLen/100,1)*30; // content richness
+  score+=parsed._parsed?20:0; // parsed successfully
+  score+=fillRate===1?10:0; // no empty sections bonus
+  return Math.round(score);
+}
+
+// Sanitize cell value for sequencer-ready CSV (strip markdown, collapse lists)
+function sanitizeForCSV(text){
+  if(!text||typeof text!=='string')return'';
+  let s=text;
+  s=s.replace(/\*\*(.+?)\*\*/g,'$1');s=s.replace(/\*(.+?)\*/g,'$1');
+  s=s.replace(/__(.+?)__/g,'$1');s=s.replace(/_(.+?)_/g,'$1');
+  s=s.replace(/^#{1,6}\s+/gm,'');
+  s=s.replace(/(?:^|\n)\s*[-*+]\s+/g,'; ').replace(/^;\s*/,'');
+  s=s.replace(/(?:^|\n)\s*\d+[.)]\s+/g,'; ').replace(/^;\s*/,'');
+  s=s.replace(/\[([^\]]+)\]\([^)]+\)/g,'$1');
+  s=s.replace(/```[\s\S]*?```/g,'');s=s.replace(/`([^`]+)`/g,'$1');
+  s=s.replace(/\s+/g,' ').trim();
+  s=s.replace(/^[;,\s]+/,'').replace(/[;,\s]+$/,'');
+  return s;
+}
+
 // Safely parse research from DB (handles old string format + new JSON)
 function safeParseResearch(text){
   if(!text)return null;
@@ -450,13 +543,18 @@ function safeParseResearch(text){
   return{_raw:text,_parsed:false};
 }
 
-// Resolve sections for a job — tries template, prompt, then first result output
+// Resolve sections for a job — tries explicit, prompt, template default, then first result output
 function resolveSections(job,rows){
-  let secs=TEMPLATES[job.template_id]?.sections||[];
-  if(secs.length)return secs;
+  // Priority 1: explicitly stored sections (from section editor)
+  if(job.sections_json){try{const ex=JSON.parse(job.sections_json);if(Array.isArray(ex)&&ex.length>=2)return ex;}catch{}}
+  // Priority 2: always try extracting from the actual system prompt first
+  let secs=[];
   if(job.system_prompt)secs=extractSectionsFromPrompt(job.system_prompt);
   if(secs.length)return secs;
-  // Fallback: detect from first successful result
+  // Priority 3: fall back to template hardcoded sections ONLY if prompt is unedited
+  const tmpl=TEMPLATES[job.template_id];
+  if(tmpl?.sections?.length&&tmpl.prompt===job.system_prompt)return tmpl.sections;
+  // Priority 4: detect from first successful result
   const first=rows?rows.find(r=>r.status==='success'&&r.research):null;
   if(first){
     const parsed=safeParseResearch(first.research);
@@ -508,6 +606,12 @@ function buildPrompt(row,map,idx){
   if(map.rating&&cl(row[map.rating]))pr+=`\n**Rating:** ${cl(row[map.rating])}`;
   if(map.reviews&&cl(row[map.reviews]))pr+=`\n**Reviews:** ${cl(row[map.reviews])}`;
   if(map.notes&&cl(row[map.notes]))pr+=`\n**Additional Context:** ${cl(row[map.notes])}`;
+  // Include all unmapped CSV columns as additional context
+  const usedHeaders=new Set(Object.values(map).filter(Boolean));
+  for(const[header,value]of Object.entries(row)){
+    if(!usedHeaders.has(header)&&value&&value.trim()&&value.trim().length>1)
+      pr+=`\n**${header}:** ${cl(value)}`;
+  }
   pr+='\n\nUse web search to find the most current information.';
   return{company,prompt:pr};
 }
@@ -536,11 +640,13 @@ async function runJob(jobId){
 
   const t0=Date.now();
   // Shared counters — workers mutate these; all reads/writes are in the same JS thread (event loop) so no race conditions
-  let ok=job.succeeded,fail=job.failed,tIn=job.total_in,tOut=job.total_out,tCR=job.total_cr,tCW=job.total_cw;
+  let ok=job.succeeded,fail=job.failed,tIn=job.total_in,tOut=job.total_out,tCR=job.total_cr,tCW=job.total_cw,webCalls=0;
 
-  // Resolve sections for structured output
-  let jobSections=TEMPLATES[job.template_id]?.sections||[];
+  // Resolve sections for structured output — explicit > prompt > template default
+  let jobSections=[];
+  if(job.sections_json){try{const ex=JSON.parse(job.sections_json);if(Array.isArray(ex)&&ex.length>=2)jobSections=ex;}catch{}}
   if(!jobSections.length&&job.system_prompt)jobSections=extractSectionsFromPrompt(job.system_prompt);
+  if(!jobSections.length){const tmpl=TEMPLATES[job.template_id];if(tmpl?.sections?.length&&tmpl.prompt===job.system_prompt)jobSections=tmpl.sections;}
   let wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
   let sectionsDiscovered=jobSections.length>0;
 
@@ -556,7 +662,7 @@ async function runJob(jobId){
   // Flush updated job stats to DB periodically
   const flushStats=()=>{
     const elapsed=((Date.now()-t0)/1000)+job.elapsed;
-    const cost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+(tCW/1e6)*(prov.cacheWriteCost||0)+(tCR/1e6)*(prov.cacheReadCost||0);
+    const cost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+(tCW/1e6)*(prov.cacheWriteCost||0)+(tCR/1e6)*(prov.cacheReadCost||0)+(job.use_web_search?webCalls*(prov.webCostPerCall||0):0);
     S.uJ.run(ok,fail,'running',tIn,tOut,tCR,tCW,cost,elapsed,jobId);
   };
 
@@ -575,14 +681,33 @@ async function runJob(jobId){
             const detected=extractSectionsFromOutput(r.research);
             if(detected.length>=2){
               jobSections=detected;sectionsDiscovered=true;
+              wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
+              try{db.prepare('UPDATE jobs SET sections_json=? WHERE id=?').run(JSON.stringify(jobSections),jobId);}catch{}
               emit({type:'meta',sections:jobSections,templateId:job.template_id});
             }
           }
-          const structured=parseStructuredResponse(r.research,jobSections);
+          let structured=parseStructuredResponse(r.research,jobSections);
+          const quality=scoreQuality(structured,jobSections);
+          // Smart retry: if quality is low and we haven't quality-retried yet, try once more
+          if(quality<40&&retries<1&&jobSections.length>=2){
+            const emptySecs=jobSections.filter(s=>!structured[s.key]||structured[s.key].trim().length<5);
+            if(emptySecs.length>0){
+              retries++;
+              emit({type:'log',level:'warn',msg:`Low quality (${quality}%) for "${row.company}" — retrying with emphasis on: ${emptySecs.map(s=>s.label).join(', ')}`});
+              const retryP=row.prompt+'\n\nIMPORTANT: Your previous response was missing these sections: '+emptySecs.map(s=>s.label).join(', ')+'. Ensure ALL sections contain substantive information.';
+              try{
+                const r2=await callLLM(retryP,prov,wrappedSys,!!job.use_web_search,apiKey);
+                const s2=parseStructuredResponse(r2.research,jobSections);
+                const q2=scoreQuality(s2,jobSections);
+                if(q2>quality){structured=s2;tIn+=r2.inputTokens;tOut+=r2.outputTokens;tCR+=r2.cacheRead;tCW+=r2.cacheWrite;if(job.use_web_search)webCalls++;}
+              }catch{}
+            }
+          }
           const researchJson=JSON.stringify(structured);
           S.uR.run('success',researchJson,null,r.inputTokens,r.outputTokens,r.cacheRead,r.cacheWrite,jobId,row.idx);
-          ok++;tIn+=r.inputTokens;tOut+=r.outputTokens;tCR+=r.cacheRead;tCW+=r.cacheWrite;done=true;rlOk(job.provider);
-          emit({type:'result',idx:row.idx,company:row.company,status:'success',research:structured,inputTokens:r.inputTokens,outputTokens:r.outputTokens});
+          try{db.prepare('UPDATE rows SET quality=? WHERE job_id=? AND idx=?').run(quality,jobId,row.idx);}catch{}
+          ok++;tIn+=r.inputTokens;tOut+=r.outputTokens;tCR+=r.cacheRead;tCW+=r.cacheWrite;if(job.use_web_search)webCalls++;done=true;rlOk(job.provider);
+          emit({type:'result',idx:row.idx,company:row.company,status:'success',research:structured,inputTokens:r.inputTokens,outputTokens:r.outputTokens,quality});
           emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
           flushStats();
         }catch(err){
@@ -619,7 +744,7 @@ async function runJob(jobId){
 
   const fs=ctx.cancelled?'cancelled':(S.gP.all(jobId).length>0?'paused':'complete');
   const elapsed=((Date.now()-t0)/1000)+job.elapsed;
-  const cost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+(tCW/1e6)*(prov.cacheWriteCost||0)+(tCR/1e6)*(prov.cacheReadCost||0);
+  const cost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+(tCW/1e6)*(prov.cacheWriteCost||0)+(tCR/1e6)*(prov.cacheReadCost||0)+(job.use_web_search?webCalls*(prov.webCostPerCall||0):0);
   S.uJ.run(ok,fail,fs,tIn,tOut,tCR,tCW,cost,elapsed,jobId);
   emit({type:'done',status:fs,succeeded:ok,failed:fail,elapsed:elapsed.toFixed(1),cost:cost.toFixed(4),totalTokens:tIn+tOut,cacheRead:tCR,cacheWrite:tCW});
   actv.delete(jobId);
@@ -677,13 +802,14 @@ const server=createServer(async(req,res)=>{
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
-    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId}=JSON.parse(b);
+    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,explicitSections}=JSON.parse(b);
     const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
     const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers);if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
-    const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length);
+    const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=2?JSON.stringify(explicitSections):null;
+    const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
     const jobId=Number(result.lastInsertRowid);
     db.transaction(()=>{for(let i=0;i<rows.length;i++){const{company,prompt}=buildPrompt(rows[i],cm,i);S.iR.run(jobId,i,company,prompt);}})();
     runJob(jobId);json(res,{jobId,total:rows.length,provider:prov.name});
@@ -715,25 +841,61 @@ const server=createServer(async(req,res)=>{
   if(req.method==='POST'&&p.match(/^\/api\/cancel\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(job&&job.user_id===uid){const a2=actv.get(jid);if(a2)a2.cancelled=true;}json(res,{ok:true});return;}
 
+  // Row-level retry endpoint
+  if(req.method==='POST'&&p.match(/^\/api\/retry\/\d+\/\d+$/)){
+    const parts=p.split('/');const jid=parseInt(parts[3]);const ridx=parseInt(parts[4]);
+    const job=S.gJ.get(jid);if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
+    const prov=PROVDEFS[job.provider];if(!prov)return json(res,{error:'Unknown provider'},400);
+    const apiKey=userKey(uid,prov.envName);if(!apiKey)return json(res,{error:'No API key'},400);
+    const row=db.prepare('SELECT * FROM rows WHERE job_id=? AND idx=?').get(jid,ridx);
+    if(!row)return json(res,{error:'Row not found'},404);
+    try{
+      const jobSections=resolveSections(job,S.gR.all(jid));
+      const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
+      const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey);
+      const structured=parseStructuredResponse(r.research,jobSections);
+      const quality=scoreQuality(structured,jobSections);
+      const researchJson=JSON.stringify(structured);
+      S.uR.run('success',researchJson,null,r.inputTokens,r.outputTokens,r.cacheRead||0,r.cacheWrite||0,jid,ridx);
+      try{db.prepare('UPDATE rows SET quality=? WHERE job_id=? AND idx=?').run(quality,jid,ridx);}catch{}
+      json(res,{status:'success',research:structured,quality,inputTokens:r.inputTokens,outputTokens:r.outputTokens});
+    }catch(e){json(res,{error:e.message},500);}
+    return;}
+
   if(req.method==='GET'&&p.match(/^\/api\/export\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||job.user_id!==uid){res.writeHead(404);res.end('Not found');return;}const rows=S.gR.all(jid);
     let expSections=resolveSections(job,rows);
-    const esc=s=>'"'+String(s||'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
-    const hdrCols=['Company','Status'];
+    const escRaw=s=>'"'+String(s||'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
+    const escClean=s=>'"'+sanitizeForCSV(String(s||'')).replace(/"/g,'""')+'"';
+    // Build headers: Company + original mapped columns + Status + sections + Full Research + meta
+    const colMap=JSON.parse(job.col_map||'{}');
+    const origCols=Object.entries(colMap).filter(([role,hdr])=>hdr&&role!=='company').map(([role,hdr])=>({role,header:hdr}));
+    const hdrCols=['Company'];
+    origCols.forEach(c=>hdrCols.push(c.header));
+    hdrCols.push('Status');
     if(expSections.length)expSections.forEach(s=>hdrCols.push(s.label));
     else hdrCols.push('Research Brief');
     hdrCols.push('Full Research','Input Tokens','Output Tokens','Provider');
     const hdr=hdrCols.join(',');
     const csvR=rows.map(r=>{
-      let parsed=safeParseResearch(r.research);const cols=[esc(r.company),esc(r.status)];
+      let parsed=safeParseResearch(r.research);
+      const cols=[escRaw(r.company)];
+      // Extract original CSV columns from the stored prompt
+      origCols.forEach(c=>{
+        const roleLabel=c.role.charAt(0).toUpperCase()+c.role.slice(1);
+        const pat=new RegExp('\\*\\*'+roleLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?:[/A-Za-z]*):\\*\\*\\s*(.+?)(?:\\n|$)','i');
+        const m=r.prompt?r.prompt.match(pat):null;
+        cols.push(escRaw(m?m[1].trim():''));
+      });
+      cols.push(escRaw(r.status));
       // If sections exist but data wasn't pre-parsed, try parsing now from raw text
       if(expSections.length&&!parsed?._parsed&&parsed?._raw){
         parsed=parseStructuredResponse(parsed._raw,expSections);
       }
-      if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(esc(parsed[s.key]||'')));
+      if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
       else if(expSections.length)expSections.forEach(()=>cols.push('""'));
-      else cols.push(esc(parsed?._raw||r.error||''));
-      cols.push(esc(parsed?._raw||''),r.input_tokens||0,r.output_tokens||0,esc(job.provider));
+      else cols.push(escClean(parsed?._raw||r.error||''));
+      cols.push(escRaw(parsed?._raw||''),r.input_tokens||0,r.output_tokens||0,escRaw(job.provider));
       return cols.join(',');
     });
     res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="prospect_research_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*'});

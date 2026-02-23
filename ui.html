@@ -241,9 +241,24 @@ textarea.ta:focus{border-color:var(--pri)}
     <div class="panel-body" id="promptBody">
       <textarea class="ta" id="promptEdit" style="min-height:160px" oninput="promptDirty=true"></textarea>
       <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-        <button class="b b-pri b-sm" onclick="savePrompt()">Save</button>
+        <button class="b b-pri b-sm" onclick="savePrompt()">Apply</button>
         <button class="b b-ghost b-sm" onclick="resetPrompt()">Reset to template</button>
-        <span id="promptSaved" style="font-size:11px;color:var(--green);opacity:0;transition:opacity .3s">✓ Saved</span>
+        <span id="promptSaved" style="font-size:11px;color:var(--green);opacity:0;transition:opacity .3s">Applied</span>
+      </div>
+      <!-- Section Editor -->
+      <div style="margin-top:14px">
+        <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Output Columns (CSV)</div>
+        <div id="sectionList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input class="inp" id="addSectionInput" placeholder="Add column..." style="width:160px;font-size:12px;padding:4px 8px" onkeydown="if(event.key==='Enter')addSection()"/>
+          <button class="b b-ghost b-sm" onclick="addSection()">+ Add</button>
+          <button class="b b-ghost b-sm" onclick="autoDetectSections()">Auto-detect</button>
+        </div>
+      </div>
+      <!-- Column Preview -->
+      <div id="columnPreview" style="display:none;margin-top:10px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:6px">
+        <div style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">CSV Export Columns</div>
+        <div id="columnPreviewList" style="font-size:11px;color:var(--text);font-family:var(--mono);word-break:break-word"></div>
       </div>
     </div>
   </div>
@@ -343,15 +358,74 @@ function buildSelects(){
   const ps=document.getElementById('provSel');ps.innerHTML=Object.entries(providers).map(([id,p])=>'<option value="'+id+'"'+(id===selProv?' selected':'')+(p.hasKey?'':' disabled')+'>'+p.name+(p.hasKey?'':' (no key)')+'</option>').join('');
   autoSel();}
 function autoSel(){if(providers[selProv]?.hasKey)return;const f=Object.entries(providers).find(([,v])=>v.hasKey);if(f){selProv=f[0];document.getElementById('provSel').value=selProv;}}
-function pickTmpl(id){selTmpl=id;resetPrompt();if(csvText)refreshPreview(colMap);}
+function pickTmpl(id){selTmpl=id;
+  const saved=localStorage.getItem('pr_prompt_'+id);
+  customPrompt=saved||templates[selTmpl]?.prompt||'';
+  document.getElementById('promptEdit').value=customPrompt;promptDirty=false;updatePromptMeta();
+  if(typeof autoDetectSections==='function')autoDetectSections();
+  if(csvText)refreshPreview(colMap);}
 function pickProv(id){selProv=id;updateWS();updateCost();}
 
 // ─── Prompt helpers ───
 function savePrompt(){customPrompt=document.getElementById('promptEdit').value;promptDirty=false;
-  const s=document.getElementById('promptSaved');s.style.opacity='1';setTimeout(()=>s.style.opacity='0',1500);}
+  try{localStorage.setItem('pr_prompt_'+selTmpl,customPrompt);}catch{}
+  if(typeof autoDetectSections==='function')autoDetectSections();
+  const s=document.getElementById('promptSaved');s.style.opacity='1';setTimeout(()=>s.style.opacity='0',2000);}
 function resetPrompt(){customPrompt=templates[selTmpl]?.prompt||'';document.getElementById('promptEdit').value=customPrompt;
-  promptDirty=false;document.getElementById('promptMeta').textContent='';updatePromptMeta();}
+  promptDirty=false;try{localStorage.removeItem('pr_prompt_'+selTmpl);}catch{}
+  if(typeof autoDetectSections==='function')autoDetectSections();
+  document.getElementById('promptMeta').textContent='';updatePromptMeta();}
 function updatePromptMeta(){const lines=(customPrompt||'').split('\n').length;document.getElementById('promptMeta').textContent=lines+' lines';}
+
+// ─── Section Editor ───
+let explicitSections=[];
+function extractSectionsClient(text){
+  if(!text)return[];
+  const sections=[];const seen=new Set();
+  const addSec=raw=>{
+    const label=raw.replace(/\*\*/g,'').replace(/\s*\(.*$/,'').replace(/[-:]+$/,'').trim();
+    if(!label||label.length<2||label.length>60)return;
+    const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+    if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
+  };
+  const numbered=/(?:^|\n)\s*\d+\.\s+(.+?)(?:\n|$)/g;
+  let m;while((m=numbered.exec(text))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+  sections.length=0;seen.clear();
+  const bold=/(?:^|\n)\s*\*\*(.+?)\*\*\s*[-:]/g;
+  while((m=bold.exec(text))!==null)addSec(m[1]);
+  return sections.length>=2?sections:[];
+}
+function autoDetectSections(){
+  const prompt=document.getElementById('promptEdit').value;
+  const detected=extractSectionsClient(prompt);
+  if(detected.length>=2)explicitSections=detected;
+  else if(templates[selTmpl]?.sections?.length)explicitSections=[...templates[selTmpl].sections];
+  renderSectionPills();updateColumnPreview();
+}
+function renderSectionPills(){
+  const el=document.getElementById('sectionList');if(!el)return;
+  el.innerHTML=explicitSections.map((s,i)=>
+    '<span class="pill" style="background:var(--pri-dim);color:var(--pri-h);display:inline-flex;align-items:center;gap:4px">'+
+    esc(s.label)+' <span onclick="removeSection('+i+')" style="cursor:pointer;opacity:.5;font-size:10px">✕</span></span>'
+  ).join(' ');
+}
+function addSection(){
+  const inp=document.getElementById('addSectionInput');const label=inp.value.trim();if(!label)return;
+  const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+  if(!key)return;explicitSections.push({key,label});inp.value='';
+  renderSectionPills();updateColumnPreview();
+}
+function removeSection(idx){explicitSections.splice(idx,1);renderSectionPills();updateColumnPreview();}
+function updateColumnPreview(){
+  const el=document.getElementById('columnPreview');
+  const list=document.getElementById('columnPreviewList');
+  if(!el||!list)return;
+  if(!explicitSections.length){el.style.display='none';return;}
+  el.style.display='';
+  const cols=['Company',...explicitSections.map(s=>s.label)];
+  list.textContent=cols.join('  |  ');
+}
 
 // ─── Web Search ───
 function updateWS(){const p=providers[selProv];const on=useWeb&&p?.webSearch;document.getElementById('wsBg').style.background=on?'var(--pri)':'var(--dim)';document.getElementById('wsKnob').style.left=on?'15px':'2px';document.getElementById('wsLabel').textContent=on?'Web':'Off';}
@@ -402,7 +476,7 @@ async function startResearch(){
   results=[];currentSections=[];document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';
   document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
   document.getElementById('runningState').style.display='';document.getElementById('logBox').innerHTML='';
-  try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap})});
+  try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);jobId=d.jobId;
     document.getElementById('progressBar').style.display='';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
   }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';}finally{btn.disabled=false;btn.textContent='Research';}}
@@ -423,13 +497,26 @@ function connectSSE(id){if(es)es.close();es=new EventSource('/api/stream/'+id+'?
       const ok=d.status==='complete';b.className='banner fade-in '+(ok?'banner-ok':'banner-err');
       let t=(ok?'✅':'⚠')+' '+d.succeeded+' researched, '+d.failed+' failed';
       if(d.cost)t+=' · $'+d.cost;if(d.elapsed)t+=' · '+d.elapsed+'s';
-      b.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-ghost b-sm" onclick="exportCSV()">Export CSV</button>';
+      b.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button><button class="b b-ghost b-sm" onclick="exportCSV()" style="margin-left:4px">Quick Export</button>';
       if(d.status==='paused')b.innerHTML+='<button class="b b-green b-sm" onclick="resumeJob('+jobId+')">Resume</button>';
       es.close();}};}
 
 async function cancelJob(){if(jobId)await api('/api/cancel/'+jobId,{method:'POST'});}
 function exportCSV(){if(jobId)window.open('/api/export/'+jobId+'?token='+encodeURIComponent(token));}
 function exportCSV2(jid){window.open('/api/export/'+jid+'?token='+encodeURIComponent(token));}
+async function retryRow(idx,btn){
+  if(!jobId)return;if(btn){btn.disabled=true;btn.textContent='Retrying...';}
+  try{
+    const d=await(await api('/api/retry/'+jobId+'/'+idx,{method:'POST'})).json();
+    if(d.error)throw new Error(d.error);
+    // Update in-memory results
+    const ri=results.findIndex(r=>r.idx===idx);
+    if(ri>=0){results[ri]={...results[ri],status:'success',research:d.research,quality:d.quality};}
+    // Re-render views
+    if(currentView==='table')renderTable();
+    else{const card=document.querySelector('[data-idx="'+idx+'"]');if(card)card.remove();addRC(results[ri]||{idx,company:'',status:'success',research:d.research,quality:d.quality});}
+    addLog('Retried row '+idx+' — quality: '+(d.quality||0)+'%');
+  }catch(e){alert('Retry failed: '+e.message);if(btn){btn.disabled=false;btn.textContent='Retry';}}}
 async function resumeJob(jid){try{const d=await(await api('/api/resume/'+jid,{method:'POST'})).json();if(d.error)throw new Error(d.error);
   jobId=jid;document.getElementById('completeBanner').style.display='none';document.getElementById('progressBar').style.display='';
   document.getElementById('runningState').style.display='';addLog('Resuming...');connectSSE(jid);}catch(e){alert(e.message);}}
@@ -440,7 +527,8 @@ function openDrawer(mode){document.getElementById('drawerOverlay').classList.add
   if(mode==='settings')c.innerHTML=buildSettingsDrawer();
   else if(mode==='history'){c.innerHTML='<h3>Job History <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3><div id="histList"></div>';loadHistory();}
   else if(mode==='mapping')c.innerHTML=buildMappingDrawer();
-  else if(mode==='prompt')c.innerHTML=buildPromptDrawer();}
+  else if(mode==='prompt')c.innerHTML=buildPromptDrawer();
+  else if(mode==='export')c.innerHTML=buildExportDrawer();}
 function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
 
 function buildSettingsDrawer(){
@@ -464,6 +552,73 @@ function applyDrawerMap(){const m={};document.querySelectorAll('.mrow select').f
 async function saveKeyD(env){const v=document.getElementById('dk_'+env).value.trim();if(!v)return;
   providers=await(await api('/api/setkey',{method:'POST',body:JSON.stringify({envName:env,key:v})})).json();
   document.getElementById('dks_'+env).textContent='✅';buildSelects();}
+
+// ─── Export Configuration Drawer ───
+let exportCols=[];
+function buildExportDrawer(){
+  exportCols=[
+    {key:'_company',label:'Company',enabled:true,fixed:true},
+    ...currentSections.map(s=>({key:s.key,label:s.label,enabled:true,fixed:false})),
+    {key:'_fullresearch',label:'Full Research',enabled:false,fixed:false},
+    {key:'_intokens',label:'Input Tokens',enabled:false,fixed:false},
+    {key:'_outtokens',label:'Output Tokens',enabled:false,fixed:false}
+  ];
+  let h='<h3>Export CSV <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>';
+  h+='<p style="font-size:11px;color:var(--dim);margin-bottom:12px">Toggle columns on/off and rename headers to match your sequencer.</p>';
+  exportCols.forEach((c,i)=>{
+    h+='<div class="mrow" style="padding:6px 0;align-items:center">';
+    h+='<input type="checkbox" '+(c.enabled?'checked':'')+(c.fixed?' disabled':'')+' data-expidx="'+i+'" style="margin-right:6px"/>';
+    h+='<input class="inp" value="'+esc(c.label)+'" data-expidx="'+i+'" style="flex:1;font-size:12px;padding:4px 8px"/>';
+    h+='</div>';
+  });
+  h+='<div style="margin-top:16px;display:flex;gap:6px">';
+  h+='<button class="b b-pri" style="flex:1" onclick="doConfiguredExport()">Download CSV</button>';
+  h+='<button class="b b-ghost" onclick="exportCSV()">Quick Export (all columns)</button>';
+  h+='</div>';
+  return h;
+}
+function sanitizeClient(t){
+  if(!t||typeof t!=='string')return'';let s=t;
+  s=s.replace(/\*\*(.+?)\*\*/g,'$1');s=s.replace(/\*(.+?)\*/g,'$1');
+  s=s.replace(/__(.+?)__/g,'$1');s=s.replace(/_(.+?)_/g,'$1');
+  s=s.replace(/^#{1,6}\s+/gm,'');
+  s=s.replace(/(?:^|\n)\s*[-*+]\s+/g,'; ').replace(/^;\s*/,'');
+  s=s.replace(/(?:^|\n)\s*\d+[.)]\s+/g,'; ').replace(/^;\s*/,'');
+  s=s.replace(/\[([^\]]+)\]\([^)]+\)/g,'$1');
+  s=s.replace(/```[\s\S]*?```/g,'');s=s.replace(/`([^`]+)`/g,'$1');
+  s=s.replace(/\s+/g,' ').trim();
+  s=s.replace(/^[;,\s]+/,'').replace(/[;,\s]+$/,'');
+  return s;
+}
+function doConfiguredExport(){
+  const checks=document.querySelectorAll('[data-expidx][type="checkbox"]');
+  const labels=document.querySelectorAll('input.inp[data-expidx]');
+  const cols=[];
+  checks.forEach((cb,i)=>{
+    if(cb.checked)cols.push({key:exportCols[i].key,label:labels[i].value.trim()||exportCols[i].label});
+  });
+  if(!cols.length){alert('Select at least one column');return;}
+  const csvEsc=v=>'"'+String(v||'').replace(/"/g,'""')+'"';
+  let csv='\uFEFF';
+  csv+=cols.map(c=>csvEsc(c.label)).join(',')+'\r\n';
+  for(const r of results){
+    if(r.status!=='success')continue;
+    const vals=cols.map(c=>{
+      if(c.key==='_company')return r.company;
+      if(c.key==='_fullresearch')return r.research?._raw||'';
+      if(c.key==='_intokens')return r.inputTokens||0;
+      if(c.key==='_outtokens')return r.outputTokens||0;
+      if(r.research?._parsed)return sanitizeClient(r.research[c.key]||'');
+      return'';
+    });
+    csv+=vals.map(v=>csvEsc(v)).join(',')+'\r\n';
+  }
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;
+  a.download='prospect_research_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();URL.revokeObjectURL(url);closeDrawer();
+}
 
 // ─── History ───
 async function loadHistory(){try{const jobs=await(await api('/api/jobs')).json();const el=document.getElementById('histList');
@@ -490,13 +645,17 @@ function researchText(r){
 
 // ─── Card View ───
 function addRC(r){const list=document.getElementById('resultsList');const div=document.createElement('div');div.className='result fade-in';const ok=r.status==='success';
-  let bodyContent;
+  let bodyContent;const q=r.quality||0;
+  const qColor=q>=70?'var(--green)':q>=40?'var(--amber)':'var(--red)';
+  const qBadge=ok&&q?'<span style="font-size:10px;color:'+qColor+';margin-left:8px;font-weight:500">'+q+'%</span>':'';
+  const retryBtn=ok&&q<50?'<button class="b b-ghost b-sm" style="font-size:10px;margin-left:6px" onclick="event.stopPropagation();retryRow('+r.idx+',this)">Retry</button>':'';
+  const parseWarn=ok&&r.research&&!r.research._parsed?'<div style="padding:6px 10px;background:rgba(245,158,11,.1);border-radius:4px;font-size:11px;color:var(--amber);margin-bottom:8px">Parsing failed — data shown as raw text. <button class="b b-ghost b-sm" style="font-size:10px" onclick="retryRow('+r.idx+',this)">Retry</button></div>':'';
   if(ok&&r.research&&r.research._parsed&&currentSections.length){
-    bodyContent=currentSections.map(s=>{const val=r.research[s.key];if(!val)return'';return'<h3>'+esc(s.label)+'</h3>'+mdH(val);}).join('');
-  }else if(ok){bodyContent=mdH(researchText(r.research));}
-  else{bodyContent='<p style="color:var(--red)">'+esc(r.error)+'</p>';}
-  div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(r.company)+'</span><span style="font-size:11px;color:var(--dim)">▼</span></div><div class="result-body" style="display:none"><div class="md">'+bodyContent+'</div></div>';
-  list.appendChild(div);}
+    bodyContent=parseWarn+currentSections.map(s=>{const val=r.research[s.key];if(!val)return'';return'<h3>'+esc(s.label)+'</h3>'+mdH(val);}).join('');
+  }else if(ok){bodyContent=parseWarn+mdH(researchText(r.research));}
+  else{bodyContent='<p style="color:var(--red)">'+esc(r.error)+'</p><button class="b b-ghost b-sm" style="font-size:10px;margin-top:4px" onclick="retryRow('+r.idx+',this)">Retry</button>';}
+  div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(r.company)+'</span>'+qBadge+retryBtn+'<span style="font-size:11px;color:var(--dim);margin-left:auto">▼</span></div><div class="result-body" style="display:none"><div class="md">'+bodyContent+'</div></div>';
+  div.dataset.idx=r.idx;list.appendChild(div);}
 
 // ─── Table View ───
 function setView(mode){
