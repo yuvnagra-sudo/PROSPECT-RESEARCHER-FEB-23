@@ -279,7 +279,89 @@ function extractSectionsFromPrompt(promptText){
     const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
     if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
   }
+  if(sections.length>=2)return sections;
+  // Strategy 4: ALL-CAPS lines — e.g. "QUALIFICATION", "DECISION MAKERS"
+  sections.length=0;seen.clear();
+  const capsLine=/(?:^|\n)\s*([A-Z][A-Z\s&\-\/]{3,50})\s*(?:\(.*?\))?\s*$/gm;
+  while((m=capsLine.exec(promptText))!==null){
+    const txt=m[1].trim();
+    if(txt===txt.toUpperCase()&&txt.length>=4){
+      const label=txt;
+      const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+      if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
+    }
+  }
+  if(sections.length>=2)return sections;
+  // Strategy 5: markdown ### or ## headers — e.g. "### Section Name"
+  sections.length=0;seen.clear();
+  const mdHeaders=/(?:^|\n)\s*#{1,3}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm;
+  while((m=mdHeaders.exec(promptText))!==null){
+    const label=m[1].replace(/\s*\(.*$/,'').replace(/[-:]+$/,'').trim();
+    const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+    if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
+  }
+  if(sections.length>=2)return sections;
+  // Strategy 6: standalone bold lines — e.g. "**Section Name**" on its own line
+  sections.length=0;seen.clear();
+  const boldLine=/(?:^|\n)\s*\*\*([^*\n]{3,50})\*\*\s*$/gm;
+  while((m=boldLine.exec(promptText))!==null){
+    const label=m[1].replace(/\s*\(.*$/,'').replace(/[-:]+$/,'').trim();
+    const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+    if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
+  }
   return sections.length>=2?sections:[];
+}
+
+// Detect sections from LLM output text (universal fallback for any prompt)
+function extractSectionsFromOutput(rawText){
+  if(!rawText)return[];
+  const sections=[];const seen=new Set();
+  const addSec=(label)=>{
+    label=label.replace(/\s*\(.*?\)\s*$/,'').replace(/[-:]+$/,'').trim();
+    if(!label||label.length<2||label.length>60)return;
+    const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+    if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
+  };
+  let m;
+
+  // Strategy A: markdown ### or ## headers
+  const mdHeaders=/(?:^|\n)\s*#{1,3}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm;
+  while((m=mdHeaders.exec(rawText))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+
+  // Strategy B: numbered bold — "1. **Section Name**" or "**1. Section Name**"
+  sections.length=0;seen.clear();
+  const numBold=/(?:^|\n)\s*(?:\*\*\s*)?\d+[.)]\s*\*{0,2}([^*\n]{3,50})\*{0,2}/g;
+  while((m=numBold.exec(rawText))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+
+  // Strategy C: standalone bold lines — "**SECTION NAME**" on its own line
+  sections.length=0;seen.clear();
+  const boldLine=/(?:^|\n)\s*\*\*([^*\n]{3,50})\*\*\s*$/gm;
+  while((m=boldLine.exec(rawText))!==null){
+    const txt=m[1].trim();
+    // Skip lines that look like field labels (short with colon)
+    if(txt.includes(':')||txt.length<4)continue;
+    addSec(txt);
+  }
+  if(sections.length>=2)return sections;
+
+  // Strategy D: ALL-CAPS lines (>=2 words, all uppercase letters)
+  sections.length=0;seen.clear();
+  const capsLine=/(?:^|\n)\s*([A-Z][A-Z\s&\-\/]{3,50})\s*(?:\(.*?\))?\s*$/gm;
+  while((m=capsLine.exec(rawText))!==null){
+    const txt=m[1].trim();
+    if(txt===txt.toUpperCase()&&txt.split(/\s+/).length>=1&&txt.length>=4)addSec(txt);
+  }
+  if(sections.length>=2)return sections;
+
+  // Strategy E: "---" separator followed by "### Header" (common LLM pattern)
+  sections.length=0;seen.clear();
+  const hrHeaders=/---\s*\n+\s*#{1,3}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm;
+  while((m=hrHeaders.exec(rawText))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+
+  return[];
 }
 
 // Wrap system prompt to request JSON output
@@ -314,16 +396,21 @@ function parseStructuredResponse(rawText,sections){
   }catch{}
 
   // Layer 2: Flexible header matching by section label
+  const normLabel=l=>l.toLowerCase().replace(/&/g,'and').replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();
+  const buildPatterns=(lbl,num)=>{
+    const eLbl=lbl.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return[
+      new RegExp(`(?:^|\\n)\\s*(?:\\*\\*\\s*)?${num}\\.?\\s*\\*?\\*?\\s*${eLbl}[^\\n]*`,'i'),
+      new RegExp(`(?:^|\\n)\\s*(?:#{1,3}\\s*)?(?:\\*\\*)?\\s*${eLbl}\\s*(?:\\*\\*)?\\s*[-:.)]*[^\\n]*`,'i'),
+      new RegExp(`(?:^|\\n)\\s*\\*\\*${eLbl}\\*\\*\\s*$`,'im'),
+      new RegExp(`(?:^|\\n)\\s*${eLbl}\\s*$`,'im'),
+    ];
+  };
   const result={_raw:rawText,_parsed:true};
   let matchCount=0;
   for(let i=0;i<sections.length;i++){
     const s=sections[i];const num=i+1;
-    const eLbl=s.label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    // Try multiple patterns: numbered bold, numbered plain, just the label
-    const patterns=[
-      new RegExp(`(?:^|\\n)\\s*(?:\\*\\*\\s*)?${num}\\.?\\s*\\*?\\*?\\s*${eLbl}[^\\n]*`,'i'),
-      new RegExp(`(?:^|\\n)\\s*(?:#{1,3}\\s*)?(?:\\*\\*)?\\s*${eLbl}\\s*(?:\\*\\*)?\\s*[-:.]?[^\\n]*`,'i'),
-    ];
+    const patterns=buildPatterns(s.label,num);
     let hMatch=null;
     for(const pat of patterns){hMatch=rawText.match(pat);if(hMatch)break;}
     if(!hMatch){result[s.key]='';continue;}
@@ -331,12 +418,7 @@ function parseStructuredResponse(rawText,sections){
     // Find end: next section header or end of text
     let endIdx=rawText.length;
     for(let j=i+1;j<sections.length;j++){
-      const nLbl=sections[j].label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-      const nNum=j+1;
-      const nPats=[
-        new RegExp(`(?:^|\\n)\\s*(?:\\*\\*\\s*)?${nNum}\\.?\\s*\\*?\\*?\\s*${nLbl}`,'i'),
-        new RegExp(`(?:^|\\n)\\s*(?:#{1,3}\\s*)?(?:\\*\\*)?\\s*${nLbl}\\s*(?:\\*\\*)?\\s*[-:.]?`,'i'),
-      ];
+      const nPats=buildPatterns(sections[j].label,j+1);
       let nMatch=null;
       for(const np of nPats){nMatch=rawText.slice(startIdx).match(np);if(nMatch)break;}
       if(nMatch){endIdx=startIdx+nMatch.index;break;}
@@ -366,6 +448,29 @@ function safeParseResearch(text){
   if(!text)return null;
   try{const p=JSON.parse(text);if(typeof p==='object'&&p!==null)return p;}catch{}
   return{_raw:text,_parsed:false};
+}
+
+// Resolve sections for a job — tries template, prompt, then first result output
+function resolveSections(job,rows){
+  let secs=TEMPLATES[job.template_id]?.sections||[];
+  if(secs.length)return secs;
+  if(job.system_prompt)secs=extractSectionsFromPrompt(job.system_prompt);
+  if(secs.length)return secs;
+  // Fallback: detect from first successful result
+  const first=rows?rows.find(r=>r.status==='success'&&r.research):null;
+  if(first){
+    const parsed=safeParseResearch(first.research);
+    if(parsed&&parsed._parsed){
+      // Already structured JSON — extract keys as sections
+      secs=Object.keys(parsed).filter(k=>!k.startsWith('_')).map(k=>({key:k,label:k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}));
+      if(secs.length>=2)return secs;
+    }
+    // Try detecting from raw output text
+    const raw=parsed?._raw||first.research;
+    secs=extractSectionsFromOutput(typeof raw==='string'?raw:JSON.stringify(raw));
+    if(secs.length>=2)return secs;
+  }
+  return[];
 }
 
 // ─── CSV Parser (RFC 4180) ───
@@ -436,7 +541,8 @@ async function runJob(jobId){
   // Resolve sections for structured output
   let jobSections=TEMPLATES[job.template_id]?.sections||[];
   if(!jobSections.length&&job.system_prompt)jobSections=extractSectionsFromPrompt(job.system_prompt);
-  const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
+  let wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
+  let sectionsDiscovered=jobSections.length>0;
 
   // Stream already-completed rows back to any reconnecting client
   for(const r of S.gC.all(jobId))
@@ -464,6 +570,14 @@ async function runJob(jobId){
       while(!done&&retries<5&&!ctx.cancelled){
         try{
           const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey);
+          // Learn sections from first result if none detected from prompt
+          if(!sectionsDiscovered&&r.research){
+            const detected=extractSectionsFromOutput(r.research);
+            if(detected.length>=2){
+              jobSections=detected;sectionsDiscovered=true;
+              emit({type:'meta',sections:jobSections,templateId:job.template_id});
+            }
+          }
           const structured=parseStructuredResponse(r.research,jobSections);
           const researchJson=JSON.stringify(structured);
           S.uR.run('success',researchJson,null,r.inputTokens,r.outputTokens,r.cacheRead,r.cacheWrite,jobId,row.idx);
@@ -586,10 +700,15 @@ const server=createServer(async(req,res)=>{
     if(!job||job.user_id!==uid){res.writeHead(404);res.end('Not found');return;}
     res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});
     // Emit column definitions so frontend knows the table structure
-    let sseSections=TEMPLATES[job.template_id]?.sections||[];
-    if(!sseSections.length&&job.system_prompt)sseSections=extractSectionsFromPrompt(job.system_prompt);
+    const completedRows=S.gC.all(jid);
+    const sseSections=resolveSections(job,completedRows);
     res.write(`data: ${JSON.stringify({type:'meta',sections:sseSections,templateId:job.template_id})}\n\n`);
-    for(const r of S.gC.all(jid)) res.write(`data: ${JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:safeParseResearch(r.research),error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens})}\n\n`);
+    for(const r of completedRows){
+      let parsed=safeParseResearch(r.research);
+      // Re-parse old results with detected sections if not already structured
+      if(sseSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,sseSections);
+      res.write(`data: ${JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:parsed,error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens})}\n\n`);
+    }
     if(job.status==='complete'||job.status==='cancelled') res.write(`data: ${JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})}\n\n`);
     const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}return;}
 
@@ -598,8 +717,7 @@ const server=createServer(async(req,res)=>{
 
   if(req.method==='GET'&&p.match(/^\/api\/export\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||job.user_id!==uid){res.writeHead(404);res.end('Not found');return;}const rows=S.gR.all(jid);
-    let expSections=TEMPLATES[job.template_id]?.sections||[];
-    if(!expSections.length&&job.system_prompt)expSections=extractSectionsFromPrompt(job.system_prompt);
+    let expSections=resolveSections(job,rows);
     const esc=s=>'"'+String(s||'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
     const hdrCols=['Company','Status'];
     if(expSections.length)expSections.forEach(s=>hdrCols.push(s.label));
@@ -607,7 +725,11 @@ const server=createServer(async(req,res)=>{
     hdrCols.push('Full Research','Input Tokens','Output Tokens','Provider');
     const hdr=hdrCols.join(',');
     const csvR=rows.map(r=>{
-      const parsed=safeParseResearch(r.research);const cols=[esc(r.company),esc(r.status)];
+      let parsed=safeParseResearch(r.research);const cols=[esc(r.company),esc(r.status)];
+      // If sections exist but data wasn't pre-parsed, try parsing now from raw text
+      if(expSections.length&&!parsed?._parsed&&parsed?._raw){
+        parsed=parseStructuredResponse(parsed._raw,expSections);
+      }
       if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(esc(parsed[s.key]||'')));
       else if(expSections.length)expSections.forEach(()=>cols.push('""'));
       else cols.push(esc(parsed?._raw||r.error||''));
