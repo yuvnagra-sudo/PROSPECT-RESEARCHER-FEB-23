@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from 'http';
-import { readFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, statSync } from 'fs';
 import { resolve, join } from 'path';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
@@ -11,7 +11,7 @@ try { const ep=resolve(process.cwd(),'.env'); if(existsSync(ep)) readFileSync(ep
 const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex');
 
 // ─── Database ───
-const DD=resolve(process.cwd(),'.data'); if(!existsSync(DD))mkdirSync(DD,{recursive:true});
+const DD=resolve(process.cwd(),process.env.DATA_DIR||'.data'); if(!existsSync(DD))mkdirSync(DD,{recursive:true});
 const db=new Database(join(DD,'prospect_research.db')); db.pragma('journal_mode=WAL');
 db.exec(`
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,name TEXT,created_at TEXT DEFAULT(datetime('now')));
@@ -24,6 +24,15 @@ CREATE INDEX IF NOT EXISTS idx_ju ON jobs(user_id);`);
 try{db.exec(`ALTER TABLE jobs ADD COLUMN user_id INTEGER DEFAULT 0`);}catch{}
 try{db.exec(`ALTER TABLE jobs ADD COLUMN sections_json TEXT`);}catch{}
 try{db.exec(`ALTER TABLE rows ADD COLUMN quality INT DEFAULT 0`);}catch{}
+try{db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`);}catch{}
+
+// Fix 5: Recover orphaned jobs left in "running" state after server crash/restart
+db.exec("UPDATE jobs SET status='paused' WHERE status='running'");
+
+// Admin designation: use ADMIN_EMAIL env var, fallback to auto-promote first user
+const ADMIN_EMAIL=process.env.ADMIN_EMAIL||'';
+if(ADMIN_EMAIL){try{db.exec(`UPDATE users SET is_admin=1 WHERE email='${ADMIN_EMAIL.toLowerCase().trim().replace(/'/g,"''")}'`);}catch{}}
+try{db.exec(`UPDATE users SET is_admin=1 WHERE id=1 AND NOT EXISTS(SELECT 1 FROM users WHERE is_admin=1)`);}catch{}
 
 // ─── Auth helpers ───
 function hashPw(pw){const salt=randomBytes(16).toString('hex');return salt+':'+scryptSync(pw,salt,64).toString('hex');}
@@ -37,7 +46,7 @@ function getUser(req){const a=req.headers.authorization;return a?.startsWith('Be
 const S={
   createUser:db.prepare(`INSERT INTO users(email,password_hash,name)VALUES(?,?,?)`),
   getUserByEmail:db.prepare(`SELECT*FROM users WHERE email=?`),
-  getUserById:db.prepare(`SELECT id,email,name,created_at FROM users WHERE id=?`),
+  getUserById:db.prepare(`SELECT id,email,name,is_admin,created_at FROM users WHERE id=?`),
   setUserKey:db.prepare(`INSERT OR REPLACE INTO user_keys(user_id,key_name,key_value)VALUES(?,?,?)`),
   getUserKey:db.prepare(`SELECT key_value FROM user_keys WHERE user_id=? AND key_name=?`),
   delUserKey:db.prepare(`DELETE FROM user_keys WHERE user_id=? AND key_name=?`),
@@ -53,8 +62,12 @@ const S={
   gP:db.prepare(`SELECT*FROM rows WHERE job_id=? AND status='pending' ORDER BY idx`),
   gC:db.prepare(`SELECT*FROM rows WHERE job_id=? AND status IN('success','error')ORDER BY idx`),
   dR:db.prepare(`DELETE FROM rows WHERE job_id=?`),
+  adminListUsers:db.prepare(`SELECT id,email,name,is_admin,created_at FROM users ORDER BY created_at`),
+  adminListJobs:db.prepare(`SELECT j.*,u.email as user_email,u.name as user_name FROM jobs j LEFT JOIN users u ON j.user_id=u.id ORDER BY j.created_at DESC LIMIT 200`),
+  adminKeyCount:db.prepare(`SELECT COUNT(*) as cnt FROM user_keys WHERE user_id=?`),
 };
 function userKey(uid,keyName){const r=S.getUserKey.get(uid,keyName);return r?.key_value||'';}
+function isAdmin(uid){const u=db.prepare('SELECT is_admin FROM users WHERE id=?').get(uid);return u?.is_admin===1;}
 
 // ─── Providers ───
 const PROVDEFS={
@@ -200,7 +213,7 @@ function rlHit(p,retryMs){const r=gRL(p);r.okRun=0;r.hits++;r.delay=retryMs&&ret
 function rlOk(p){const r=gRL(p);r.okRun++;if(r.okRun>=5&&r.delay>r.min){r.delay=Math.max(r.delay*0.8,r.min);r.okRun=0;}}
 
 // ─── LLM Callers ───
-async function callGemini(prompt,prov,sys,web,apiKey){
+async function callGemini(prompt,prov,sys,web,apiKey,jobSignal){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${prov.model}:generateContent?key=${apiKey}`;
   const body={
     systemInstruction:{parts:[{text:sys}]},
@@ -211,7 +224,9 @@ async function callGemini(prompt,prov,sys,web,apiKey){
     }
   };
   if(web)body.tools=[{google_search:{}}];
-  const res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
+  const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
+  let res;try{res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
   if(res.status===429){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}
     if(m.includes('quota')||m.includes('limit: 0')||m.includes('RESOURCE_EXHAUSTED'))throw{type:'api_error',message:'Gemini quota exhausted'};
     const rm=m.match(/retry in ([\d.]+)s/i);throw{type:'rate_limit',wait:rm?Math.ceil(parseFloat(rm[1]))*1000:30000};}
@@ -242,29 +257,35 @@ async function callGemini(prompt,prov,sys,web,apiKey){
   return{research,inputTokens:u.promptTokenCount||0,outputTokens:u.candidatesTokenCount||0,cacheRead:0,cacheWrite:0};
 }
 
-async function callAnthropic(prompt,prov,sys,web,apiKey){
+async function callAnthropic(prompt,prov,sys,web,apiKey,jobSignal){
   const body={model:prov.model,max_tokens:4000,system:[{type:'text',text:sys,cache_control:{type:'ephemeral'}}],messages:[{role:'user',content:prompt}]};
   if(web)body.tools=[{type:'web_search_20250305',name:'web_search'}];
-  const res=await fetch(prov.apiUrl,{method:'POST',headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify(body)});
+  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
+  const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
+  let res;try{res=await fetch(prov.apiUrl,{method:'POST',headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
   if(res.status===429||res.status===529)throw{type:'rate_limit',wait:30000};
   if(!res.ok){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}throw{type:'api_error',message:m};}
   const data=await res.json();const u=data.usage||{};
   return{research:(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'),inputTokens:u.input_tokens||0,outputTokens:u.output_tokens||0,cacheRead:u.cache_read_input_tokens||0,cacheWrite:u.cache_creation_input_tokens||0};
 }
-async function callOpenAI(prompt,prov,sys,web,apiKey){
+async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal){
   const tk=prov.model.startsWith('gpt-5')?'max_completion_tokens':'max_tokens';
   const body={model:prov.model,[tk]:4000,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
   if(prov.webTool==='openai'&&web)body.tools=[{type:'web_search_preview'}];
-  const res=await fetch(prov.apiUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${apiKey}`},body:JSON.stringify(body)});
+  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
+  const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
+  let res;try{res=await fetch(prov.apiUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${apiKey}`},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
   if(res.status===429)throw{type:'rate_limit',wait:30000};
   if(!res.ok){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}throw{type:'api_error',message:m};}
   const data=await res.json();const c=data.choices?.[0];const u=data.usage||{};
-  return{research:typeof c?.message?.content==='string'?c.message.content:'',inputTokens:u.prompt_tokens||0,outputTokens:u.completion_tokens||0,cacheRead:0,cacheWrite:0};
+  const research=typeof c?.message?.content==='string'?c.message.content:'';
+  if(!research)throw{type:'api_error',message:'OpenAI returned empty response'};
+  return{research,inputTokens:u.prompt_tokens||0,outputTokens:u.completion_tokens||0,cacheRead:0,cacheWrite:0};
 }
-function callLLM(p,prov,sys,web,apiKey){
-  if(prov.format==='gemini-native')return callGemini(p,prov,sys,web,apiKey);
-  if(prov.format==='anthropic')return callAnthropic(p,prov,sys,web,apiKey);
-  return callOpenAI(p,prov,sys,web,apiKey);
+function callLLM(p,prov,sys,web,apiKey,jobSignal){
+  if(prov.format==='gemini-native')return callGemini(p,prov,sys,web,apiKey,jobSignal);
+  if(prov.format==='anthropic')return callAnthropic(p,prov,sys,web,apiKey,jobSignal);
+  return callOpenAI(p,prov,sys,web,apiKey,jobSignal);
 }
 
 // ─── Structured Output Helpers ───
@@ -274,7 +295,8 @@ function extractSectionsFromPrompt(promptText){
   if(!promptText)return[];
   const sections=[];const seen=new Set();
   const addSec=(rawLabel)=>{
-    const label=rawLabel.replace(/\*\*/g,'').replace(/\s*\(.*$/,'').replace(/[-:]+$/,'').trim();
+    const label=rawLabel.replace(/\*\*/g,'').replace(/\s*\(.*$/,'').replace(/\s+[-\u2013\u2014]\s+.*/,'').replace(/[-:]+$/,'').trim()
+      .replace(/^(?:find|get|identify|determine|research|locate|provide|list)\s+(?:the\s+)?/i,'').replace(/^the\s+/i,'').trim();
     if(!label||label.length<2||label.length>60)return;
     const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
     if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
@@ -282,7 +304,7 @@ function extractSectionsFromPrompt(promptText){
   // Strategy 0: numbered items — any "N. <text>" line, strips all ** markers post-hoc
   // Handles: "1. **Company Snapshot** (2-3 sentences)", "3. Issue 1 from **Website Audit**", "2. Website Audit - Provide..."
   let m;
-  const numberedAny=/(?:^|\n)\s*\d+\.\s+(.+?)(?:\n|$)/g;
+  const numberedAny=/(?:^|\n)\s*\d+\.\s+(\*{0,2}[A-Z].+?)(?:\n|$)/g;
   while((m=numberedAny.exec(promptText))!==null)addSec(m[1]);
   if(sections.length>=2)return sections;
   // Strategy 1: numbered bold — e.g. "1. **Company Snapshot**" or "1. **Company Snapshot** (2-3 sentences)"
@@ -341,6 +363,16 @@ function extractSectionsFromPrompt(promptText){
     const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
     if(key&&key.length>1&&!seen.has(key)){seen.add(key);sections.push({key,label});}
   }
+  if(sections.length>=2)return sections;
+  // Strategy 7: Bullet items — e.g. "- Company Snapshot" or "• Pain Points:"
+  sections.length=0;seen.clear();
+  const bullet=/(?:^|\n)\s*[-\u2022*]\s+(\*{0,2}[A-Z][^.\n]{2,50})\s*(?:[-:(]|\s*$)/gm;
+  while((m=bullet.exec(promptText))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+  // Strategy 8: Question/verb patterns — e.g. "What is their pain point?" or "Where can we find..."
+  sections.length=0;seen.clear();
+  const qpat=/(?:^|\n)\s*(?:What\s+(?:is|are)\s+(?:the|their)\s+|Where\s+(?:is|are|can)\s+)(.{3,40}?)(?:\?|\s*$)/gim;
+  while((m=qpat.exec(promptText))!==null)addSec(m[1]);
   return sections.length>=2?sections:[];
 }
 
@@ -450,7 +482,7 @@ function parseStructuredResponse(rawText,sections){
       for(const s of sections){
         if(result[s.key])continue;
         const normKey=s.key.replace(/[^a-z0-9]/g,'');
-        const match=normLookup[normKey]||pKeys.find(pk=>{const n=pk.toLowerCase().replace(/[^a-z0-9]/g,'');return n.includes(normKey)||normKey.includes(n);})||null;
+        const match=normLookup[normKey]||pKeys.find(pk=>{const n=pk.toLowerCase().replace(/[^a-z0-9]/g,'');if(n===normKey)return true;const shorter=Math.min(n.length,normKey.length),longer=Math.max(n.length,normKey.length);if(shorter>=longer*0.4&&(n.includes(normKey)||normKey.includes(n)))return true;const sWords=s.key.split('_').filter(w=>w.length>2),pWords=pk.toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>2);if(sWords.length&&pWords.length&&sWords.every(w=>pWords.some(pw=>pw.includes(w)||w.includes(pw))))return true;if(pWords.length&&pWords.every(w=>sWords.some(sw=>sw.includes(w)||w.includes(sw))))return true;return false;})||null;
         if(match&&parsed[match]!==undefined){result[s.key]=jsonVal(parsed[match]);hits++;}
       }
       if(hits>=Math.ceil(sections.length/2))return result;
@@ -509,7 +541,8 @@ function parseStructuredResponse(rawText,sections){
 function scoreQuality(parsed,sections){
   if(!parsed||!sections||!sections.length)return 0;
   if(!parsed._parsed)return 10;
-  const filled=sections.filter(s=>parsed[s.key]&&parsed[s.key].trim().length>10);
+  const noData=['no data found','not available','n/a','none','not found','no information','no info','unknown'];
+  const filled=sections.filter(s=>{const v=(parsed[s.key]||'').trim();return v.length>10&&!noData.includes(v.toLowerCase());});
   const fillRate=filled.length/sections.length;
   let score=0;
   score+=fillRate*40; // section fill rate
@@ -517,7 +550,7 @@ function scoreQuality(parsed,sections){
   score+=Math.min(avgLen/100,1)*30; // content richness
   score+=parsed._parsed?20:0; // parsed successfully
   score+=fillRate===1?10:0; // no empty sections bonus
-  return Math.round(score);
+  return Math.min(100,Math.round(score));
 }
 
 // Sanitize cell value for sequencer-ready CSV (strip markdown, collapse lists)
@@ -626,7 +659,7 @@ async function runJob(jobId){
   const job=S.gJ.get(jobId);if(!job)return;const prov=PROVDEFS[job.provider];if(!prov)return;
   const apiKey=userKey(job.user_id,prov.envName);
   if(!apiKey){S.uJ.run(job.succeeded,job.failed,'error',0,0,0,0,0,0,jobId);return;}
-  const ctx={cancelled:false,listeners:new Set()};actv.set(jobId,ctx);
+  const ctx={cancelled:false,listeners:new Set(),abort:new AbortController()};actv.set(jobId,ctx);
   const emit=d=>{const msg=`data: ${JSON.stringify(d)}\n\n`;for(const l of ctx.listeners){try{l.write(msg);}catch{}}};
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
@@ -675,7 +708,7 @@ async function runJob(jobId){
       let retries=0,done=false,lastErr='';
       while(!done&&retries<5&&!ctx.cancelled){
         try{
-          const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey);
+          const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal);
           // Learn sections from first result if none detected from prompt
           if(!sectionsDiscovered&&r.research){
             const detected=extractSectionsFromOutput(r.research);
@@ -689,17 +722,19 @@ async function runJob(jobId){
           let structured=parseStructuredResponse(r.research,jobSections);
           const quality=scoreQuality(structured,jobSections);
           // Smart retry: if quality is low and we haven't quality-retried yet, try once more
-          if(quality<40&&retries<1&&jobSections.length>=2){
-            const emptySecs=jobSections.filter(s=>!structured[s.key]||structured[s.key].trim().length<5);
+          if((quality<40||!structured._parsed)&&retries<1&&jobSections.length>=2){
+            const noDataVals=['no data found','not available','n/a','none','not found','no information','no info','unknown'];
+            const emptySecs=jobSections.filter(s=>{const v=(structured[s.key]||'').trim();return v.length<5||noDataVals.includes(v.toLowerCase());});
             if(emptySecs.length>0){
               retries++;
               emit({type:'log',level:'warn',msg:`Low quality (${quality}%) for "${row.company}" — retrying with emphasis on: ${emptySecs.map(s=>s.label).join(', ')}`});
               const retryP=row.prompt+'\n\nIMPORTANT: Your previous response was missing these sections: '+emptySecs.map(s=>s.label).join(', ')+'. Ensure ALL sections contain substantive information.';
               try{
-                const r2=await callLLM(retryP,prov,wrappedSys,!!job.use_web_search,apiKey);
+                const r2=await callLLM(retryP,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal);
+                tIn+=r2.inputTokens;tOut+=r2.outputTokens;tCR+=r2.cacheRead;tCW+=r2.cacheWrite;if(job.use_web_search)webCalls++;
                 const s2=parseStructuredResponse(r2.research,jobSections);
                 const q2=scoreQuality(s2,jobSections);
-                if(q2>quality){structured=s2;tIn+=r2.inputTokens;tOut+=r2.outputTokens;tCR+=r2.cacheRead;tCW+=r2.cacheWrite;if(job.use_web_search)webCalls++;}
+                if(q2>quality){structured=s2;}
               }catch{}
             }
           }
@@ -789,6 +824,35 @@ const server=createServer(async(req,res)=>{
   const uid=user.uid;
 
   if(req.method==='GET'&&p==='/api/me'){json(res,S.getUserById.get(uid)||{});return;}
+
+  // ── Admin endpoints ──
+  if(req.method==='GET'&&p==='/api/admin/users'){
+    if(!isAdmin(uid))return json(res,{error:'Forbidden'},403);
+    const users=S.adminListUsers.all().map(u=>({...u,keyCount:S.adminKeyCount.get(u.id)?.cnt||0}));
+    json(res,users);return;}
+
+  if(req.method==='GET'&&p==='/api/admin/jobs'){
+    if(!isAdmin(uid))return json(res,{error:'Forbidden'},403);
+    json(res,S.adminListJobs.all().map(j=>({...j,templateName:TEMPLATES[j.template_id]?.name||'Custom',templateIcon:TEMPLATES[j.template_id]?.icon||'\u270F\uFE0F',providerName:PROVDEFS[j.provider]?.name||j.provider})));return;}
+
+  if(req.method==='GET'&&p==='/api/admin/backup'){
+    if(!isAdmin(uid))return json(res,{error:'Forbidden'},403);
+    try{db.pragma('wal_checkpoint(TRUNCATE)');
+    const dbPath=join(DD,'prospect_research.db');
+    const data=readFileSync(dbPath);
+    res.writeHead(200,{'content-type':'application/octet-stream','content-disposition':`attachment; filename="prospect_research_backup_${new Date().toISOString().slice(0,10)}.db"`,'content-length':data.length,'access-control-allow-origin':'*'});
+    res.end(data);}catch(e){json(res,{error:'Backup failed: '+e.message},500);}return;}
+
+  if(req.method==='GET'&&p==='/api/admin/export-all'){
+    if(!isAdmin(uid))return json(res,{error:'Forbidden'},403);
+    try{const users=S.adminListUsers.all().map(u=>({...u,keyCount:S.adminKeyCount.get(u.id)?.cnt||0}));
+    const jobs=S.adminListJobs.all();
+    const allRows=jobs.map(j=>({jobId:j.id,rows:S.gR.all(j.id)}));
+    const payload={exportDate:new Date().toISOString(),users,jobs,rows:allRows};
+    const jsonStr=JSON.stringify(payload,null,2);
+    res.writeHead(200,{'content-type':'application/json','content-disposition':`attachment; filename="prospect_research_export_${new Date().toISOString().slice(0,10)}.json"`,'access-control-allow-origin':'*'});
+    res.end(jsonStr);}catch(e){json(res,{error:'Export failed: '+e.message},500);}return;}
+
   if(req.method==='GET'&&p==='/api/providers'){json(res,provSt(uid));return;}
 
   if(req.method==='POST'&&p==='/api/setkey'){const b=await readB(req);try{const{envName,key}=JSON.parse(b);
@@ -811,7 +875,8 @@ const server=createServer(async(req,res)=>{
     const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=2?JSON.stringify(explicitSections):null;
     const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
     const jobId=Number(result.lastInsertRowid);
-    db.transaction(()=>{for(let i=0;i<rows.length;i++){const{company,prompt}=buildPrompt(rows[i],cm,i);S.iR.run(jobId,i,company,prompt);}})();
+    try{db.transaction(()=>{for(let i=0;i<rows.length;i++){const{company,prompt}=buildPrompt(rows[i],cm,i);S.iR.run(jobId,i,company,prompt);}})();}
+    catch(txErr){try{S.dR.run(jobId);db.prepare('DELETE FROM jobs WHERE id=?').run(jobId);}catch{}return json(res,{error:'Failed to create job rows: '+txErr.message},500);}
     runJob(jobId);json(res,{jobId,total:rows.length,provider:prov.name});
   }catch(e){json(res,{error:e.message},400);}return;}
 
@@ -823,7 +888,7 @@ const server=createServer(async(req,res)=>{
     runJob(jid);json(res,{jobId:jid,remaining:pend.length,total:job.total_rows});return;}
 
   if(req.method==='GET'&&p.match(/^\/api\/stream\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
-    if(!job||job.user_id!==uid){res.writeHead(404);res.end('Not found');return;}
+    if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
     res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});
     // Emit column definitions so frontend knows the table structure
     const completedRows=S.gC.all(jid);
@@ -839,7 +904,7 @@ const server=createServer(async(req,res)=>{
     const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}return;}
 
   if(req.method==='POST'&&p.match(/^\/api\/cancel\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
-    if(job&&job.user_id===uid){const a2=actv.get(jid);if(a2)a2.cancelled=true;}json(res,{ok:true});return;}
+    if(job&&job.user_id===uid){const a2=actv.get(jid);if(a2){a2.cancelled=true;if(a2.abort)a2.abort.abort();}}json(res,{ok:true});return;}
 
   // Row-level retry endpoint
   if(req.method==='POST'&&p.match(/^\/api\/retry\/\d+\/\d+$/)){
@@ -863,13 +928,13 @@ const server=createServer(async(req,res)=>{
     return;}
 
   if(req.method==='GET'&&p.match(/^\/api\/export\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
-    if(!job||job.user_id!==uid){res.writeHead(404);res.end('Not found');return;}const rows=S.gR.all(jid);
+    if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
+    try{const rows=S.gR.all(jid);
     let expSections=resolveSections(job,rows);
-    const escRaw=s=>'"'+String(s||'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
-    const escClean=s=>'"'+sanitizeForCSV(String(s||'')).replace(/"/g,'""')+'"';
-    // Build headers: Company + original mapped columns + Status + sections + Full Research + meta
+    const escRaw=s=>'"'+String(s||'').replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
+    const escClean=s=>'"'+sanitizeForCSV(String(s||'')).replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
     const colMap=JSON.parse(job.col_map||'{}');
-    const origCols=Object.entries(colMap).filter(([role,hdr])=>hdr&&role!=='company').map(([role,hdr])=>({role,header:hdr}));
+    const origCols=Object.entries(colMap).filter(([role,hdr])=>hdr&&role!=='company').map(([role,hdr])=>({role,header:hdr})).filter(c=>c.header.toLowerCase()!=='company');
     const hdrCols=['Company'];
     origCols.forEach(c=>hdrCols.push(c.header));
     hdrCols.push('Status');
@@ -880,7 +945,6 @@ const server=createServer(async(req,res)=>{
     const csvR=rows.map(r=>{
       let parsed=safeParseResearch(r.research);
       const cols=[escRaw(r.company)];
-      // Extract original CSV columns from the stored prompt
       origCols.forEach(c=>{
         const roleLabel=c.role.charAt(0).toUpperCase()+c.role.slice(1);
         const pat=new RegExp('\\*\\*'+roleLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?:[/A-Za-z]*):\\*\\*\\s*(.+?)(?:\\n|$)','i');
@@ -888,7 +952,6 @@ const server=createServer(async(req,res)=>{
         cols.push(escRaw(m?m[1].trim():''));
       });
       cols.push(escRaw(r.status));
-      // If sections exist but data wasn't pre-parsed, try parsing now from raw text
       if(expSections.length&&!parsed?._parsed&&parsed?._raw){
         parsed=parseStructuredResponse(parsed._raw,expSections);
       }
@@ -899,7 +962,9 @@ const server=createServer(async(req,res)=>{
       return cols.join(',');
     });
     res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="prospect_research_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*'});
-    res.end('\uFEFF'+[hdr,...csvR].join('\r\n'));return;}
+    res.end('\uFEFF'+[hdr,...csvR].join('\r\n'));
+    }catch(exportErr){res.writeHead(500,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify({error:'Export failed: '+exportErr.message}));}
+    return;}
 
   if(req.method==='GET'&&p==='/api/jobs'){json(res,S.lJ.all(uid).map(j=>({...j,templateName:TEMPLATES[j.template_id]?.name||'Custom',templateIcon:TEMPLATES[j.template_id]?.icon||'\u270F\uFE0F',providerName:PROVDEFS[j.provider]?.name||j.provider})));return;}
 
@@ -909,11 +974,17 @@ const server=createServer(async(req,res)=>{
 });
 
 server.listen(PORT,process.env.HOST||'0.0.0.0',()=>{
+  const userCount=db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+  const jobCount=db.prepare('SELECT COUNT(*) as c FROM jobs').get().c;
+  let dbSize='?';try{const{size}=statSync(join(DD,'prospect_research.db'));dbSize=(size/1024/1024).toFixed(2)+' MB';}catch{}
   console.log(`\n  🔍 Prospect Researcher v6 (multi-user)`);
   console.log('  '+'━'.repeat(30));
   console.log(`  URL:  http://localhost:${PORT}`);
   console.log(`  Data: ${DD}`);
+  console.log(`  DB:   ${dbSize} | ${userCount} users | ${jobCount} jobs`);
   console.log(`  JWT:  ${process.env.JWT_SECRET?'persistent (env)':'ephemeral (set JWT_SECRET)'}`);
+  console.log(`  Admin: ${ADMIN_EMAIL||'auto (user #1)'}`);
+  console.log(`  Backup: GET /api/admin/backup (admin only)`);
   console.log('  '+'━'.repeat(30)+'\n');
 });
 const HTML=readFileSync(new URL('./ui.html',import.meta.url),'utf8');
