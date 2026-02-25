@@ -206,6 +206,70 @@ sections:[],
 prompt:`You are an expert B2B sales researcher. For each prospect, provide:\n1. **Company Overview** (2-3 sentences)\n2. **Recent News & Activity** (2-3 points)\n3. **Pain Points & Opportunities** (2-3 points)\n4. **Personalization Hooks** (2-3 suggestions)\n5. **Outreach Recommendation**\nKeep responses concise but actionable.`}
 };
 
+// ─── Section Intelligence — research methodology hints for common section types ───
+const SECTION_HINTS={
+  company_snapshot:'What they do, who they serve, approximate company size, founding year',
+  company_overview:'What they do, who they serve, approximate company size, founding year',
+  business_overview:'What they do, years in business, locations, employee count',
+  ceo:'Full name and title of the CEO or founder. Check company About/Team page and LinkedIn',
+  ceo_name:'Full name and title of the CEO or founder. Check company About/Team page and LinkedIn',
+  decision_maker:'Name and title of the most likely buyer/decision-maker. Check LinkedIn and company leadership page',
+  contact:'Key contact person name, title, and any available contact info. Check LinkedIn and company website',
+  key_people:'Names and titles of C-suite or leadership team. Check company About page',
+  revenue:'Annual revenue, ARR, or most recent funding amount. Check press releases, Crunchbase, SEC filings. For private companies, estimate from employee count and industry benchmarks',
+  funding:'Total funding raised, last round details (amount, date, investors). Check Crunchbase, press releases',
+  pricing:'Pricing tiers, model (per-seat, usage-based, flat), free plan availability. Check pricing page',
+  pricing_packaging:'Pricing tiers, model (per-seat, usage-based, flat), free plan availability. Check pricing page',
+  competitors:'List 2-3 direct competitors in the same market segment and what differentiates them',
+  competitive_landscape:'2-3 direct local competitors, who is winning online and why',
+  market_position:'Market share, differentiators, notable customers, G2/Capterra ratings',
+  industry:'Primary industry or sector, sub-vertical, target market',
+  pain_points:'Specific operational challenges they likely face. Be concrete: not "needs better marketing" but "scaling from 20-50 employees typically breaks onboarding processes"',
+  recent_news:'Press releases, funding announcements, product launches, leadership changes from the last 6 months',
+  recent_triggers:'Funding, product launches, leadership changes, expansions, or hiring surges from the last 6 months that signal buying intent',
+  personalization:'Concrete details to reference in outreach: recent LinkedIn posts, press mentions, job listings, awards',
+  personalization_hooks:'Concrete details to reference in cold outreach: recent LinkedIn posts, press mentions, job listings, awards. Include source',
+  personalization_hook:'One specific recent thing to reference in outreach. Include source',
+  outreach_angle:'Best approach for cold outreach: specific pain point + how to position your solution. Include a sample opening line',
+  outreach_recommendation:'Best angle for outreach, what to lead with, sample opening line',
+  outreach_hook:'Specific non-generic opener referencing a real review, competitor advantage, or seasonal opportunity',
+  tech_stack:'Key technologies, integrations, API availability, platform architecture',
+  tech_stack_integrations:'Key integrations, API, platform architecture',
+  website_audit:'Technical surface-level analysis: SEO health (meta tags, headings), security (HTTPS), performance (speed, mobile), and specific issues found',
+  online_presence:'Website quality (1-10), social media activity, review count and rating, content marketing',
+  online_presence_audit:'Website quality (1-10), social media activity, review count and rating, content marketing',
+  hiring:'Current open roles count, top-hiring departments, hiring velocity trend',
+  hiring_velocity:'Open roles count, top-hiring departments, trend vs 3-6 months ago',
+  key_open_roles:'Most critical open positions, long-open or reposted ones',
+  culture:'Glassdoor rating, common review themes, remote policy, notable perks or concerns',
+  culture_employer_brand:'Glassdoor rating, review themes, remote policy, perks/concerns',
+  hiring_pain_points:'Scaling post-funding, high turnover, competing for talent, niche roles, leadership building',
+  agent_profile:'Name, brokerage, years active, designations and certifications',
+  market_activity:'Recent listings count, volume, price range, primary service areas',
+  investment_niche:'Investment thesis, target sectors, focus areas, stage preferences',
+  check_size_stages:'Average check range, stages (pre-seed through growth)',
+  investment_constraints:'Geography, founder demographics, industry exclusions, minimum revenue',
+  portfolio_activity:'Recent portfolio companies, investment dates, round types',
+  contact_process:'How to reach them, cold inbound, application process',
+  confidence_score:'Data confidence: High (multiple sources confirm), Medium (single source), Low (estimated/inferred)',
+  gap_analysis:'Top gaps: missing Google Business profile, low reviews vs competitors, no/outdated website, inactive social, poor local SEO',
+  quick_win:'Single most impactful 30-day action they could take',
+  product_overview:'Core product, target market, founding year, funding, total raised',
+  recent_moves:'Launches, acquisitions, partnerships, leadership changes, layoffs from the last 12 months',
+  strengths_vulnerabilities:'Top 3 strengths and top 3 vulnerabilities from reviews/positioning, exploitable gaps',
+  sales_approach:'PLG/sales-led/partner model, content strategy, ad presence',
+  employees:'Approximate employee count, growth trend, key departments',
+  location:'Headquarters location, office locations, remote policy',
+  social_media:'Social media platforms, follower counts, posting frequency, engagement level',
+  email:'Primary contact email or general inquiry email. Check website contact page',
+  phone:'Primary phone number. Check website contact or about page',
+  size:'Approximate company size by employee count and/or revenue range',
+};
+function getSectionHint(key){
+  if(!key)return null;
+  return SECTION_HINTS[key]||Object.entries(SECTION_HINTS).find(([k])=>key.includes(k)||k.includes(key))?.[1]||null;
+}
+
 // ─── Rate Limit Intelligence ───
 const rl={};
 function gRL(p){if(!rl[p])rl[p]={delay:1000,min:300,max:60000,okRun:0,hits:0};return rl[p];}
@@ -213,7 +277,7 @@ function rlHit(p,retryMs){const r=gRL(p);r.okRun=0;r.hits++;r.delay=retryMs&&ret
 function rlOk(p){const r=gRL(p);r.okRun++;if(r.okRun>=5&&r.delay>r.min){r.delay=Math.max(r.delay*0.8,r.min);r.okRun=0;}}
 
 // ─── LLM Callers ───
-async function callGemini(prompt,prov,sys,web,apiKey,jobSignal){
+async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${prov.model}:generateContent?key=${apiKey}`;
   const body={
     systemInstruction:{parts:[{text:sys}]},
@@ -223,6 +287,13 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal){
       thinkingConfig:{thinkingBudget:0}  // disable thinking: faster + no hidden token consumption
     }
   };
+  // Native JSON mode when NOT using web search and sections are defined
+  // Gemini 2.5 Flash cannot combine responseMimeType with google_search tools
+  if(!web&&sections&&sections.length>=2){
+    const props={};sections.forEach(s=>{props[s.key]={type:'STRING',description:s.label};});
+    body.generationConfig.responseMimeType='application/json';
+    body.generationConfig.responseSchema={type:'OBJECT',properties:props,required:sections.map(s=>s.key)};
+  }
   if(web)body.tools=[{google_search:{}}];
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
@@ -268,9 +339,11 @@ async function callAnthropic(prompt,prov,sys,web,apiKey,jobSignal){
   const data=await res.json();const u=data.usage||{};
   return{research:(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'),inputTokens:u.input_tokens||0,outputTokens:u.output_tokens||0,cacheRead:u.cache_read_input_tokens||0,cacheWrite:u.cache_creation_input_tokens||0};
 }
-async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal){
+async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const tk=prov.model.startsWith('gpt-5')?'max_completion_tokens':'max_tokens';
   const body={model:prov.model,[tk]:4000,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
+  // Native JSON mode when sections are defined (works with GPT-5, GPT-4o-mini, DeepSeek)
+  if(sections&&sections.length>=2)body.response_format={type:'json_object'};
   if(prov.webTool==='openai'&&web)body.tools=[{type:'web_search_preview'}];
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
@@ -282,10 +355,10 @@ async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal){
   if(!research)throw{type:'api_error',message:'OpenAI returned empty response'};
   return{research,inputTokens:u.prompt_tokens||0,outputTokens:u.completion_tokens||0,cacheRead:0,cacheWrite:0};
 }
-function callLLM(p,prov,sys,web,apiKey,jobSignal){
-  if(prov.format==='gemini-native')return callGemini(p,prov,sys,web,apiKey,jobSignal);
+function callLLM(p,prov,sys,web,apiKey,jobSignal,sections){
+  if(prov.format==='gemini-native')return callGemini(p,prov,sys,web,apiKey,jobSignal,sections);
   if(prov.format==='anthropic')return callAnthropic(p,prov,sys,web,apiKey,jobSignal);
-  return callOpenAI(p,prov,sys,web,apiKey,jobSignal);
+  return callOpenAI(p,prov,sys,web,apiKey,jobSignal,sections);
 }
 
 // ─── Structured Output Helpers ───
@@ -295,6 +368,7 @@ function extractSectionsFromPrompt(promptText){
   if(!promptText)return[];
   const sections=[];const seen=new Set();
   const addSec=(rawLabel)=>{
+    if(sections.length>=15)return;
     const label=rawLabel.replace(/\*\*/g,'').replace(/\s*\(.*$/,'').replace(/\s+[-\u2013\u2014]\s+.*/,'').replace(/[-:]+$/,'').trim()
       .replace(/^(?:find|get|identify|determine|research|locate|provide|list)\s+(?:the\s+)?/i,'').replace(/^the\s+/i,'').trim();
     if(!label||label.length<2||label.length>60)return;
@@ -373,6 +447,16 @@ function extractSectionsFromPrompt(promptText){
   sections.length=0;seen.clear();
   const qpat=/(?:^|\n)\s*(?:What\s+(?:is|are)\s+(?:the|their)\s+|Where\s+(?:is|are|can)\s+)(.{3,40}?)(?:\?|\s*$)/gim;
   while((m=qpat.exec(promptText))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+  // Strategy 9: Comma-separated — "Provide/Find X, Y, Z"
+  sections.length=0;seen.clear();
+  const commaIntro=/(?:provide|find|research|tell\s+me\s+about|include|cover|identify|determine|get|list|analyze)\s*(?:the\s+)?(?:following\s*)?:?\s*(.+)/i;
+  const cm=promptText.match(commaIntro);
+  if(cm){cm[1].split(/\s*,\s*/).map(s=>s.replace(/^\s*and\s+/i,'').trim()).filter(s=>s.length>=2&&s.length<=50&&/^[A-Z]/.test(s)).forEach(i=>addSec(i));}
+  if(sections.length>=2)return sections;
+  // Strategy 10: Semicolon-separated — "X; Y; Z"
+  sections.length=0;seen.clear();
+  promptText.split(/\s*;\s*/).map(s=>s.trim()).filter(s=>s.length>=2&&s.length<=50&&/^[A-Z]/.test(s)).forEach(s=>addSec(s));
   return sections.length>=2?sections:[];
 }
 
@@ -432,21 +516,56 @@ function extractSectionsFromOutput(rawText){
 function wrapPromptForStructuredOutput(systemPrompt,sections){
   if(!sections||!sections.length)return systemPrompt;
   const keyList=sections.map(s=>`"${s.key}"`).join(', ');
-  const sampleObj={};sections.forEach(s=>{sampleObj[s.key]=`[Your ${s.label} content here]`;});
+
+  // Build realistic example using actual section keys
+  const exampleData={
+    company_snapshot:'Mid-market SaaS company founded in 2019 serving 200+ enterprise clients in financial services. Recently expanded to EMEA with a new London office.',
+    recent_triggers:'Series B ($18M) closed March 2025; hired VP Sales from Salesforce; launched AI-powered analytics module; 3 new enterprise logos in Q1',
+    pain_points:'Scaling customer success team from 5 to 15 while maintaining NPS above 50; competing with legacy vendors on security certifications; long enterprise sales cycles averaging 6 months',
+    personalization_hooks:'CEO posted on LinkedIn about breaking into UK market last week; job listing for 4 senior engineers suggests product acceleration; case study with Deloitte published January 2025',
+    outreach_angle:'Their EMEA expansion plus rapid hiring suggests growing pains in onboarding and enablement. Lead with: "Saw your London launch and the 4 engineering roles — congrats on the growth. Teams scaling that fast usually hit onboarding bottlenecks around month 3."',
+    revenue:'Estimated $12-18M ARR based on 150 employees and enterprise SaaS benchmarks. Series B ($18M) closed March 2025 from Sequoia and Accel.',
+    ceo:'Sarah Chen, Co-founder & CEO. Previously VP Product at Stripe (2015-2019). Stanford CS, MBA from Wharton.',
+    competitors:'Direct: Gong (larger, $7.2B valuation), Chorus.ai (acquired by ZoomInfo); Indirect: Salesforce Einstein, HubSpot Sales Hub',
+    tech_stack:'React frontend, Python/Django backend, AWS infrastructure, Snowflake data warehouse. API available with REST and GraphQL endpoints.',
+    hiring:'23 open roles; heaviest in Engineering (9) and Sales (7). VP Customer Success role open for 60+ days suggests scaling challenges.',
+    recent_news:'Launched AI-powered deal scoring feature (Feb 2025); opened London office (Jan 2025); hired former Gong VP Sales as CRO (Dec 2024)',
+  };
+  const sampleObj={};
+  sections.forEach(s=>{
+    sampleObj[s.key]=exampleData[s.key]||`Concise, specific research findings about ${s.label.toLowerCase()}. Include concrete details, names, dates, and numbers where possible.`;
+  });
   const sampleJson=JSON.stringify(sampleObj,null,2);
-  return systemPrompt+`
 
-CRITICAL OUTPUT FORMAT INSTRUCTIONS:
-1. Return your response as a single valid JSON object.
-2. Use EXACTLY these keys: ${keyList}
-3. Each value MUST be a plain text string. No markdown formatting (no **, no ##, no bullet points).
-4. If information for a section is unavailable, write "No data found" instead of leaving it empty.
-5. Do NOT wrap the JSON in code fences or add any text before or after it.
-6. Keep each section concise (2-4 sentences or a short paragraph) unless the prompt specifies otherwise.
-7. For lists, use semicolons to separate items (e.g. "Item 1; Item 2; Item 3").
+  // Build research guidance for sections that lack methodology in the user's prompt
+  const promptLower=systemPrompt.toLowerCase();
+  const hints=sections.map(s=>{
+    const hint=getSectionHint(s.key);
+    if(!hint)return null;
+    // Don't add hint if the prompt already contains detailed guidance for this section
+    const labelIdx=promptLower.indexOf(s.label.toLowerCase());
+    if(labelIdx>=0){
+      const afterLabel=systemPrompt.slice(labelIdx+s.label.length,labelIdx+s.label.length+80);
+      if(afterLabel.replace(/[^a-zA-Z]/g,'').length>20)return null;
+    }
+    return `- ${s.label}: ${hint}`;
+  }).filter(Boolean);
 
-Example format:
-${sampleJson}`;
+  const guidanceBlock=hints.length?`\nRESEARCH GUIDANCE (what to find for each section):\n${hints.join('\n')}\n`:'';
+
+  return `OUTPUT FORMAT (you MUST follow this exactly):
+Return a single valid JSON object with these exact keys: ${keyList}
+- Every value must be a plain text string (no markdown headers, no ** bold, no ## headings)
+- Use semicolons to separate list items within a value (e.g. "Item 1; Item 2; Item 3")
+- If data is genuinely unavailable after searching, write "No data found" for that key
+- Do NOT add keys beyond the ones listed above
+- Do NOT wrap in code fences or add text outside the JSON
+${guidanceBlock}
+Here is an example of a correct response:
+${sampleJson}
+
+---
+${systemPrompt}`;
 }
 
 // Parse LLM response into structured sections (multi-layer, robust)
@@ -708,7 +827,7 @@ async function runJob(jobId){
       let retries=0,done=false,lastErr='';
       while(!done&&retries<5&&!ctx.cancelled){
         try{
-          const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal);
+          const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,jobSections);
           // Learn sections from first result if none detected from prompt
           if(!sectionsDiscovered&&r.research){
             const detected=extractSectionsFromOutput(r.research);
@@ -728,9 +847,13 @@ async function runJob(jobId){
             if(emptySecs.length>0){
               retries++;
               emit({type:'log',level:'warn',msg:`Low quality (${quality}%) for "${row.company}" — retrying with emphasis on: ${emptySecs.map(s=>s.label).join(', ')}`});
-              const retryP=row.prompt+'\n\nIMPORTANT: Your previous response was missing these sections: '+emptySecs.map(s=>s.label).join(', ')+'. Ensure ALL sections contain substantive information.';
+              const retryP=row.prompt+'\n\nIMPORTANT RETRY: Your previous response had issues:\n'+
+                (!structured._parsed?'- Response was not valid JSON. You MUST return a single JSON object.\n':'')+
+                (emptySecs.length?'- These sections were empty or generic: '+emptySecs.map(s=>s.label).join(', ')+'\n':'')+
+                'Return a valid JSON object with keys: '+jobSections.map(s=>'"'+s.key+'"').join(', ')+'\n'+
+                'Every section must contain specific, substantive information. If data is genuinely unavailable, write "No data found".';
               try{
-                const r2=await callLLM(retryP,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal);
+                const r2=await callLLM(retryP,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,jobSections);
                 tIn+=r2.inputTokens;tOut+=r2.outputTokens;tCR+=r2.cacheRead;tCW+=r2.cacheWrite;if(job.use_web_search)webCalls++;
                 const s2=parseStructuredResponse(r2.research,jobSections);
                 const q2=scoreQuality(s2,jobSections);
@@ -816,6 +939,7 @@ const server=createServer(async(req,res)=>{
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='GET'&&p==='/api/templates'){const out={};for(const[id,t]of Object.entries(TEMPLATES))out[id]={name:t.name,icon:t.icon,desc:t.desc,prompt:t.prompt,sections:t.sections||[]};json(res,out);return;}
+  if(req.method==='GET'&&p==='/api/section-hints'){json(res,SECTION_HINTS);return;}
 
   // ── Auth required below ──
   let user=getUser(req);
@@ -859,6 +983,17 @@ const server=createServer(async(req,res)=>{
     if(!VALID_KEYS.includes(envName))return json(res,{error:'Invalid key name'},400);
     if(key)S.setUserKey.run(uid,envName,key);else S.delUserKey.run(uid,envName);
     json(res,provSt(uid));}catch(e){json(res,{error:e.message},400);}return;}
+
+  if(req.method==='POST'&&p==='/api/preview-prompt'){const b=await readB(req);try{
+    const{csv,systemPrompt,colMapOverride,explicitSections}=JSON.parse(b);
+    const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'CSV needs at least 1 data row'},400);
+    const cm=colMapOverride||autoGuess(headers);
+    const row=rows[0];const{prompt:userMessage}=buildPrompt(row,cm,0);
+    let sections=explicitSections||[];
+    if(!sections.length&&systemPrompt)sections=extractSectionsFromPrompt(systemPrompt);
+    const wrappedSys=wrapPromptForStructuredOutput(systemPrompt||'',sections);
+    json(res,{systemPrompt:wrappedSys,userMessage,sections});
+  }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride}=JSON.parse(b);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
@@ -917,7 +1052,7 @@ const server=createServer(async(req,res)=>{
     try{
       const jobSections=resolveSections(job,S.gR.all(jid));
       const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
-      const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey);
+      const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey,null,jobSections);
       const structured=parseStructuredResponse(r.research,jobSections);
       const quality=scoreQuality(structured,jobSections);
       const researchJson=JSON.stringify(structured);

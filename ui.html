@@ -262,7 +262,8 @@ Be concise. Use data from their website and recent news.</div>
         <div style="margin-bottom:10px"><div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">AI Role</div><input class="inp" id="buildRole" placeholder="e.g. B2B sales researcher, due diligence analyst, real estate prospecting expert" style="width:100%"/></div>
         <div style="margin-bottom:10px"><div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Research Sections <span style="font-weight:400;text-transform:none;letter-spacing:0">(each becomes a CSV column)</span></div>
           <div id="buildSections" style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px"></div>
-          <div style="display:flex;gap:4px"><input class="inp" id="buildSectionInput" placeholder="Section name (2-4 words)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addBuilderSection()}"/><input class="inp" id="buildSectionDesc" placeholder="Brief instruction (optional)" style="flex:1.5"/><button class="b b-ghost b-sm" onclick="addBuilderSection()">+ Add</button></div>
+          <div style="display:flex;gap:4px"><input class="inp" id="buildSectionInput" placeholder="Section name (2-4 words)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addBuilderSection()}" oninput="previewSectionHint()"/><input class="inp" id="buildSectionDesc" placeholder="Research instruction (auto-suggested)" style="flex:1.5"/><button class="b b-ghost b-sm" onclick="addBuilderSection()">+ Add</button></div>
+          <div id="buildSectionHint" style="display:none;font-size:10px;color:var(--dim);padding:2px 0;font-style:italic"></div>
         </div>
         <div style="margin-bottom:10px"><div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Extra Instructions <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div><textarea class="ta" id="buildExtra" style="min-height:50px" placeholder="e.g. Be concise. Focus on data from the last 6 months. Use web search for current info."></textarea></div>
         <button class="b b-pri b-sm" onclick="generatePromptFromBuilder()">Generate Prompt</button>
@@ -271,6 +272,7 @@ Be concise. Use data from their website and recent news.</div>
       <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
         <button class="b b-pri b-sm" onclick="savePrompt()">Apply</button>
         <button class="b b-ghost b-sm" onclick="resetPrompt()">Reset to template</button>
+        <button class="b b-ghost b-sm" onclick="previewPrompt()">Preview AI prompt</button>
         <span id="promptSaved" style="font-size:11px;color:var(--green);opacity:0;transition:opacity .3s">Applied</span>
       </div>
       <!-- Section Editor -->
@@ -353,6 +355,7 @@ const panelState={prompt:true,preview:true};
 
 // Table view state
 let currentView='table',currentSections=[];
+let sectionHints={};
 
 function api(p,o={}){o.headers={...(o.headers||{}),'content-type':'application/json'};if(token)o.headers.authorization='Bearer '+token;return fetch(p,o);}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
@@ -380,6 +383,7 @@ async function boot(){document.getElementById('authScreen').style.display='none'
   document.getElementById('userEmail').textContent=currentUser?.email||'';
   document.getElementById('btnAdmin').style.display=currentUser?.is_admin?'':'none';
   providers=await(await api('/api/providers')).json();templates=await(await fetch('/api/templates')).json();
+  try{sectionHints=await(await fetch('/api/section-hints')).json();}catch{}
   buildSelects();customPrompt=templates[selTmpl]?.prompt||'';updateWS();}
 
 // ─── Selects ───
@@ -400,7 +404,9 @@ function pickTmpl(id){
 function pickProv(id){selProv=id;updateWS();updateCost();}
 
 // ─── Prompt helpers ───
-function savePrompt(){customPrompt=document.getElementById('promptEdit').value;promptDirty=false;
+function savePrompt(){const val=document.getElementById('promptEdit').value;
+  if(val.trim().length<20){alert('Prompt is too short (minimum 20 characters).');return;}
+  customPrompt=val;promptDirty=false;
   try{localStorage.setItem('pr_prompt_'+selTmpl,customPrompt);}catch{}
   if(typeof autoDetectSections==='function')autoDetectSections();
   const s=document.getElementById('promptSaved');s.style.opacity='1';setTimeout(()=>s.style.opacity='0',2000);
@@ -420,12 +426,36 @@ function resetPrompt(){customPrompt=templates[selTmpl]?.prompt||'';document.getE
   promptDirty=false;try{localStorage.removeItem('pr_prompt_'+selTmpl);}catch{}
   if(typeof autoDetectSections==='function')autoDetectSections();
   document.getElementById('promptMeta').textContent='';updatePromptMeta();}
+async function previewPrompt(){
+  if(!csvText){alert('Upload a CSV first to preview.');return;}
+  if(promptDirty)savePrompt();
+  try{
+    const d=await(await api('/api/preview-prompt',{method:'POST',body:JSON.stringify({
+      csv:csvText,systemPrompt:customPrompt,
+      colMapOverride:Object.keys(colMap).length?colMap:undefined,
+      explicitSections:explicitSections.length>=2?explicitSections:undefined
+    })})).json();
+    if(d.error){alert(d.error);return;}
+    const c=document.getElementById('drawerContent');
+    document.getElementById('drawerOverlay').classList.add('open');
+    document.getElementById('drawer').classList.add('open');
+    c.innerHTML='<h3 style="margin:0 0 8px">What the AI Receives <span class="b b-ghost b-sm" style="float:right" onclick="closeDrawer()">Close</span></h3>'+
+      '<div class="label" style="margin-top:12px">System Prompt (instructions)</div>'+
+      '<pre style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;max-height:300px;overflow:auto;white-space:pre-wrap">'+esc(d.systemPrompt)+'</pre>'+
+      '<div class="label" style="margin-top:12px">User Message (first row)</div>'+
+      '<pre style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;max-height:200px;overflow:auto;white-space:pre-wrap">'+esc(d.userMessage)+'</pre>'+
+      (d.sections&&d.sections.length?'<div class="label" style="margin-top:12px">Detected Sections ('+d.sections.length+')</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.sections.map(s=>'<span style="font-size:10px;padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px">'+esc(s.label)+'</span>').join('')+'</div>':'')+
+      '<p style="font-size:11px;color:var(--dim);margin-top:8px">This is exactly what the AI sees for row 1. Check that your sections and research instructions are clear.</p>';
+  }catch(e){alert(e.message);}
+}
 function updatePromptMeta(){
   const p=(document.getElementById('promptEdit').value||customPrompt||'').trim();
   const lines=p.split('\n').length;const secs=explicitSections.length;
   const issues=[];
   if(p.length<50)issues.push('too short');
   if(secs<2)issues.push('no sections');
+  if(!p.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(p))issues.push('missing {company}');
   const meta=document.getElementById('promptMeta');
   if(!issues.length)meta.innerHTML='<span style="color:var(--green)">\u2713 Ready</span> \u00B7 '+secs+' sections \u00B7 '+lines+' lines';
   else meta.innerHTML='<span style="color:var(--amber)">'+issues.join(', ')+'</span> \u00B7 '+lines+' lines';
@@ -460,6 +490,16 @@ function extractSectionsClient(text){
   sections.length=0;seen.clear();
   const qpat=/(?:^|\n)\s*(?:What\s+(?:is|are)\s+(?:the|their)\s+|Where\s+(?:is|are|can)\s+)(.{3,40}?)(?:\?|\s*$)/gim;
   while((m=qpat.exec(text))!==null)addSec(m[1]);
+  if(sections.length>=2)return sections;
+  // Strategy 5: Comma-separated — "Provide/Find X, Y, Z"
+  sections.length=0;seen.clear();
+  const commaIntro=/(?:provide|find|research|tell\s+me\s+about|include|cover|identify|determine|get|list|analyze)\s*(?:the\s+)?(?:following\s*)?:?\s*(.+)/i;
+  const cm=text.match(commaIntro);
+  if(cm){cm[1].split(/\s*,\s*/).map(s=>s.replace(/^\s*and\s+/i,'').trim()).filter(s=>s.length>=2&&s.length<=50&&/^[A-Z]/.test(s)).forEach(i=>addSec(i));}
+  if(sections.length>=2)return sections;
+  // Strategy 6: Semicolon-separated
+  sections.length=0;seen.clear();
+  text.split(/\s*;\s*/).map(s=>s.trim()).filter(s=>s.length>=2&&s.length<=50&&/^[A-Z]/.test(s)).forEach(s=>addSec(s));
   return sections.length>=2?sections:[];
 }
 function autoDetectSections(){
@@ -490,6 +530,7 @@ function addSection(){
   const vague=['info','data','other','misc','general','details','stuff','things','notes'];
   if(vague.includes(label.toLowerCase())){alert('"'+label+'" is too vague. Use a specific name like "Company Info" or "Contact Details".');return;}
   if(label.split(/\s+/).length>6){alert('Section names should be 2-4 words. Long names become unwieldy column headers.');return;}
+  if(explicitSections.length>=15){alert('Maximum 15 sections.');return;}
   const key=label.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
   if(!key)return;
   if(explicitSections.some(s=>s.key===key)){alert('A section with that name already exists.');return;}
@@ -515,13 +556,40 @@ function setPromptMode(mode){
   document.getElementById('btnAdvanced').className='b b-sm '+(mode==='advanced'?'b-pri':'b-ghost');
   document.getElementById('promptBuilder').style.display=mode==='builder'?'':'none';
   document.getElementById('promptEdit').style.display=mode==='advanced'?'':'none';
+  // Sync sections from advanced mode into builder when switching to builder
+  if(mode==='builder'&&explicitSections.length>=2&&!builderSections.length){
+    builderSections=explicitSections.map(s=>({name:s.label,desc:''}));renderBuilderSections();
+  }
+}
+function matchSectionHint(name){
+  const key=name.toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+  return sectionHints[key]||Object.entries(sectionHints).find(([k])=>key.includes(k)||k.includes(key))?.[1]||null;
+}
+let hintTimer;
+function previewSectionHint(){
+  clearTimeout(hintTimer);
+  hintTimer=setTimeout(()=>{
+    const name=document.getElementById('buildSectionInput').value.trim();
+    const hint=document.getElementById('buildSectionHint');
+    if(!name){hint.style.display='none';return;}
+    const match=matchSectionHint(name);
+    if(match){hint.style.display='';hint.style.color='var(--dim)';hint.textContent='Auto-instruction: '+match;}
+    else{hint.style.display='';hint.style.color='var(--amber, #d97706)';hint.textContent='No auto-instruction \u2014 add your own description for better results';}
+  },300);
 }
 function addBuilderSection(){
   const nameInp=document.getElementById('buildSectionInput');const descInp=document.getElementById('buildSectionDesc');
   const name=nameInp.value.trim();if(!name)return;
   if(name.length>40){alert('Section name too long (max 40 chars). Use 2-4 words.');return;}
   if(name.split(/\s+/).length>6){alert('Section names should be 2-4 words.');return;}
-  builderSections.push({name,desc:descInp.value.trim()});nameInp.value='';descInp.value='';renderBuilderSections();
+  if(builderSections.length>=15){alert('Maximum 15 sections.');return;}
+  const vague=['info','data','other','misc','general','details','stuff','things','notes'];
+  // Auto-suggest description from section hints if user left it blank
+  let desc=descInp.value.trim();
+  if(!desc){const hint=matchSectionHint(name);if(hint)desc=hint;}
+  if(vague.includes(name.toLowerCase())&&!desc){alert('"'+name+'" is too vague without a description. Use a specific name like "Company Info" or add a research instruction.');return;}
+  builderSections.push({name,desc});nameInp.value='';descInp.value='';
+  document.getElementById('buildSectionHint').style.display='none';renderBuilderSections();
 }
 function removeBuilderSection(i){builderSections.splice(i,1);renderBuilderSections();}
 function renderBuilderSections(){
@@ -567,7 +635,21 @@ async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading
 async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMapOverride=om;
     const d=await(await api('/api/preview',{method:'POST',body:JSON.stringify(body)})).json();if(d.error){alert(d.error);return;}
     colMap=d.colMap;csvHeaders=d.headers;rowCount=d.total;
-    document.getElementById('dzSub').textContent=rowCount+' prospects · Click to change';
+    if(rowCount<1){
+      alert('This CSV has no data rows. Add prospect data and re-upload.');
+      csvText='';rowCount=0;
+      document.getElementById('dz').classList.remove('loaded');
+      document.getElementById('dzIco').textContent='\uD83D\uDCC1';
+      document.getElementById('dzText').textContent='Drop your CSV here, or click to browse';
+      document.getElementById('dzSub').textContent='Any CSV with a company name column';
+      document.getElementById('configBar').style.display='none';return;
+    }
+    if(rowCount>500){
+      const p=providers[selProv];
+      const est=p?((p.inputCost*2000+p.outputCost*2000)/1e6+(useWeb&&p.webSearch?(p.webCostPerCall||0):0))*rowCount:0;
+      if(!confirm(rowCount+' rows detected.\nEstimated cost: ~$'+est.toFixed(2)+'\nEstimated time: ~'+Math.round(rowCount*0.15)+' minutes\n\nContinue?'))return;
+    }
+    document.getElementById('dzSub').textContent=rowCount+' prospects \u00B7 Click to change';
     renderMapPills();renderPreviews(d.previews,d.total);
     // Show prompt panel and populate
     document.getElementById('promptSection').style.display='';
@@ -604,6 +686,11 @@ function updateCost(){const p=providers[selProv];if(!p||!rowCount)return;const p
 async function startResearch(){
   if(!csvText||!selProv)return;
   if(jobRunning){alert('A job is already running. Stop it first or wait for it to finish.');return;}
+  // Hard blocks — prevent guaranteed-bad output
+  if(!providers[selProv]?.hasKey){alert('No API key set for '+providers[selProv]?.name+'. Add your key in Settings first.');openDrawer('settings');return;}
+  if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
+  if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
+    alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
   // Auto-save prompt if dirty
   if(promptDirty)savePrompt();
   // Pre-flight readiness checks
@@ -612,6 +699,10 @@ async function startResearch(){
   if(customPrompt.trim().length<50)warnings.push('\u2022 Your prompt is very short ('+customPrompt.trim().length+' chars) \u2014 longer prompts produce better results');
   if(!colMap.company)warnings.push('\u2022 No Company column mapped \u2014 prospects will be labeled "Prospect 1, 2, 3..."');
   if(!colMap.website&&useWeb)warnings.push('\u2022 No Website column mapped \u2014 web search will rely on company name only');
+  if(!useWeb&&/\b(web\s*search|search\s+the\s+web|real[\s-]*time|current\s+(?:info|data))\b/i.test(customPrompt))
+    warnings.push('\u2022 Your prompt mentions web search but the Web toggle is OFF');
+  if(useWeb&&!providers[selProv]?.webSearch)
+    warnings.push('\u2022 Web search is ON but '+providers[selProv]?.name+' does not support it');
   if(warnings.length&&!confirm('Before starting:\n\n'+warnings.join('\n')+'\n\nContinue anyway?'))return;
   const btn=document.getElementById('btnGo');btn.disabled=true;btn.textContent='Starting...';
   results=[];currentSections=[];runCost=0;runStart=Date.now();document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';
@@ -711,7 +802,16 @@ function buildMappingDrawer(){
     h+='<div class="mrow"><span class="role">'+role+'</span><select class="sel" style="flex:1" data-role="'+role+'">'+opts+'</select></div>';});
   h+='<div style="margin-top:12px;display:flex;gap:6px"><button class="b b-pri b-sm" onclick="applyDrawerMap()">Apply</button><button class="b b-ghost b-sm" onclick="refreshPreview();closeDrawer()">Auto-detect</button></div>';
   return h;}
-function applyDrawerMap(){const m={};document.querySelectorAll('.mrow select').forEach(s=>m[s.dataset.role]=s.value);refreshPreview(m);closeDrawer();}
+function applyDrawerMap(){
+  const m={};const usage=new Map();
+  document.querySelectorAll('.mrow select').forEach(s=>{
+    const col=s.value;m[s.dataset.role]=col;
+    if(col){if(!usage.has(col))usage.set(col,[]);usage.get(col).push(s.dataset.role);}
+  });
+  const dupes=[...usage].filter(([,r])=>r.length>1).map(([c,r])=>'"'+c+'" \u2192 '+r.join(', '));
+  if(dupes.length){alert('Duplicate mapping:\n'+dupes.join('\n')+'\nEach column should map to one role.');return;}
+  refreshPreview(m);closeDrawer();
+}
 
 async function saveKeyD(env){const v=document.getElementById('dk_'+env).value.trim();if(!v)return;
   const btn=document.querySelector(`[onclick="saveKeyD('${env}')"]`);if(btn)btn.disabled=true;
