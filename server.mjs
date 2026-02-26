@@ -995,6 +995,54 @@ const server=createServer(async(req,res)=>{
     json(res,{systemPrompt:wrappedSys,userMessage,sections});
   }catch(e){json(res,{error:e.message},400);}return;}
 
+  if(req.method==='POST'&&p==='/api/generate-sections'){const b=await readB(req);try{
+    const{description}=JSON.parse(b);
+    if(!description||description.trim().length<10)return json(res,{error:'Describe what you want to research (at least 10 characters)'},400);
+    // Find cheapest provider the user has a key for
+    const provOrder=['gemini','openai','deepseek','haiku','gpt5','claude'];
+    const uk=S.getUserKeys.all(uid).map(r=>r.key_name);
+    let pid=null;for(const id of provOrder){const pv=PROVDEFS[id];if(pv&&uk.includes(pv.envName)){pid=id;break;}}
+    if(!pid)return json(res,{error:'No API key configured. Add a key in Settings first.'},400);
+    const prov=PROVDEFS[pid];const ak=userKey(uid,prov.envName);
+    // Build the section generation prompt
+    const hintsRef=Object.entries(SECTION_HINTS).slice(0,30).map(([k,v])=>`  ${k}: ${v}`).join('\n');
+    const sysPrompt=`You are a research prompt architect. The user will describe what they want to know about companies in a CSV file. Your job:
+1. Parse their intent into 3-8 research sections
+2. Write a specific, actionable research instruction for each section (1-2 sentences)
+3. Choose an appropriate AI role (e.g. "B2B sales researcher", "due diligence analyst")
+4. Generate a complete research prompt with numbered sections and {company} placeholder
+
+Section naming rules:
+- 2-4 words, suitable as CSV column headers (e.g. "Company Snapshot", "Pain Points", "Recent Triggers")
+- Use snake_case keys (lowercase, underscores, max 40 chars)
+- Include sections the user might not have thought of but would find valuable for their use case
+
+Reference these known section types for inspiration:
+${hintsRef}
+
+Return ONLY valid JSON (no markdown, no code fences):
+{"sections":[{"key":"snake_case_key","label":"Display Name","desc":"Research instruction"}],"role":"appropriate role","prompt":"Complete research prompt with {company} placeholder and numbered **Bold** sections"}`;
+    const userMsg=description.trim();
+    const result=await callLLM(userMsg,prov,sysPrompt,false,ak,null,null);
+    // Parse the AI response
+    let parsed;
+    try{
+      let text=result.research||'';
+      // Strip markdown code fences if present
+      text=text.replace(/```(?:json)?\s*/g,'').replace(/```\s*/g,'').trim();
+      parsed=JSON.parse(text);
+    }catch{return json(res,{error:'AI returned invalid format. Try again.'},500);}
+    if(!parsed.sections||!Array.isArray(parsed.sections)||parsed.sections.length<1)
+      return json(res,{error:'AI did not generate any sections. Try a more descriptive request.'},500);
+    // Validate and clean sections
+    const sections=parsed.sections.slice(0,15).map(s=>({
+      key:(s.key||s.label||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40),
+      label:s.label||s.name||s.key||'Section',
+      desc:s.desc||s.description||''
+    })).filter(s=>s.key&&s.label);
+    json(res,{sections,role:parsed.role||'research assistant',prompt:parsed.prompt||'',provider:prov.name});
+  }catch(e){json(res,{error:e.message||'Generation failed'},500);}return;}
+
   if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride}=JSON.parse(b);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers);json(res,{headers,colMap:cm,total:rows.length,previews:rows.slice(0,20).map((r,i)=>buildPrompt(r,cm,i))});
