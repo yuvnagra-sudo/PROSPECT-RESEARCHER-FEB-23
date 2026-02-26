@@ -61,7 +61,7 @@ textarea.ta:focus{border-color:var(--pri)}
 /* Progress */
 .progress-bar{position:sticky;top:48px;z-index:90;background:var(--surface);border-bottom:1px solid var(--border);padding:10px 20px;display:none}
 .progress-inner{max-width:860px;margin:0 auto;display:flex;align-items:center;gap:12px}
-.pbar{flex:1;background:var(--card);border-radius:99px;height:4px;overflow:hidden}.pfill{height:100%;border-radius:99px;background:var(--pri);transition:width .3s}
+.pbar{flex:1;background:var(--card);border-radius:99px;height:6px;overflow:hidden}.pfill{height:100%;border-radius:99px;background:var(--pri);transition:width .3s}
 .progress-text{font-size:11px;color:var(--sub);font-family:var(--mono);white-space:nowrap}
 .progress-text b{color:var(--green)}
 
@@ -78,7 +78,7 @@ textarea.ta:focus{border-color:var(--pri)}
 /* Drawer */
 .drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;opacity:0;transition:opacity .2s;pointer-events:none}
 .drawer-overlay.open{opacity:1;pointer-events:auto}
-.drawer{position:fixed;top:0;right:-420px;width:400px;max-width:90vw;height:100vh;background:var(--surface);border-left:1px solid var(--border);z-index:201;transition:right .25s ease;overflow-y:auto;padding:20px}
+.drawer{position:fixed;top:0;right:-560px;width:540px;max-width:90vw;height:100vh;background:var(--surface);border-left:1px solid var(--border);z-index:201;transition:right .25s ease;overflow-y:auto;padding:24px}
 .drawer.open{right:0}
 .drawer h3{font-size:14px;font-weight:600;color:var(--fg);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
 .drawer-section{margin-bottom:24px}
@@ -134,7 +134,10 @@ textarea.ta:focus{border-color:var(--pri)}
 
 /* Preview card */
 .prev-card{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:6px}
-.prev-card h4{color:var(--pri-h);font-size:12px;margin-bottom:4px}.prev-card pre{color:var(--sub);font-size:10px;line-height:1.5;font-family:var(--mono);white-space:pre-wrap;word-break:break-word}
+.prev-card h4{color:var(--pri-h);font-size:12px;margin-bottom:4px}
+.prev-card-body{color:var(--sub);font-size:12px;line-height:1.6;font-family:inherit;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:hidden;position:relative;transition:max-height .2s}
+.prev-card-body.expanded{max-height:none}
+.prev-card-toggle{font-size:11px;color:var(--pri-h);cursor:pointer;margin-top:4px;display:inline-block}
 
 /* Cost chip */
 .cost-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:5px;font-family:var(--mono);font-size:11px;background:var(--card);border:1px solid var(--border);color:var(--sub)}
@@ -263,17 +266,18 @@ textarea.ta:focus{border-color:var(--pri)}
     <div class="wiz-heading">Upload your prospect list</div>
     <div class="wiz-sub">Drop a CSV file with company names. We'll auto-detect columns like website, email, and contact name.</div>
     <div class="drop" id="dz" onclick="document.getElementById('fi').click()">
-      <input type="file" id="fi" accept=".csv" style="display:none"/>
+      <input type="file" id="fi" accept=".csv,.xlsx,.xls" style="display:none"/>
       <div class="ico" id="dzIco">📁</div>
       <div class="main-text" id="dzText">Drop your CSV here, or click to browse</div>
       <div class="sub-text" id="dzSub">Any CSV with a company name column</div>
     </div>
-    <div id="mapBar" style="display:none;margin-top:10px">
+    <div id="mapBar" style="display:none;margin-top:12px">
+      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Detected columns</div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span id="mapPills"></span>
         <button class="b b-ghost b-sm" onclick="openDrawer('mapping')">Edit Mapping</button>
       </div>
-      <div id="mapHints" style="display:none;margin-top:4px"></div>
+      <div id="mapHints" style="margin-top:6px"></div>
     </div>
     <div class="wiz-actions" id="wizStep1Actions" style="display:none">
       <button class="b b-pri" onclick="goWizardStep(2)">Next &rarr;</button>
@@ -379,7 +383,7 @@ textarea.ta:focus{border-color:var(--pri)}
 
     <!-- Preview panel -->
     <div class="wiz-section" id="previewSection" style="display:none">
-      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Sample prompts <span style="font-weight:400;text-transform:none;letter-spacing:0" id="previewCount"></span></div>
+      <div onclick="const b=document.getElementById('previewBody');b.style.display=b.style.display==='none'?'':'none';this.querySelector('.prev-arrow').textContent=b.style.display==='none'?'\u25B8':'\u25BE'" style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;cursor:pointer;user-select:none"><span class="prev-arrow">&#9662;</span> Sample prompts <span style="font-weight:400;text-transform:none;letter-spacing:0" id="previewCount"></span></div>
       <div id="previewBody">
         <div id="previewList"></div>
       </div>
@@ -464,8 +468,8 @@ function goWizardStep(n){
     el.querySelector('.wiz-dot').textContent=s<n?'\u2713':s;
   });
   if(n===2){renderGeneratedSections();document.getElementById('promptEdit').value=customPrompt;updatePromptMeta();if(builderSections.length>=1)setPromptMode('builder');}
-  if(n===3){updateCost();renderStep3Summary();if(csvText)refreshPreview(colMap);}
-  window.scrollTo({top:0,behavior:'smooth'});
+  if(n===3){updateCost();renderStep3Summary();if(csvText&&!results.length)refreshPreview(colMap);}
+  if(!results.length)window.scrollTo({top:0,behavior:'smooth'});
 }
 // ─── AI Section Generation ───
 async function generateSections(){
@@ -601,14 +605,14 @@ async function previewPrompt(){
     const c=document.getElementById('drawerContent');
     document.getElementById('drawerOverlay').classList.add('open');
     document.getElementById('drawer').classList.add('open');
-    c.innerHTML='<h3 style="margin:0 0 8px">What the AI Receives <span class="b b-ghost b-sm" style="float:right" onclick="closeDrawer()">Close</span></h3>'+
-      '<div class="label" style="margin-top:12px">System Prompt (instructions)</div>'+
-      '<pre style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;max-height:300px;overflow:auto;white-space:pre-wrap">'+esc(d.systemPrompt)+'</pre>'+
-      '<div class="label" style="margin-top:12px">User Message (first row)</div>'+
-      '<pre style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;max-height:200px;overflow:auto;white-space:pre-wrap">'+esc(d.userMessage)+'</pre>'+
-      (d.sections&&d.sections.length?'<div class="label" style="margin-top:12px">Detected Sections ('+d.sections.length+')</div>'+
-      '<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.sections.map(s=>'<span style="font-size:10px;padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px">'+esc(s.label)+'</span>').join('')+'</div>':'')+
-      '<p style="font-size:11px;color:var(--dim);margin-top:8px">This is exactly what the AI sees for row 1. Check that your sections and research instructions are clear.</p>';
+    c.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h3 style="margin:0;font-size:16px">What the AI receives</h3><button class="b b-ghost b-sm" onclick="closeDrawer()">Close</button></div>'+
+      '<div class="label" style="margin-bottom:6px">System prompt (instructions)</div>'+
+      '<pre style="font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;white-space:pre-wrap;word-break:break-word;line-height:1.6;color:var(--fg)">'+esc(d.systemPrompt)+'</pre>'+
+      '<div class="label" style="margin-top:16px;margin-bottom:6px">User message (first row)</div>'+
+      '<pre style="font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;white-space:pre-wrap;word-break:break-word;line-height:1.6;color:var(--fg)">'+esc(d.userMessage)+'</pre>'+
+      (d.sections&&d.sections.length?'<div class="label" style="margin-top:16px;margin-bottom:6px">Output sections ('+d.sections.length+')</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">'+d.sections.map(s=>'<span style="font-size:11px;padding:4px 10px;background:var(--pri-dim);border:1px solid var(--border);border-radius:6px;color:var(--pri-h)">'+esc(s.label)+'</span>').join('')+'</div>':'')+
+      '<p style="font-size:12px;color:var(--dim);margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">This is exactly what the AI sees for row 1. Check that your sections and research instructions are clear.</p>';
   }catch(e){alert(e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent='Preview AI prompt';}}
 }
@@ -791,12 +795,12 @@ dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');if
 fi.addEventListener('change',()=>{if(fi.files[0])loadFile(fi.files[0]);});
 async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading a new file will not stop it but may mix results. Continue?'))return;}
   if(results.length&&!jobRunning&&!confirm('Loading a new file will clear current results. Continue?'))return;
+  if(f.name.match(/\.xlsx?$/i)){alert('Excel files (.xlsx/.xls) are not supported yet.\n\nPlease save your spreadsheet as CSV first:\nFile \u2192 Save As \u2192 CSV (Comma delimited)');return;}
   csvText=await f.text();dz.classList.add('loaded');
   document.getElementById('dzIco').textContent='✅';document.getElementById('dzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
   document.getElementById('dzSub').textContent='Click to change';
   await refreshPreview();updateCost();
-  document.getElementById('wizStep1Actions').style.display='flex';
-  goWizardStep(2);}
+  document.getElementById('wizStep1Actions').style.display='flex';}
 
 // ─── Preview + Mapping ───
 async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMapOverride=om;
@@ -819,8 +823,8 @@ async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMap
 
 function renderPreviews(pv,total){
   document.getElementById('previewSection').style.display='';
-  document.getElementById('previewCount').textContent=Math.min(5,pv.length)+' of '+total+' shown';
-  document.getElementById('previewList').innerHTML=pv.slice(0,5).map(p=>'<div class="prev-card"><h4>'+esc(p.company)+'</h4><pre>'+esc(p.prompt)+'</pre></div>').join('');}
+  document.getElementById('previewCount').textContent=Math.min(3,pv.length)+' of '+total+' shown';
+  document.getElementById('previewList').innerHTML=pv.slice(0,3).map((p,i)=>'<div class="prev-card"><h4>'+esc(p.company)+'</h4><div class="prev-card-body" id="prevBody'+i+'">'+esc(p.prompt)+'</div>'+(p.prompt.length>300?'<span class="prev-card-toggle" onclick="const b=document.getElementById(\'prevBody'+i+'\');b.classList.toggle(\'expanded\');this.textContent=b.classList.contains(\'expanded\')?\'Show less\':\'Show more\'">Show more</span>':'')+'</div>').join('');}
 
 function renderMapPills(){document.getElementById('mapBar').style.display='';
   const roleTips={company:'Required. The company/prospect name column.',website:'Company website URL for web research.',contact:'Contact person name.',email:'Contact email address.',title:'Job title of the contact.',phone:'Phone number.',address:'Company address.',industry:'Industry or sector.',notes:'Extra notes passed to the AI.',rating:'Rating or score.',reviews:'Review text.'};
@@ -880,13 +884,14 @@ async function startResearch(maxRows){
   const btn=document.getElementById('btnGo');btn.disabled=true;btn.textContent='Starting...';
   results=[];currentSections=[];runCost=0;runStart=Date.now();document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';
   document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
+  const ps=document.getElementById('previewSection');if(ps)ps.style.display='none';
   document.getElementById('runningState').style.display='';document.getElementById('logBox').innerHTML='';
   // Hide wizard during research
   document.getElementById('wizardNav').style.display='none';
   for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
   try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);jobId=d.jobId;jobRunning=true;lockPromptUI(true);
-    document.getElementById('progressBar').style.display='';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
+    document.getElementById('progressBar').style.display='';document.getElementById('progText').textContent='Researching...';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
   }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Start Research';
     document.getElementById('wizardNav').style.display='flex';document.getElementById('wizStep3').style.display='';}}
 
