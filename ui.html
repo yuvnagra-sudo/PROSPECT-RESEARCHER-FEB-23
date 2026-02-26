@@ -194,6 +194,7 @@ textarea.ta:focus{border-color:var(--pri)}
 .gen-sec-desc:focus{border-bottom:1px solid var(--pri)}
 .suggestion-chip{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:16px;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:11px;color:var(--sub);transition:all .12s;white-space:nowrap}
 .suggestion-chip:hover{border-color:var(--pri);color:var(--pri-h);background:var(--pri-dim)}
+.b-outline{border:1px solid var(--pri);color:var(--pri-h);background:transparent}.b-outline:hover{background:var(--pri-dim)}
 .desc-textarea{width:100%;min-height:80px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--fg);font-family:inherit;font-size:13px;outline:none;resize:vertical;line-height:1.5;transition:border-color .15s}
 .desc-textarea:focus{border-color:var(--pri)}
 .desc-textarea::placeholder{color:var(--dim)}
@@ -387,7 +388,8 @@ textarea.ta:focus{border-color:var(--pri)}
     <!-- Actions -->
     <div class="wiz-actions">
       <button class="b b-ghost" onclick="goWizardStep(2)">&larr; Back</button>
-      <button class="b b-ghost" onclick="previewPrompt()">Preview AI prompt</button>
+      <button class="b b-ghost" id="btnPreview" onclick="previewPrompt()">Preview AI prompt</button>
+      <button class="b b-outline" onclick="startResearch(10)">Test on first 10</button>
       <button class="b b-pri" id="btnGo" onclick="startResearch()">Start Research</button>
     </div>
   </div>
@@ -450,7 +452,7 @@ function goWizardStep(n){
         if(val.trim().length>=20){customPrompt=val;promptDirty=false;
           try{localStorage.setItem('pr_prompt_'+selTmpl,customPrompt);}catch{}}
       }
-      if(promptMode==='builder'&&builderSections.length>=1)generatePromptFromBuilder();
+      if(promptMode==='builder'&&builderSections.length>=1){generatePromptFromBuilder();syncBuilderToExplicit();}
       if(customPrompt.trim().length<20){alert('Generate research sections first, or write a prompt manually.');return;}
     }
   }
@@ -587,6 +589,8 @@ function resetPrompt(){customPrompt=templates[selTmpl]?.prompt||'';document.getE
 async function previewPrompt(){
   if(!csvText){alert('Upload a CSV first to preview.');return;}
   if(promptDirty)savePrompt();
+  const btn=document.getElementById('btnPreview');
+  if(btn){btn.disabled=true;btn.textContent='Loading preview...';}
   try{
     const d=await(await api('/api/preview-prompt',{method:'POST',body:JSON.stringify({
       csv:csvText,systemPrompt:customPrompt,
@@ -606,6 +610,7 @@ async function previewPrompt(){
       '<div style="display:flex;flex-wrap:wrap;gap:4px">'+d.sections.map(s=>'<span style="font-size:10px;padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px">'+esc(s.label)+'</span>').join('')+'</div>':'')+
       '<p style="font-size:11px;color:var(--dim);margin-top:8px">This is exactly what the AI sees for row 1. Check that your sections and research instructions are clear.</p>';
   }catch(e){alert(e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent='Preview AI prompt';}}
 }
 function updatePromptMeta(){
   const p=(document.getElementById('promptEdit').value||customPrompt||'').trim();
@@ -838,7 +843,7 @@ function updateCost(){const p=providers[selProv];if(!p||!rowCount)return;const p
   const el=document.getElementById('costChip');el.style.display='inline-flex';document.getElementById('costText').innerHTML=rowCount+' rows ≈ <b>$'+(per*rowCount).toFixed(2)+'</b>';}
 
 // ─── Research ───
-async function startResearch(){
+async function startResearch(maxRows){
   if(!csvText||!selProv)return;
   if(jobRunning){alert('A job is already running. Stop it first or wait for it to finish.');return;}
   // Hard blocks — prevent guaranteed-bad output
@@ -846,8 +851,15 @@ async function startResearch(){
   if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
   if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
     alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
-  // Large CSV cost warning — right before spending money
-  if(rowCount>500){
+  // Slice CSV to maxRows if testing
+  let csvToSend=csvText;
+  if(maxRows&&maxRows>0){
+    const lines=csvText.split('\n');const header=lines[0];
+    const dataLines=lines.slice(1).filter(l=>l.trim());
+    csvToSend=[header,...dataLines.slice(0,maxRows)].join('\n');
+  }
+  // Large CSV cost warning — right before spending money (skip for test runs)
+  if(!maxRows&&rowCount>500){
     const pe=providers[selProv];
     const est=pe?((pe.inputCost*2000+pe.outputCost*2000)/1e6+(useWeb&&pe.webSearch?(pe.webCostPerCall||0):0))*rowCount:0;
     if(!confirm(rowCount+' rows detected.\nEstimated cost: ~$'+est.toFixed(2)+' ('+providers[selProv]?.name+')\nEstimated time: ~'+Math.round(rowCount*0.15)+' minutes\n\nStart research?'))return;
@@ -872,7 +884,7 @@ async function startResearch(){
   // Hide wizard during research
   document.getElementById('wizardNav').style.display='none';
   for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
-  try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
+  try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);jobId=d.jobId;jobRunning=true;lockPromptUI(true);
     document.getElementById('progressBar').style.display='';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
   }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Start Research';
