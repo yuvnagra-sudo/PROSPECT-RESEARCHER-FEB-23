@@ -738,10 +738,25 @@ function parseCSV(text){
   return{headers:hdrs,rows};
 }
 const GUESSES={company:['company','company_name','business name','business','organization','name','firm','account'],website:['url','website','web','domain','site','webpage'],email:['email','email_address','e-mail','mail'],contact:['contact','contact_name','person','full name','first name'],title:['title','job_title','role','position','designation'],phone:['phone','telephone','tel','mobile','cell'],address:['address','location','city','street','region'],industry:['industry','sector','vertical','category','type','segment'],rating:['rating','score','stars'],reviews:['reviews','review count'],notes:['notes','additional_info','description','context','comments','bio']};
-function autoGuess(headers){const map={};for(const[role,guesses]of Object.entries(GUESSES)){let found=null;
+function autoGuess(headers,rows){const map={};
+  // Stage 1: Header-name matching
+  for(const[role,guesses]of Object.entries(GUESSES)){let found=null;
   for(const g of guesses){for(const h of headers){if(h.toLowerCase().trim()===g.toLowerCase()){found=h;break;}}if(found)break;}
   if(!found){for(const g of guesses){for(const h of headers){if(h.toLowerCase().trim().includes(g.toLowerCase())){found=h;break;}}if(found)break;}}
-  map[role]=found||'';}return map;}
+  map[role]=found||'';}
+  // Stage 2: Data-pattern detection for unmapped roles
+  if(rows&&rows.length){const sample=rows.slice(0,4);const assigned=new Set(Object.values(map).filter(Boolean));
+  for(const h of headers){if(assigned.has(h))continue;const vals=sample.map(r=>(r[h]||'').trim()).filter(Boolean);if(!vals.length)continue;
+    if(!map.website&&vals.some(v=>/^https?:\/\/|www\.|\.com|\.org|\.net|\.io/i.test(v))){map.website=h;assigned.add(h);continue;}
+    if(!map.email&&vals.some(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){map.email=h;assigned.add(h);continue;}
+    if(!map.phone&&vals.some(v=>/^[\d\s+\-().]{7,}$/.test(v)&&v.replace(/\D/g,'').length>=7)){map.phone=h;assigned.add(h);continue;}}
+  if(!map.company){let bestH='',bestScore=0;for(const h of headers){if(assigned.has(h))continue;
+    const vals=sample.map(r=>(r[h]||'').trim()).filter(Boolean);if(!vals.length)continue;
+    const avg=vals.reduce((s,v)=>s+v.length,0)/vals.length;
+    const looksLikeName=vals.every(v=>!/^[\d.,$]+$/.test(v)&&!/@/.test(v)&&!/:\/\//.test(v));
+    if(looksLikeName&&avg>3&&avg<80&&avg>bestScore){bestScore=avg;bestH=h;}}
+  if(bestH){map.company=bestH;assigned.add(bestH);}}}
+  return map;}
 function buildPrompt(row,map,idx){
   const cl=v=>(v||'').replace(/^[\u00b7\u2022\s]+/,'').trim();
   const company=map.company?cl(row[map.company]):`Prospect ${idx+1}`;
@@ -1045,7 +1060,9 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride}=JSON.parse(b);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
-    const cm=colMapOverride||autoGuess(headers);json(res,{headers,colMap:cm,total:rows.length,previews:rows.slice(0,20).map((r,i)=>buildPrompt(r,cm,i))});
+    const cm=colMapOverride||autoGuess(headers,rows);
+    const sampleRows=rows.slice(0,4).map(r=>{const obj={};headers.forEach(h=>{obj[h]=(r[h]||'').trim().slice(0,80);});return obj;});
+    json(res,{headers,colMap:cm,total:rows.length,previews:rows.slice(0,20).map((r,i)=>buildPrompt(r,cm,i)),sampleRows});
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
@@ -1053,7 +1070,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
     const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
-    const cm=colMapOverride||autoGuess(headers);if(!cm.company)return json(res,{error:'No Company column'},400);
+    const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
     const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=2?JSON.stringify(explicitSections):null;
     const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);

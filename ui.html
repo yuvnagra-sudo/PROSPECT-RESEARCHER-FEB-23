@@ -139,6 +139,14 @@ textarea.ta:focus{border-color:var(--pri)}
 .prev-card-body.expanded{max-height:none}
 .prev-card-toggle{font-size:11px;color:var(--pri-h);cursor:pointer;margin-top:4px;display:inline-block}
 
+/* Inline mapping table */
+.map-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)}
+.map-row:last-child{border-bottom:none}
+.map-col-name{flex:1;font-size:12px;font-weight:500;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.map-col-sample{flex:1;font-size:11px;color:var(--sub);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.map-col-role select{font-size:11px;padding:3px 6px;border-radius:4px;background:var(--card);border:1px solid var(--border);color:var(--fg)}
+.map-header{display:flex;align-items:center;gap:8px;padding:4px 0 6px;border-bottom:2px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);font-weight:600}
+
 /* Cost chip */
 .cost-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:5px;font-family:var(--mono);font-size:11px;background:var(--card);border:1px solid var(--border);color:var(--sub)}
 .cost-chip b{color:var(--fg)}
@@ -271,13 +279,11 @@ textarea.ta:focus{border-color:var(--pri)}
       <div class="main-text" id="dzText">Drop your CSV here, or click to browse</div>
       <div class="sub-text" id="dzSub">Any CSV with a company name column</div>
     </div>
-    <div id="mapBar" style="display:none;margin-top:12px">
-      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Detected columns</div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span id="mapPills"></span>
-        <button class="b b-ghost b-sm" onclick="openDrawer('mapping')">Edit Mapping</button>
-      </div>
-      <div id="mapHints" style="margin-top:6px"></div>
+    <div id="mapBar" style="display:none;margin-top:16px">
+      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Column mapping</div>
+      <div style="font-size:11px;color:var(--sub);margin-bottom:10px">Assign roles so the AI knows what each column contains.</div>
+      <div id="mapTable"></div>
+      <div id="mapHints" style="margin-top:8px"></div>
     </div>
     <div class="wiz-actions" id="wizStep1Actions" style="display:none">
       <button class="b b-pri" onclick="goWizardStep(2)">Next &rarr;</button>
@@ -433,6 +439,7 @@ let token=localStorage.getItem('pr_token')||'',currentUser=null,isSignup=true;
 let providers={},templates={},selProv='gemini',selTmpl='b2b-outreach';
 let csvText='',rowCount=0,jobId=null,es=null,results=[],runCost=0,runStart=0;
 let colMap={},csvHeaders=[],useWeb=true,customPrompt='',promptDirty=false,jobRunning=false;
+let sampleRows=[];
 const ROLES=['company','website','contact','email','title','phone','address','industry','notes','rating','reviews'];
 
 // Table view state
@@ -805,7 +812,7 @@ async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading
 // ─── Preview + Mapping ───
 async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMapOverride=om;
     const d=await(await api('/api/preview',{method:'POST',body:JSON.stringify(body)})).json();if(d.error){alert(d.error);return;}
-    colMap=d.colMap;csvHeaders=d.headers;rowCount=d.total;
+    colMap=d.colMap;csvHeaders=d.headers;rowCount=d.total;sampleRows=d.sampleRows||[];
     if(rowCount<1){
       alert('This CSV has no data rows. Add prospect data and re-upload.');
       csvText='';rowCount=0;
@@ -816,7 +823,7 @@ async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMap
       goWizardStep(1);return;
     }
     document.getElementById('dzSub').textContent=rowCount+' prospects \u00B7 Click to change';
-    renderMapPills();renderPreviews(d.previews,d.total);
+    renderMapTable();renderPreviews(d.previews,d.total);
     document.getElementById('promptEdit').value=customPrompt;
     updatePromptMeta();
   }catch(e){alert(e.message);}}
@@ -826,16 +833,41 @@ function renderPreviews(pv,total){
   document.getElementById('previewCount').textContent=Math.min(3,pv.length)+' of '+total+' shown';
   document.getElementById('previewList').innerHTML=pv.slice(0,3).map((p,i)=>'<div class="prev-card"><h4>'+esc(p.company)+'</h4><div class="prev-card-body" id="prevBody'+i+'">'+esc(p.prompt)+'</div>'+(p.prompt.length>300?'<span class="prev-card-toggle" onclick="const b=document.getElementById(\'prevBody'+i+'\');b.classList.toggle(\'expanded\');this.textContent=b.classList.contains(\'expanded\')?\'Show less\':\'Show more\'">Show more</span>':'')+'</div>').join('');}
 
-function renderMapPills(){document.getElementById('mapBar').style.display='';
-  const roleTips={company:'Required. The company/prospect name column.',website:'Company website URL for web research.',contact:'Contact person name.',email:'Contact email address.',title:'Job title of the contact.',phone:'Phone number.',address:'Company address.',industry:'Industry or sector.',notes:'Extra notes passed to the AI.',rating:'Rating or score.',reviews:'Review text.'};
-  document.getElementById('mapPills').innerHTML=Object.entries(colMap).filter(([,v])=>v).map(([r,c])=>{
-    const colors={company:'var(--pri-dim)',website:'var(--green-d)',email:'var(--green-d)',contact:'rgba(245,158,11,.08)'};
-    const tc={company:'var(--pri-h)',website:'var(--green)',email:'var(--green)',contact:'var(--amber)'};
-    return'<span class="pill" title="'+(roleTips[r]||r)+'" style="background:'+(colors[r]||'var(--card)')+';color:'+(tc[r]||'var(--sub)')+'">'+r+': '+esc(c.length>20?c.slice(0,18)+'..':c)+'</span>';}).join(' ');
-  renderMapHints();}
+function renderMapTable(){
+  document.getElementById('mapBar').style.display='';
+  const el=document.getElementById('mapTable');if(!el||!csvHeaders.length)return;
+  const sample=sampleRows[0]||{};
+  const roleLabels={'':'(none)',company:'Company',website:'Website',contact:'Contact',email:'Email',title:'Title',phone:'Phone',address:'Address',industry:'Industry',notes:'Notes',rating:'Rating',reviews:'Reviews'};
+  const headerToRole={};
+  for(const[role,header]of Object.entries(colMap)){if(header)headerToRole[header]=role;}
+  el.innerHTML=
+    '<div class="map-header"><div style="flex:1">Column</div><div style="flex:1">Sample</div><div style="flex-shrink:0;width:100px">Role</div></div>'+
+    csvHeaders.map(h=>{
+      const val=(sample[h]||'').slice(0,40);
+      const curRole=headerToRole[h]||'';
+      return'<div class="map-row">'+
+        '<div class="map-col-name" title="'+esc(h)+'">'+esc(h)+'</div>'+
+        '<div class="map-col-sample" title="'+esc(val)+'">'+(val?esc(val):'<span style="color:var(--dim);font-style:italic">empty</span>')+'</div>'+
+        '<div class="map-col-role"><select class="sel" data-header="'+esc(h)+'" onchange="updateInlineMap()">'+
+        Object.entries(roleLabels).map(([r,l])=>'<option value="'+r+'"'+(r===curRole?' selected':'')+'>'+l+'</option>').join('')+
+        '</select></div></div>';
+    }).join('');
+  renderMapHints();
+}
+function updateInlineMap(){
+  const newMap={};ROLES.forEach(r=>{newMap[r]='';});
+  document.querySelectorAll('#mapTable select').forEach(s=>{
+    const header=s.dataset.header,role=s.value;
+    if(role){
+      if(newMap[role]){s.value='';return;}
+      newMap[role]=header;
+    }
+  });
+  colMap=newMap;renderMapHints();
+}
 function renderMapHints(){
   const hints=[];
-  if(!colMap.company)hints.push('\u26A0 No Company column detected \u2014 map one in Edit Mapping');
+  if(!colMap.company)hints.push('\u26A0 No Company column detected \u2014 assign a Company role above');
   else if(!colMap.website)hints.push('\uD83D\uDCA1 Tip: Map a Website column for better web research results');
   const el=document.getElementById('mapHints');if(!el)return;
   if(!hints.length){el.style.display='none';return;}
