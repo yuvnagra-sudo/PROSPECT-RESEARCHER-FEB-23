@@ -160,6 +160,32 @@ textarea.ta:focus{border-color:var(--pri)}
 
 /* Admin drawer */
 #adminUsersTab .hist-item,#adminJobsTab .hist-item{margin-bottom:4px}
+
+/* Wizard */
+.wiz-nav{display:flex;align-items:center;gap:0;margin-bottom:24px;padding:12px 0;border-bottom:1px solid var(--border)}
+.wiz-step-ind{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);cursor:default;padding:6px 12px;border-radius:6px;transition:all .15s}
+.wiz-step-ind.active{color:var(--pri-h);font-weight:600}
+.wiz-step-ind.done{color:var(--green);cursor:pointer}
+.wiz-step-ind.done:hover{background:var(--green-d)}
+.wiz-step-ind.locked{opacity:.4}
+.wiz-dot{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0}
+.wiz-step-ind.active .wiz-dot{border-color:var(--pri);background:var(--pri);color:#fff}
+.wiz-step-ind.done .wiz-dot{border-color:var(--green);background:var(--green-d);color:var(--green)}
+.wiz-sep{width:24px;height:1px;background:var(--border);flex-shrink:0}
+.wiz-heading{font-size:18px;font-weight:700;color:var(--fg);margin-bottom:4px}
+.wiz-sub{font-size:13px;color:var(--sub);margin-bottom:16px}
+.wiz-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+.tmpl-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.tmpl-card{flex:1;min-width:140px;max-width:200px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer;transition:all .15s;text-align:center}
+.tmpl-card:hover{border-color:var(--border-h);background:var(--surface)}
+.tmpl-card.active{border-color:var(--pri);background:var(--pri-dim)}
+.tmpl-card .tmpl-ico{font-size:24px;margin-bottom:4px}
+.tmpl-card .tmpl-name{font-size:12px;font-weight:600;color:var(--fg)}
+.tmpl-card .tmpl-desc{font-size:10px;color:var(--dim);margin-top:2px}
+.wiz-summary{padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--sub);margin-bottom:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wiz-summary b{color:var(--fg)}
+.wiz-section{margin-bottom:16px}
+.wiz-section .label{font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
 </style></head><body>
 
 <!-- ═══ AUTH ═══ -->
@@ -204,114 +230,153 @@ textarea.ta:focus{border-color:var(--pri)}
 <!-- Main -->
 <div class="main">
 
-  <!-- Upload zone -->
-  <div class="drop" id="dz" onclick="document.getElementById('fi').click()">
-    <input type="file" id="fi" accept=".csv" style="display:none"/>
-    <div class="ico" id="dzIco">📁</div>
-    <div class="main-text" id="dzText">Drop your CSV here, or click to browse</div>
-    <div class="sub-text" id="dzSub">Any CSV with a company name column</div>
+  <!-- Hidden elements for compatibility -->
+  <select class="sel" id="tmplSel" onchange="pickTmpl(this.value)" style="display:none"></select>
+  <div id="configBar" style="display:none"></div>
+  <div id="promptSection" style="display:none"></div>
+
+  <!-- ═══ WIZARD NAV ═══ -->
+  <div class="wiz-nav" id="wizardNav">
+    <div class="wiz-step-ind active" onclick="goWizardStep(1)"><span class="wiz-dot">1</span> Upload</div>
+    <div class="wiz-sep"></div>
+    <div class="wiz-step-ind locked" onclick="goWizardStep(2)"><span class="wiz-dot">2</span> Configure</div>
+    <div class="wiz-sep"></div>
+    <div class="wiz-step-ind locked" onclick="goWizardStep(3)"><span class="wiz-dot">3</span> Review &amp; Run</div>
   </div>
 
-  <!-- Config bar (appears after upload) -->
-  <div class="config-bar" id="configBar" style="display:none">
-    <label>Template</label>
-    <select class="sel" id="tmplSel" onchange="pickTmpl(this.value)" style="min-width:160px"></select>
-    <label style="margin-left:8px">Provider</label>
-    <select class="sel" id="provSel" onchange="pickProv(this.value)" style="min-width:150px"></select>
-    <div style="display:flex;align-items:center;gap:4px;margin-left:8px;cursor:pointer" onclick="toggleWS()">
-      <div class="toggle" id="wsBg" style="background:var(--pri)"><div class="knob" id="wsKnob" style="left:15px"></div></div>
-      <span style="font-size:11px;color:var(--sub)" id="wsLabel" title="Enable web search for real-time data. Adds ~$0.01-0.04 per row depending on provider. Disable for faster/cheaper runs on static research.">Web</span>
+  <!-- ═══ STEP 1: UPLOAD ═══ -->
+  <div id="wizStep1">
+    <div class="wiz-heading">Upload your prospect list</div>
+    <div class="wiz-sub">Drop a CSV file with company names. We'll auto-detect columns like website, email, and contact name.</div>
+    <div class="drop" id="dz" onclick="document.getElementById('fi').click()">
+      <input type="file" id="fi" accept=".csv" style="display:none"/>
+      <div class="ico" id="dzIco">📁</div>
+      <div class="main-text" id="dzText">Drop your CSV here, or click to browse</div>
+      <div class="sub-text" id="dzSub">Any CSV with a company name column</div>
     </div>
-    <span class="cost-chip" id="costChip" style="margin-left:auto;display:none"><span id="costText"></span></span>
-    <button class="b b-pri" id="btnGo" onclick="startResearch()" style="margin-left:4px">Research</button>
+    <div id="mapBar" style="display:none;margin-top:10px">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span id="mapPills"></span>
+        <button class="b b-ghost b-sm" onclick="openDrawer('mapping')">Edit Mapping</button>
+      </div>
+      <div id="mapHints" style="display:none;margin-top:4px"></div>
+    </div>
+    <div class="wiz-actions" id="wizStep1Actions" style="display:none">
+      <button class="b b-pri" onclick="goWizardStep(2)">Next &rarr;</button>
+    </div>
   </div>
 
-  <!-- Column mapping pills (appears after upload) -->
-  <div id="mapBar" style="display:none;margin-top:10px">
-    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-      <span id="mapPills"></span>
-      <button class="b b-ghost b-sm" onclick="openDrawer('mapping')">Edit Mapping</button>
+  <!-- ═══ STEP 2: CONFIGURE ═══ -->
+  <div id="wizStep2" style="display:none">
+    <div class="wiz-heading">What do you want to research?</div>
+    <div class="wiz-sub">Pick a template to get started, or build your own research sections below.</div>
+
+    <!-- Template pills -->
+    <div class="wiz-section">
+      <div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Choose a template</div>
+      <div class="tmpl-grid" id="tmplGrid"></div>
     </div>
-    <div id="mapHints" style="display:none;margin-top:4px"></div>
-  </div>
 
-  <!-- ── System Prompt Panel (collapsible card, visible by default) ── -->
-  <div class="panel" id="promptSection" style="display:none">
-    <div class="panel-hd open" id="promptHd" onclick="togglePanel('prompt')">
-      <span class="panel-icon">⚙️</span>
-      <span class="panel-title">System Prompt</span>
-      <span class="panel-meta" id="promptMeta"></span>
-      <span class="chevron">▼</span>
+    <!-- Research sections (Builder) -->
+    <div class="wiz-section" id="promptBuilder">
+      <div style="margin-bottom:10px">
+        <div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Research Sections <span style="font-weight:400;text-transform:none;letter-spacing:0">(each becomes a CSV column)</span></div>
+        <div id="buildSections" style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px"></div>
+        <div style="display:flex;gap:4px"><input class="inp" id="buildSectionInput" placeholder="Section name (2-4 words)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addBuilderSection()}" oninput="previewSectionHint()"/><input class="inp" id="buildSectionDesc" placeholder="Research instruction (auto-suggested)" style="flex:1.5"/><button class="b b-ghost b-sm" onclick="addBuilderSection()">+ Add</button></div>
+        <div id="buildSectionHint" style="display:none;font-size:10px;color:var(--dim);padding:2px 0;font-style:italic"></div>
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">AI Role <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+        <input class="inp" id="buildRole" placeholder="e.g. B2B sales researcher, due diligence analyst" style="width:100%"/>
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Extra Instructions <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+        <textarea class="ta" id="buildExtra" style="min-height:50px" placeholder="e.g. Be concise. Focus on data from the last 6 months."></textarea>
+      </div>
     </div>
-    <div class="panel-body" id="promptBody">
-      <div style="font-size:11px;color:var(--dim);background:var(--bg);border-radius:6px;padding:8px 10px;margin-bottom:8px;line-height:1.6"><strong style="color:var(--sub)">Prompt tips:</strong> Number your sections (<code style="background:var(--card);padding:1px 4px;border-radius:3px">1. Company Snapshot  2. Pain Points</code>) &mdash; each becomes a CSV column. Keep section names short (2-4 words). <a style="color:var(--pri-h);cursor:pointer" onclick="document.getElementById('promptExample').style.display=document.getElementById('promptExample').style.display==='none'?'':'none'">See example</a></div>
-      <div id="promptExample" style="display:none;font-size:10px;color:var(--dim);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-family:var(--mono);line-height:1.6;white-space:pre-wrap">You are a B2B sales researcher. Research {company} and provide:
 
-1. Company Snapshot — 2-3 sentence overview of what they do
-2. Pain Points — Business challenges they likely face
-3. Recent News — Any recent press, funding, or product launches
-4. Decision Maker — Name and title of the likely buyer
-5. Personalization Hook — A specific detail for cold outreach
-
-Be concise. Use data from their website and recent news.</div>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        <button class="b b-sm b-pri" id="btnBuilder" onclick="setPromptMode('builder')">Builder</button>
-        <button class="b b-sm b-ghost" id="btnAdvanced" onclick="setPromptMode('advanced')">Advanced</button>
+    <!-- Output columns -->
+    <div class="wiz-section">
+      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Output Columns (CSV)</div>
+      <div id="sectionFeedback" style="display:none;font-size:11px;padding:4px 0;margin-bottom:4px"></div>
+      <div id="sectionList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input class="inp" id="addSectionInput" placeholder="Add column..." style="width:160px;font-size:12px;padding:4px 8px" onkeydown="if(event.key==='Enter')addSection()"/>
+        <button class="b b-ghost b-sm" onclick="addSection()">+ Add</button>
+        <button class="b b-ghost b-sm" onclick="autoDetectSections()">Auto-detect</button>
       </div>
-      <div id="promptBuilder">
-        <div style="margin-bottom:10px"><div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">AI Role</div><input class="inp" id="buildRole" placeholder="e.g. B2B sales researcher, due diligence analyst, real estate prospecting expert" style="width:100%"/></div>
-        <div style="margin-bottom:10px"><div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Research Sections <span style="font-weight:400;text-transform:none;letter-spacing:0">(each becomes a CSV column)</span></div>
-          <div id="buildSections" style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px"></div>
-          <div style="display:flex;gap:4px"><input class="inp" id="buildSectionInput" placeholder="Section name (2-4 words)" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addBuilderSection()}" oninput="previewSectionHint()"/><input class="inp" id="buildSectionDesc" placeholder="Research instruction (auto-suggested)" style="flex:1.5"/><button class="b b-ghost b-sm" onclick="addBuilderSection()">+ Add</button></div>
-          <div id="buildSectionHint" style="display:none;font-size:10px;color:var(--dim);padding:2px 0;font-style:italic"></div>
-        </div>
-        <div style="margin-bottom:10px"><div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Extra Instructions <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div><textarea class="ta" id="buildExtra" style="min-height:50px" placeholder="e.g. Be concise. Focus on data from the last 6 months. Use web search for current info."></textarea></div>
-        <button class="b b-pri b-sm" onclick="generatePromptFromBuilder()">Generate Prompt</button>
-      </div>
-      <textarea class="ta" id="promptEdit" style="min-height:160px;display:none" oninput="promptDirty=true;clearTimeout(promptMetaTimer);promptMetaTimer=setTimeout(()=>{autoDetectSections();updatePromptMeta()},500)"></textarea>
-      <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-        <button class="b b-pri b-sm" onclick="savePrompt()">Apply</button>
-        <button class="b b-ghost b-sm" onclick="resetPrompt()">Reset to template</button>
-        <button class="b b-ghost b-sm" onclick="previewPrompt()">Preview AI prompt</button>
-        <span id="promptSaved" style="font-size:11px;color:var(--green);opacity:0;transition:opacity .3s">Applied</span>
-      </div>
-      <!-- Section Editor -->
-      <div style="margin-top:14px">
-        <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Output Columns (CSV)</div>
-        <div id="sectionFeedback" style="display:none;font-size:11px;padding:4px 0;margin-bottom:4px"></div>
-        <div id="sectionList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
-        <div style="display:flex;gap:4px;align-items:center">
-          <input class="inp" id="addSectionInput" placeholder="Add column..." style="width:160px;font-size:12px;padding:4px 8px" onkeydown="if(event.key==='Enter')addSection()"/>
-          <button class="b b-ghost b-sm" onclick="addSection()">+ Add</button>
-          <button class="b b-ghost b-sm" onclick="autoDetectSections()">Auto-detect</button>
-        </div>
-      </div>
-      <!-- Column Preview -->
       <div id="columnPreview" style="display:none;margin-top:10px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:6px">
         <div style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">CSV Export Columns</div>
         <div id="columnPreviewList" style="font-size:11px;color:var(--text);font-family:var(--mono);word-break:break-word"></div>
       </div>
     </div>
+
+    <!-- Edit raw prompt (expandable for power users) -->
+    <div class="wiz-section">
+      <a style="font-size:11px;color:var(--pri-h);cursor:pointer" onclick="document.getElementById('rawPromptBlock').style.display=document.getElementById('rawPromptBlock').style.display==='none'?'':'none'">Edit raw prompt (advanced)</a>
+      <div id="rawPromptBlock" style="display:none;margin-top:8px">
+        <textarea class="ta" id="promptEdit" style="min-height:160px" oninput="promptDirty=true;clearTimeout(promptMetaTimer);promptMetaTimer=setTimeout(()=>{autoDetectSections();updatePromptMeta()},500)"></textarea>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+          <button class="b b-pri b-sm" onclick="savePrompt()">Apply</button>
+          <button class="b b-ghost b-sm" onclick="resetPrompt()">Reset to template</button>
+          <button class="b b-ghost b-sm" onclick="previewPrompt()">Preview AI prompt</button>
+          <span id="promptSaved" style="font-size:11px;color:var(--green);opacity:0;transition:opacity .3s">Applied</span>
+        </div>
+      </div>
+      <div id="promptMeta" style="font-size:11px;color:var(--dim);margin-top:6px"></div>
+    </div>
+
+    <div class="wiz-actions">
+      <button class="b b-ghost" onclick="goWizardStep(1)">&larr; Back</button>
+      <button class="b b-pri" onclick="goWizardStep(3)">Next &rarr;</button>
+    </div>
   </div>
 
-  <!-- ── Preview Panel (collapsible card, visible by default) ── -->
-  <div class="panel" id="previewSection" style="display:none">
-    <div class="panel-hd open" id="previewHd" onclick="togglePanel('preview')">
-      <span class="panel-icon">👁</span>
-      <span class="panel-title">Prompt Preview</span>
-      <span class="panel-meta" id="previewCount"></span>
-      <span class="chevron">▼</span>
+  <!-- ═══ STEP 3: REVIEW & RUN ═══ -->
+  <div id="wizStep3" style="display:none">
+    <div class="wiz-heading">Review &amp; run</div>
+    <div class="wiz-sub">Choose your AI provider and start researching.</div>
+
+    <!-- Summary -->
+    <div class="wiz-summary" id="wizSummary"></div>
+
+    <!-- Provider + Web + Cost -->
+    <div class="wiz-section" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div>
+        <div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">AI Provider</div>
+        <select class="sel" id="provSel" onchange="pickProv(this.value)" style="min-width:180px"></select>
+      </div>
+      <div>
+        <div class="label" style="font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Web Search</div>
+        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;padding-top:2px" onclick="toggleWS()">
+          <div class="toggle" id="wsBg" style="background:var(--pri)"><div class="knob" id="wsKnob" style="left:15px"></div></div>
+          <span style="font-size:12px;color:var(--sub)" id="wsLabel" title="Enable web search for real-time data. Adds ~$0.01-0.04 per row.">Web</span>
+        </div>
+      </div>
+      <div style="margin-left:auto">
+        <span class="cost-chip" id="costChip"><span id="costText"></span></span>
+      </div>
     </div>
-    <div class="panel-body" id="previewBody">
-      <p style="font-size:11px;color:var(--dim);margin-bottom:10px">This is exactly what gets sent to the AI for each row. Verify columns look right before running.</p>
-      <div id="previewList"></div>
+
+    <!-- Preview panel -->
+    <div class="wiz-section" id="previewSection" style="display:none">
+      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Sample prompts <span style="font-weight:400;text-transform:none;letter-spacing:0" id="previewCount"></span></div>
+      <div id="previewBody">
+        <div id="previewList"></div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="wiz-actions">
+      <button class="b b-ghost" onclick="goWizardStep(2)">&larr; Back</button>
+      <button class="b b-ghost" onclick="previewPrompt()">Preview AI prompt</button>
+      <button class="b b-pri" id="btnGo" onclick="startResearch()">Start Research</button>
     </div>
   </div>
 
-  <!-- Banner -->
+  <!-- ═══ RESULTS (outside wizard) ═══ -->
   <div id="completeBanner" style="display:none;margin-top:14px"></div>
 
-  <!-- Running state -->
   <div id="runningState" style="display:none;margin-top:12px">
     <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
       <div class="pbar" style="flex:1"><div class="pfill" id="progBarInline"></div></div>
@@ -321,16 +386,12 @@ Be concise. Use data from their website and recent news.</div>
     <div class="log-box" id="logBox"></div>
   </div>
 
-  <!-- View toggle -->
   <div class="view-toggle" id="viewToggle" style="display:none">
     <button class="b b-pri b-sm" id="btnTableView" onclick="setView('table')">Table View</button>
     <button class="b b-ghost b-sm" id="btnCardView" onclick="setView('card')">Card View</button>
   </div>
 
-  <!-- Table view -->
   <div id="tableContainer" style="display:none;margin-top:8px"></div>
-
-  <!-- Card view (results stream) -->
   <div id="resultsList" style="display:none;flex-direction:column;gap:6px;margin-top:14px"></div>
 
 </div></div>
@@ -356,6 +417,7 @@ const panelState={prompt:true,preview:true};
 // Table view state
 let currentView='table',currentSections=[];
 let sectionHints={};
+let wizStep=1;
 
 function api(p,o={}){o.headers={...(o.headers||{}),'content-type':'application/json'};if(token)o.headers.authorization='Bearer '+token;return fetch(p,o);}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
@@ -366,6 +428,59 @@ function togglePanel(name){
   const body=document.getElementById(name+'Body');
   if(panelState[name]){hd.classList.add('open');body.classList.remove('hidden');}
   else{hd.classList.remove('open');body.classList.add('hidden');}
+}
+
+// ─── Wizard ───
+function goWizardStep(n){
+  // Only allow clicking completed steps or the next step
+  if(n>wizStep+1)return;
+  // Validate before advancing
+  if(n>wizStep){
+    if(wizStep===1&&(!csvText||rowCount<1)){alert('Upload a CSV file first.');return;}
+    if(wizStep===2){
+      if(promptDirty){
+        const val=document.getElementById('promptEdit').value;
+        if(val.trim().length>=20){customPrompt=val;promptDirty=false;
+          try{localStorage.setItem('pr_prompt_'+selTmpl,customPrompt);}catch{}}
+      }
+      if(promptMode==='builder'&&builderSections.length>=1)generatePromptFromBuilder();
+      if(customPrompt.trim().length<20){alert('Add at least one research section or write a prompt.');return;}
+    }
+  }
+  wizStep=n;
+  for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display=i===n?'':'none';}
+  document.querySelectorAll('.wiz-step-ind').forEach((el,idx)=>{
+    const s=idx+1;
+    el.className='wiz-step-ind'+(s===n?' active':s<n?' done':' locked');
+    el.querySelector('.wiz-dot').textContent=s<n?'\u2713':s;
+  });
+  if(n===2){renderTemplatePills();document.getElementById('promptEdit').value=customPrompt;updatePromptMeta();}
+  if(n===3){updateCost();renderStep3Summary();if(csvText)refreshPreview(colMap);}
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function renderTemplatePills(){
+  const el=document.getElementById('tmplGrid');if(!el)return;
+  el.innerHTML=Object.entries(templates).map(([id,t])=>
+    '<div class="tmpl-card'+(id===selTmpl?' active':'')+'" onclick="pickTmplWiz(\''+id+'\')">'+
+    '<div class="tmpl-ico">'+t.icon+'</div>'+
+    '<div class="tmpl-name">'+esc(t.name)+'</div>'+
+    '<div class="tmpl-desc">'+esc(t.desc||'')+'</div></div>').join('');
+}
+function pickTmplWiz(id){
+  selTmpl=id;
+  const saved=localStorage.getItem('pr_prompt_'+id);
+  customPrompt=saved||templates[id]?.prompt||'';
+  document.getElementById('promptEdit').value=customPrompt;promptDirty=false;
+  const t=templates[id];
+  if(t?.sections?.length){builderSections=t.sections.map(s=>({name:s.label,desc:''}));renderBuilderSections();}
+  if(typeof autoDetectSections==='function')autoDetectSections();
+  renderTemplatePills();updatePromptMeta();
+}
+function renderStep3Summary(){
+  const el=document.getElementById('wizSummary');if(!el)return;
+  const tmplName=templates[selTmpl]?.name||'Custom';
+  const secCount=explicitSections.length;
+  el.innerHTML='<b>'+rowCount+'</b> prospects \u00B7 <b>'+esc(tmplName)+'</b>'+(secCount>=2?' \u00B7 <b>'+secCount+'</b> sections':'');
 }
 
 // ─── Auth ───
@@ -552,10 +667,11 @@ function updateColumnPreview(){
 let promptMode='builder',builderSections=[];
 function setPromptMode(mode){
   promptMode=mode;
-  document.getElementById('btnBuilder').className='b b-sm '+(mode==='builder'?'b-pri':'b-ghost');
-  document.getElementById('btnAdvanced').className='b b-sm '+(mode==='advanced'?'b-pri':'b-ghost');
-  document.getElementById('promptBuilder').style.display=mode==='builder'?'':'none';
-  document.getElementById('promptEdit').style.display=mode==='advanced'?'':'none';
+  const bb=document.getElementById('btnBuilder');if(bb)bb.className='b b-sm '+(mode==='builder'?'b-pri':'b-ghost');
+  const ba=document.getElementById('btnAdvanced');if(ba)ba.className='b b-sm '+(mode==='advanced'?'b-pri':'b-ghost');
+  const pb=document.getElementById('promptBuilder');if(pb)pb.style.display=mode==='builder'?'':'none';
+  const rawBlock=document.getElementById('rawPromptBlock');
+  if(mode==='advanced'&&rawBlock)rawBlock.style.display='';
   // Sync sections from advanced mode into builder when switching to builder
   if(mode==='builder'&&explicitSections.length>=2&&!builderSections.length){
     builderSections=explicitSections.map(s=>({name:s.label,desc:''}));renderBuilderSections();
@@ -611,7 +727,7 @@ function generatePromptFromBuilder(){
 function lockPromptUI(lock){
   const pe=document.getElementById('promptEdit');if(pe)pe.disabled=lock;
   const ai=document.getElementById('addSectionInput');if(ai)ai.disabled=lock;
-  document.querySelectorAll('#promptBody button').forEach(b=>b.disabled=lock);
+  document.querySelectorAll('#wizStep2 button').forEach(b=>b.disabled=lock);
   document.querySelectorAll('#sectionList .pill span[onclick]').forEach(s=>s.style.pointerEvents=lock?'none':'');
 }
 
@@ -629,7 +745,9 @@ async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading
   csvText=await f.text();dz.classList.add('loaded');
   document.getElementById('dzIco').textContent='✅';document.getElementById('dzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
   document.getElementById('dzSub').textContent='Click to change';
-  await refreshPreview();document.getElementById('configBar').style.display='flex';updateCost();}
+  await refreshPreview();updateCost();
+  document.getElementById('wizStep1Actions').style.display='flex';
+  goWizardStep(2);}
 
 // ─── Preview + Mapping ───
 async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMapOverride=om;
@@ -642,17 +760,10 @@ async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMap
       document.getElementById('dzIco').textContent='\uD83D\uDCC1';
       document.getElementById('dzText').textContent='Drop your CSV here, or click to browse';
       document.getElementById('dzSub').textContent='Any CSV with a company name column';
-      document.getElementById('configBar').style.display='none';return;
-    }
-    if(rowCount>500){
-      const p=providers[selProv];
-      const est=p?((p.inputCost*2000+p.outputCost*2000)/1e6+(useWeb&&p.webSearch?(p.webCostPerCall||0):0))*rowCount:0;
-      if(!confirm(rowCount+' rows detected.\nEstimated cost: ~$'+est.toFixed(2)+'\nEstimated time: ~'+Math.round(rowCount*0.15)+' minutes\n\nContinue?'))return;
+      goWizardStep(1);return;
     }
     document.getElementById('dzSub').textContent=rowCount+' prospects \u00B7 Click to change';
     renderMapPills();renderPreviews(d.previews,d.total);
-    // Show prompt panel and populate
-    document.getElementById('promptSection').style.display='';
     document.getElementById('promptEdit').value=customPrompt;
     updatePromptMeta();
   }catch(e){alert(e.message);}}
@@ -691,6 +802,12 @@ async function startResearch(){
   if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
   if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
     alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
+  // Large CSV cost warning — right before spending money
+  if(rowCount>500){
+    const pe=providers[selProv];
+    const est=pe?((pe.inputCost*2000+pe.outputCost*2000)/1e6+(useWeb&&pe.webSearch?(pe.webCostPerCall||0):0))*rowCount:0;
+    if(!confirm(rowCount+' rows detected.\nEstimated cost: ~$'+est.toFixed(2)+' ('+providers[selProv]?.name+')\nEstimated time: ~'+Math.round(rowCount*0.15)+' minutes\n\nStart research?'))return;
+  }
   // Auto-save prompt if dirty
   if(promptDirty)savePrompt();
   // Pre-flight readiness checks
@@ -708,17 +825,22 @@ async function startResearch(){
   results=[];currentSections=[];runCost=0;runStart=Date.now();document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';
   document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
   document.getElementById('runningState').style.display='';document.getElementById('logBox').innerHTML='';
+  // Hide wizard during research
+  document.getElementById('wizardNav').style.display='none';
+  for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
   try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);jobId=d.jobId;jobRunning=true;lockPromptUI(true);
     document.getElementById('progressBar').style.display='';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
-  }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Research';}}
+  }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Start Research';
+    document.getElementById('wizardNav').style.display='flex';document.getElementById('wizStep3').style.display='';}}
 
 function connectSSE(id){if(es)es.close();let sseRetries=0;
   es=new EventSource('/api/stream/'+id+'?token='+encodeURIComponent(token));
   es.onerror=()=>{sseRetries++;if(sseRetries>=3){es.close();
     const b=document.getElementById('completeBanner');b.style.display='flex';b.className='banner fade-in banner-err';
     b.innerHTML='<span style="flex:1">Connection lost. Results may be incomplete.</span><button class="b b-pri b-sm" onclick="connectSSE('+id+')">Reconnect</button>';
-    jobRunning=false;document.getElementById('btnGo').disabled=false;document.getElementById('btnGo').textContent='Research';}};
+    jobRunning=false;document.getElementById('btnGo').disabled=false;document.getElementById('btnGo').textContent='Start Research';
+    document.getElementById('wizardNav').style.display='flex';goWizardStep(3);}};
   es.onmessage=e=>{sseRetries=0;let d;try{d=JSON.parse(e.data);}catch{return;}
     if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('viewToggle').style.display='flex';setView(currentView);}
     if(d.type==='result'){results.push(d);addRC(d);if(currentView==='table')addTableRow(d);
@@ -736,7 +858,8 @@ function connectSSE(id){if(es)es.close();let sseRetries=0;
       document.getElementById('progTextInline').innerHTML=d.succeeded+(d.failed?'+'+d.failed+'err':'')+' / '+d.total;}
     if(d.type==='log')addLog(d.msg);
     if(d.type==='rate_info')addLog('Throttle: '+Math.round(d.delay)+'ms');
-    if(d.type==='done'){jobRunning=false;lockPromptUI(false);const goBtn=document.getElementById('btnGo');goBtn.disabled=false;goBtn.textContent='Research';document.getElementById('progressBar').style.display='none';document.getElementById('runningState').style.display='none';
+    if(d.type==='done'){jobRunning=false;lockPromptUI(false);const goBtn=document.getElementById('btnGo');goBtn.disabled=false;goBtn.textContent='Start Research';document.getElementById('progressBar').style.display='none';document.getElementById('runningState').style.display='none';
+      document.getElementById('wizardNav').style.display='flex';goWizardStep(3);
       const b=document.getElementById('completeBanner');b.style.display='flex';
       const ok=d.status==='complete';b.className='banner fade-in '+(ok?'banner-ok':'banner-err');
       let t=(ok?'✅':'⚠')+' '+d.succeeded+' researched, '+d.failed+' failed';
@@ -754,7 +877,8 @@ async function cancelJob(){
   if(btn){btn.disabled=true;btn.textContent='Cancelling...';}
   try{await api('/api/cancel/'+jobId,{method:'POST'});}catch{}
   if(es){es.close();es=null;}
-  jobRunning=false;document.getElementById('btnGo').disabled=false;lockPromptUI(false);
+  jobRunning=false;document.getElementById('btnGo').disabled=false;document.getElementById('btnGo').textContent='Start Research';lockPromptUI(false);
+  document.getElementById('wizardNav').style.display='flex';goWizardStep(3);
 }
 function exportCSV(){if(jobId)window.open('/api/export/'+jobId+'?token='+encodeURIComponent(token));}
 function exportCSV2(jid){window.open('/api/export/'+jid+'?token='+encodeURIComponent(token));}
@@ -893,7 +1017,10 @@ async function loadHistory(){try{const jobs=await(await api('/api/jobs')).json()
       +(j.status==='complete'?'<span class="b b-ghost b-sm" onclick="event.stopPropagation();exportCSV2('+j.id+')">CSV</span>':'')
       +(j.status==='paused'?'<span class="b b-green b-sm" onclick="event.stopPropagation();resumeJob('+j.id+');closeDrawer()">Resume</span>':'')
       +'<span class="b b-ghost b-sm" onclick="event.stopPropagation();deleteJob('+j.id+')">✕</span></div>';}).join('');}catch(e){const el=document.getElementById('histList');if(el)el.innerHTML='<p style="font-size:12px;color:var(--red)">Failed to load history. Check server connection.</p>';}}
-async function viewJob(jid){jobId=jid;results=[];currentSections=[];document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';connectSSE(jid);}
+async function viewJob(jid){jobId=jid;results=[];currentSections=[];document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
+  // Hide wizard steps to show results
+  for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
+  connectSSE(jid);}
 async function deleteJob(jid){if(!confirm('Delete this job?'))return;await api('/api/jobs/'+jid,{method:'DELETE'});loadHistory();}
 
 // ─── Admin Dashboard ───
