@@ -254,6 +254,7 @@ textarea.ta:focus{border-color:var(--pri)}
   <div class="logo">Prospect Researcher</div>
   <div class="topbar-r">
     <button class="b b-ghost b-sm" id="btnAdmin" style="display:none;border-color:var(--pri);color:var(--pri-h)" onclick="openDrawer('admin')">Admin</button>
+    <button class="b b-ghost b-sm" onclick="openDrawer('audit')">🔍 Audit</button>
     <button class="b b-ghost b-sm" onclick="openDrawer('history')">History</button>
     <button class="b b-ghost b-sm" onclick="openDrawer('settings')">Settings</button>
     <span style="font-size:11px;color:var(--dim)" id="userEmail"></span>
@@ -322,7 +323,7 @@ textarea.ta:focus{border-color:var(--pri)}
       <span class="suggestion-chip" onclick="fillSuggestion('Company financials, leadership team, market position, competitive landscape, risks, and growth trajectory for investment evaluation')">Due diligence</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Products and pricing, market share, strengths and weaknesses, recent strategic moves, and sales approach')">Competitor analysis</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Industry overview, target customers, competitive landscape, growth opportunities, and recent market trends')">Market research</span>
-      <span class="suggestion-chip" onclick="fillSuggestion('Website quality, SEO health, online reviews, social media presence, and specific improvement opportunities')">Website audit</span>
+      <span class="suggestion-chip" onclick="fillSuggestion('Website quality, SEO health, online reviews, social media presence, and specific improvement opportunities');pickTmpl('website-audit')">Website audit</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Open roles, hiring velocity, key departments growing, culture and employer brand, and talent strategy')">Recruiting intel</span>
     </div>
 
@@ -1063,6 +1064,40 @@ async function resumeJob(jid){if(jobRunning){alert('A job is already running.');
   jobId=jid;jobRunning=true;document.getElementById('completeBanner').style.display='none';document.getElementById('progressBar').style.display='';
   document.getElementById('runningState').style.display='';document.getElementById('btnGo').disabled=true;addLog('Resuming...');connectSSE(jid);}catch(e){alert(e.message);}}
 
+// ─── Standalone Audit ───
+function buildAuditDrawer(){
+  return `<h3>Website Auditor <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>
+<p style="font-size:12px;color:var(--dim);margin-bottom:14px">Run a live technical audit on any website. Checks performance, SSL, robots.txt, and PageSpeed data. This is the same check that runs automatically during the <b>Website Services Prospecting</b> research job.</p>
+<div style="display:flex;gap:8px;margin-bottom:14px">
+  <input class="inp" id="saUrl" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')runStandaloneAudit()">
+  <button class="b b-pri" id="saBtn" onclick="runStandaloneAudit()">Run Audit</button>
+</div>
+<div id="saResult"></div>
+<div id="saSummary" style="display:none;margin-top:14px">
+  <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Raw data injected into AI prompt</div>
+  <pre id="saSummaryText" style="font-size:10px;color:var(--sub);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto"></pre>
+</div>`;}
+
+async function runStandaloneAudit(){
+  const urlEl=document.getElementById('saUrl');
+  const btn=document.getElementById('saBtn');
+  const result=document.getElementById('saResult');
+  const summary=document.getElementById('saSummary');
+  const url=urlEl?.value.trim();
+  if(!url)return;
+  btn.disabled=true;btn.textContent='Auditing…';
+  result.innerHTML='<p style="font-size:12px;color:var(--dim)">Running checks (up to 30s)…</p>';
+  summary.style.display='none';
+  try{
+    const r=await api('/api/audit-website',{method:'POST',body:JSON.stringify({url})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Audit failed');
+    renderAuditResult(d,result);
+    document.getElementById('saSummaryText').textContent=d.summary||'';
+    summary.style.display='';
+  }catch(e){result.innerHTML='<p style="font-size:12px;color:var(--red)">'+esc(e.message)+'</p>';}
+  btn.disabled=false;btn.textContent='Run Audit';}
+
 // ─── Drawer ───
 function openDrawer(mode){document.getElementById('drawerOverlay').classList.add('open');document.getElementById('drawer').classList.add('open');
   const c=document.getElementById('drawerContent');
@@ -1071,7 +1106,8 @@ function openDrawer(mode){document.getElementById('drawerOverlay').classList.add
   else if(mode==='mapping')c.innerHTML=buildMappingDrawer();
   else if(mode==='prompt')c.innerHTML=buildPromptDrawer();
   else if(mode==='export')c.innerHTML=buildExportDrawer();
-  else if(mode==='admin'){c.innerHTML=buildAdminDrawer();loadAdminUsers();loadAdminJobs();}}
+  else if(mode==='admin'){c.innerHTML=buildAdminDrawer();loadAdminUsers();loadAdminJobs();}
+  else if(mode==='audit'){c.innerHTML=buildAuditDrawer();}}
 function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
 
 function buildSettingsDrawer(){
