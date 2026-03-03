@@ -482,12 +482,43 @@ textarea.ta:focus{border-color:var(--pri)}
     </div>
   </div>
 
-  <!-- Batch audit — via wizard -->
-  <div class="audit-page-card" style="text-align:center;padding:24px">
-    <div style="font-size:14px;margin-bottom:8px">Run a batch audit on a list of websites</div>
-    <div style="font-size:12px;color:var(--dim);margin-bottom:16px">Upload a CSV — results export with the same table view, card view, and CSV export as research.</div>
-    <button class="b b-pri" onclick="openAuditMode()">Batch Audit (via wizard) →</button>
+  <!-- Batch audit — self-contained -->
+  <div class="audit-page-card">
+    <div class="card-label">Batch Audit</div>
+    <div class="drop" id="auditDz" onclick="document.getElementById('auditFi').click()">
+      <input type="file" id="auditFi" accept=".csv" style="display:none">
+      <div class="ico" id="auditDzIco">📂</div>
+      <div class="main-text" id="auditDzText">Drop CSV here or click to upload</div>
+      <div class="sub-text" id="auditDzSub">website URLs, one per row</div>
+    </div>
+    <div id="auditBatchRow" style="display:none;margin-top:10px;gap:8px;flex-wrap:wrap;align-items:center">
+      <span id="auditRowCount" style="font-size:12px;color:var(--dim)"></span>
+      <button class="b b-ghost b-sm" onclick="openDrawer('mapping')">Map Columns</button>
+      <button class="b b-outline b-sm" onclick="startBatchAudit(10)">Test first 10</button>
+      <button class="b b-pri" id="auditBatchBtn" onclick="startBatchAudit()">Start Batch Audit</button>
+    </div>
+    <div id="auditBatchErr" style="font-size:12px;color:var(--red);margin-top:6px"></div>
   </div>
+
+  <!-- Progress -->
+  <div id="auditRunning" style="display:none;margin-top:10px">
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+      <div class="pbar" style="flex:1"><div class="pfill" id="auditProgBar"></div></div>
+      <span style="font-size:11px;font-family:var(--mono);color:var(--sub)" id="auditProgText">0 / 0</span>
+      <button class="b b-ghost b-sm" onclick="openDrawer('export')" title="Export completed rows now">Export so far</button>
+      <button class="b b-red b-sm" onclick="pauseAuditJob()">⏹ Stop</button>
+    </div>
+    <div class="log-box" id="auditLogBox" style="max-height:80px"></div>
+  </div>
+
+  <!-- View toggle + complete banner + results -->
+  <div id="auditViewToggle" style="display:none;margin-top:12px;gap:6px">
+    <button class="b b-pri b-sm" id="auditBtnTableView" onclick="setAuditView('table')">Table View</button>
+    <button class="b b-ghost b-sm" id="auditBtnCardView" onclick="setAuditView('card')">Card View</button>
+  </div>
+  <div id="auditCompleteBanner" style="display:none;margin-top:8px"></div>
+  <div id="auditTableContainer" style="display:none;margin-top:8px"></div>
+  <div id="auditResultsList" style="display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
 </div>
 
 </div>
@@ -504,7 +535,7 @@ textarea.ta:focus{border-color:var(--pri)}
 let token=localStorage.getItem('pr_token')||'',currentUser=null,isSignup=true;
 let providers={},templates={},selProv='gemini',selTmpl='b2b-outreach';
 let csvText='',rowCount=0,jobId=null,es=null,results=[],runCost=0,runStart=0;
-let colMap={},csvHeaders=[],useWeb=true,customPrompt='',promptDirty=false,jobRunning=false;
+let colMap={},csvHeaders=[],useWeb=true,customPrompt='',promptDirty=false,jobRunning=false,auditView='card';
 let sampleRows=[];
 const ROLES=['company','website','contact','email','title','phone','address','industry','notes','rating','reviews'];
 
@@ -523,7 +554,6 @@ function goWizardStep(n){
   // Validate before advancing
   if(n>wizStep){
     if(wizStep===1&&(!csvText||rowCount<1)){alert('Upload a CSV file first.');return;}
-    if(n===2&&templates[selTmpl]?.auditOnly){goWizardStep(3);return;}
     if(wizStep===2){
       if(promptDirty){
         const val=document.getElementById('promptEdit').value;
@@ -541,11 +571,6 @@ function goWizardStep(n){
     el.className='wiz-step-ind'+(s===n?' active':s<n?' done':' locked');
     el.querySelector('.wiz-dot').textContent=s<n?'\u2713':s;
   });
-  if(n===1){
-    const isAudit=!!templates[selTmpl]?.auditOnly;
-    const h=document.querySelector('#wizStep1 .wiz-heading');const sub=document.querySelector('#wizStep1 .wiz-sub');
-    if(h)h.textContent=isAudit?'Upload your website list':'Upload your prospect list';
-    if(sub)sub.innerHTML=isAudit?'Drop a CSV file with website URLs. We\'ll auto-detect the URL column.':'Drop a CSV file with company names. We\'ll auto-detect columns like website, email, and contact name.';}
   if(n===2){renderGeneratedSections();document.getElementById('promptEdit').value=customPrompt;updatePromptMeta();if(builderSections.length>=1)setPromptMode('builder');}
   if(n===3){updateCost();renderStep3Summary();if(csvText&&!results.length)refreshPreview(colMap);}
   if(!results.length)window.scrollTo({top:0,behavior:'smooth'});
@@ -607,11 +632,8 @@ function syncBuilderToExplicit(){
 }
 function renderStep3Summary(){
   const el=document.getElementById('wizSummary');if(!el)return;
-  const isAudit=!!templates[selTmpl]?.auditOnly;
   const secCount=explicitSections.length;
-  el.innerHTML='<b>'+rowCount+'</b> '+(isAudit?'websites':'prospects')+(secCount>=2&&!isAudit?' \u00B7 <b>'+secCount+'</b> sections':'');
-  const goBtn=document.getElementById('btnGo');
-  if(goBtn)goBtn.textContent=isAudit?'Start Audit':'Start Research';
+  el.innerHTML='<b>'+rowCount+'</b> prospects'+(secCount>=2?' \u00B7 <b>'+secCount+'</b> sections':'');
 }
 
 // ─── Auth ───
@@ -917,6 +939,21 @@ const dz=document.getElementById('dz'),fi=document.getElementById('fi');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag');});dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0]);});
 fi.addEventListener('change',()=>{if(fi.files[0])loadFile(fi.files[0]);});
+const auditDzEl=document.getElementById('auditDz'),auditFiEl=document.getElementById('auditFi');
+if(auditDzEl){
+  auditDzEl.addEventListener('dragover',e=>{e.preventDefault();auditDzEl.classList.add('drag');});
+  auditDzEl.addEventListener('dragleave',()=>auditDzEl.classList.remove('drag'));
+  auditDzEl.addEventListener('drop',e=>{e.preventDefault();auditDzEl.classList.remove('drag');if(e.dataTransfer.files[0])loadAuditFile(e.dataTransfer.files[0]);});
+  auditFiEl.addEventListener('change',()=>{if(auditFiEl.files[0])loadAuditFile(auditFiEl.files[0]);});}
+async function loadAuditFile(f){
+  await loadFile(f);
+  if(!csvText)return;
+  auditDzEl.classList.add('loaded');
+  document.getElementById('auditDzIco').textContent='✅';
+  document.getElementById('auditDzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
+  document.getElementById('auditDzSub').textContent='Click to change';
+  document.getElementById('auditRowCount').textContent=rowCount+' websites';
+  document.getElementById('auditBatchRow').style.display='flex';}
 async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading a new file will not stop it but may mix results. Continue?'))return;}
   if(results.length&&!jobRunning&&!confirm('Loading a new file will clear current results. Continue?'))return;
   if(f.name.match(/\.xlsx?$/i)){alert('Excel files (.xlsx/.xls) are not supported yet.\n\nPlease save your spreadsheet as CSV first:\nFile \u2192 Save As \u2192 CSV (Comma delimited)');return;}
@@ -1118,10 +1155,103 @@ function showView(v){
   document.getElementById('progressBar').style.display=v==='research'?'':'none';
   document.getElementById('auditView').style.display=v==='audit'?'':'none';}
 
-function openAuditMode(){
-  pickTmpl('audit-only');
-  showView('research');
-  goWizardStep(1);}
+async function startBatchAudit(maxRows){
+  if(!csvText){document.getElementById('auditBatchErr').textContent='Upload a CSV first.';return;}
+  if(jobRunning){alert('A job is already running. Stop it first.');return;}
+  const errEl=document.getElementById('auditBatchErr');errEl.textContent='';
+  let csvToSend=csvText;
+  if(maxRows){const lines=csvText.split('\n');csvToSend=[lines[0],...lines.slice(1).filter(l=>l.trim()).slice(0,maxRows)].join('\n');}
+  const btn=document.getElementById('auditBatchBtn');btn.disabled=true;btn.textContent='Starting\u2026';
+  try{
+    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only \u2014 no AI prompt used.',templateId:'audit-only',colMapOverride:colMap})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error);
+    jobId=d.jobId;jobRunning=true;results=[];currentSections=[];
+    document.getElementById('auditResultsList').innerHTML='';
+    document.getElementById('auditTableContainer').innerHTML='';
+    document.getElementById('auditCompleteBanner').style.display='none';
+    document.getElementById('auditViewToggle').style.display='none';
+    document.getElementById('auditLogBox').innerHTML='';
+    document.getElementById('auditProgBar').style.width='0%';
+    document.getElementById('auditProgText').textContent='0 / '+d.total;
+    document.getElementById('auditRunning').style.display='';
+    connectAuditSSE(d.jobId);
+  }catch(e){errEl.textContent=e.message;btn.disabled=false;btn.textContent='Start Batch Audit';}}
+
+function connectAuditSSE(id){
+  if(es)es.close();
+  es=new EventSource('/api/stream/'+id+'?token='+encodeURIComponent(token));
+  const progBar=document.getElementById('auditProgBar'),progText=document.getElementById('auditProgText');
+  const logBox=document.getElementById('auditLogBox'),runningEl=document.getElementById('auditRunning');
+  const bannerEl=document.getElementById('auditCompleteBanner');
+  es.onmessage=e=>{
+    let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('auditViewToggle').style.display='flex';}
+    if(d.type==='result'){results.push(d);addAuditRC(d);addAuditTableRow(d);}
+    if(d.type==='progress'){
+      const pct=d.total?Math.round((d.succeeded+d.failed)/d.total*100):0;
+      progBar.style.width=pct+'%';
+      progText.textContent=(d.succeeded+d.failed)+' / '+d.total+(d.current?' \u2014 '+d.current.slice(0,40):'');}
+    if(d.type==='log'){logBox.insertAdjacentHTML('beforeend','<div style="font-size:11px;color:var(--dim)">'+esc(d.msg)+'</div>');logBox.scrollTop=logBox.scrollHeight;}
+    if(d.type==='done'){
+      jobRunning=false;runningEl.style.display='none';
+      const btn=document.getElementById('auditBatchBtn');if(btn){btn.disabled=false;btn.textContent='Start Batch Audit';}
+      bannerEl.style.display='flex';bannerEl.className='banner fade-in '+(d.status==='complete'?'banner-ok':'banner-err');
+      let t=(d.status==='complete'?'\u2705':'\u26A0')+' '+d.succeeded+' audited, '+d.failed+' failed';
+      if(d.elapsed)t+=' \u00B7 '+Math.round(d.elapsed)+'s';
+      bannerEl.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button>';
+      es.close();}};
+  es.onerror=()=>{es.close();};}
+
+function addAuditRC(r){
+  const list=document.getElementById('auditResultsList');const div=document.createElement('div');div.className='result fade-in';const ok=r.status==='success';
+  let bodyContent;const q=r.quality||0;
+  const qColor=q>=70?'var(--green)':q>=40?'var(--amber)':'var(--red)';
+  const qBadge=ok&&q?'<span style="font-size:10px;color:'+qColor+';margin-left:8px;font-weight:500">'+q+'%</span>':'';
+  if(ok&&r.research&&r.research._parsed&&currentSections.length){
+    bodyContent=currentSections.map(s=>{const val=r.research[s.key];if(!val)return'';return'<h3>'+esc(s.label)+'</h3>'+mdH(val);}).join('');
+  }else if(ok){bodyContent=mdH(researchText(r.research));}
+  else{bodyContent='<p style="color:var(--red)">'+esc(r.error)+'</p>';}
+  div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(r.company)+'</span>'+qBadge+'<span style="font-size:11px;color:var(--dim);margin-left:auto">\u25BC</span></div><div class="result-body" style="display:none"><div class="md">'+bodyContent+'</div></div>';
+  div.dataset.idx=r.idx;list.appendChild(div);}
+
+function addAuditTableRow(r){
+  const tbody=document.querySelector('#auditTableContainer tbody');
+  if(!tbody){renderAuditTable();return;}
+  tbody.insertAdjacentHTML('beforeend',buildTableRowHTML(r));}
+
+function renderAuditTable(){
+  const c=document.getElementById('auditTableContainer');
+  if(!results.length){c.innerHTML='';return;}
+  const secs=currentSections;
+  let h='<div class="sp-wrap"><table class="sp-table"><thead><tr><th>Website</th><th>Status</th>';
+  if(secs.length)secs.forEach(s=>{h+='<th>'+esc(s.label)+'</th>';});
+  else h+='<th>Audit Results</th>';
+  h+='</tr></thead><tbody>';
+  for(const r of results)h+=buildTableRowHTML(r);
+  h+='</tbody></table></div>';
+  c.innerHTML=h;}
+
+function setAuditView(v){
+  auditView=v;
+  document.getElementById('auditTableContainer').style.display=v==='table'?'':'none';
+  document.getElementById('auditResultsList').style.display=v==='card'?'flex':'none';
+  document.getElementById('auditBtnTableView').className='b b-sm '+(v==='table'?'b-pri':'b-ghost');
+  document.getElementById('auditBtnCardView').className='b b-sm '+(v==='card'?'b-pri':'b-ghost');
+  if(v==='table')renderAuditTable();}
+
+async function pauseAuditJob(){
+  if(!jobId)return;
+  const done=results.length;
+  if(!confirm('Stop audit? '+done+' rows complete. You can still export what\'s done.'))return;
+  try{await api('/api/cancel/'+jobId,{method:'POST'});}catch{}
+  if(es){es.close();es=null;}
+  jobRunning=false;
+  document.getElementById('auditRunning').style.display='none';
+  const btn=document.getElementById('auditBatchBtn');if(btn){btn.disabled=false;btn.textContent='Start Batch Audit';}
+  if(done){
+    const bannerEl=document.getElementById('auditCompleteBanner');
+    bannerEl.style.display='flex';bannerEl.className='banner fade-in banner-warn';
+    bannerEl.innerHTML='<span style="flex:1">\u23F8 Stopped \u2014 '+done+' rows completed</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button>';}}
 
 async function runStandaloneAudit(){
   const urlEl=document.getElementById('saUrl');
