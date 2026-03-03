@@ -3,7 +3,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --production
-COPY server.mjs ui.html ./
+COPY server.mjs ui.html audit.mjs ./
 RUN mkdir -p .data
 EXPOSE 3000
 ENV PORT=3000 HOST=0.0.0.0
