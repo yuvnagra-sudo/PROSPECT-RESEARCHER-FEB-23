@@ -819,14 +819,14 @@ function buildAuditStructured(audit){
     seo_basics:[
       m.title?`Title: "${m.title.slice(0,60)}"` : 'Missing title tag',
       m.metaDesc?'Has meta description':'No meta description',
-      m.h1Count===0?'No H1 tag':m.h1Count===1?'1 H1 ✓':`${m.h1Count} H1 tags (too many)`,
+      m.h1Count===undefined?'H1 tag: unknown':m.h1Count===0?'No H1 tag':m.h1Count===1?'1 H1 ✓':`${m.h1Count} H1 tags (too many)`,
       m.altCoverage!==undefined?`Alt text: ${Math.round(m.altCoverage*100)}% coverage`:'',
       m.hasSitemap?'Has sitemap ✓':'No sitemap',
       m.viewport?'Viewport meta ✓':'No viewport meta',
       m.hasAnalytics?'Analytics detected':'No analytics detected',
     ].filter(Boolean).join(' · '),
-    critical_issues:crit.length?crit.map(i=>`[${i.severity.toUpperCase()}] ${i.message}`).join('\n'):'None',
-    all_issues:audit.issues.length?audit.issues.map(i=>`[${i.severity.toUpperCase()}] ${i.message}`).join('\n'):'No issues detected',
+    critical_issues:crit.length?crit.map(i=>`[${i.severity.toUpperCase()}] ${i.title}`).join('\n'):'None',
+    all_issues:audit.issues.length?audit.issues.map(i=>`[${i.severity.toUpperCase()}] ${i.title}`).join('\n'):'No issues detected',
   };
 }
 
