@@ -955,11 +955,14 @@ function updateCost(){const p=providers[selProv];if(!p||!rowCount)return;const p
 async function startResearch(maxRows){
   if(!csvText||!selProv)return;
   if(jobRunning){alert('A job is already running. Stop it first or wait for it to finish.');return;}
-  // Hard blocks — prevent guaranteed-bad output
-  if(!providers[selProv]?.hasKey){alert('No API key set for '+providers[selProv]?.name+'. Add your key in Settings first.');openDrawer('settings');return;}
-  if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
-  if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
-    alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
+  // Hard blocks — prevent guaranteed-bad output (skip for audit-only jobs)
+  const isAuditOnly=!!templates[selTmpl]?.auditOnly;
+  if(!isAuditOnly){
+    if(!providers[selProv]?.hasKey){alert('No API key set for '+providers[selProv]?.name+'. Add your key in Settings first.');openDrawer('settings');return;}
+    if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
+    if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
+      alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
+  }
   // Slice CSV to maxRows if testing
   let csvToSend=csvText;
   if(maxRows&&maxRows>0){

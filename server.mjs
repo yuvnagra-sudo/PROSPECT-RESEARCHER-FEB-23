@@ -1157,7 +1157,18 @@ Return ONLY valid JSON (no markdown, no code fences):
     if(!prov)return json(res,{error:'Unknown provider'},400);
     if(!auditOnlyJob){const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);}
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
-    const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
+    const cm=colMapOverride||autoGuess(headers,rows);
+    if(auditOnlyJob){
+      // Auto-detect URL column if not already mapped
+      if(!cm.website){
+        const uc=headers.find(h=>rows.slice(0,5).some(r=>(r[h]||'').trim().match(/^https?:\/\/|^www\.|\.com|\.io|\.co\.?[a-z]*$|\.net|\.org/i)));
+        if(uc)cm.website=uc;
+      }
+      // Use URL column as company identifier for display
+      if(!cm.company&&cm.website)cm.company=cm.website;
+      if(!cm.company&&headers.length)cm.company=headers[0];
+    }
+    if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
     const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=2?JSON.stringify(explicitSections):null;
     const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
