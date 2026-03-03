@@ -229,6 +229,11 @@ textarea.ta:focus{border-color:var(--pri)}
 #auditTestSection{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin:12px 0}
 #auditTestSection h4{margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:8px}
 #auditTestSection p{margin:0 0 10px;font-size:11px;color:var(--dim)}
+/* Audit page */
+#auditView{padding:24px 20px 80px;max-width:900px;margin:0 auto}
+.audit-page-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.audit-page-card .card-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:10px}
+#auditResults .result-body{display:none}
 </style></head><body>
 
 <!-- ═══ AUTH ═══ -->
@@ -254,7 +259,7 @@ textarea.ta:focus{border-color:var(--pri)}
   <div class="logo">Prospect Researcher</div>
   <div class="topbar-r">
     <button class="b b-ghost b-sm" id="btnAdmin" style="display:none;border-color:var(--pri);color:var(--pri-h)" onclick="openDrawer('admin')">Admin</button>
-    <button class="b b-ghost b-sm" onclick="openDrawer('audit')">🔍 Audit</button>
+    <button class="b b-ghost b-sm" onclick="showView('audit')">🔍 Audit</button>
     <button class="b b-ghost b-sm" onclick="openDrawer('history')">History</button>
     <button class="b b-ghost b-sm" onclick="openDrawer('settings')">Settings</button>
     <span style="font-size:11px;color:var(--dim)" id="userEmail"></span>
@@ -454,7 +459,69 @@ textarea.ta:focus{border-color:var(--pri)}
   <div id="tableContainer" style="display:none;margin-top:8px"></div>
   <div id="resultsList" style="display:none;flex-direction:column;gap:6px;margin-top:14px"></div>
 
-</div></div>
+</div>
+
+<!-- ═══ AUDIT PAGE ═══ -->
+<div id="auditView" style="display:none">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+    <button class="b b-ghost b-sm" onclick="showView('research')">← Research</button>
+    <h2 style="margin:0;font-size:16px;font-weight:600">🔍 Website Audit</h2>
+  </div>
+
+  <!-- Quick single-URL test -->
+  <div class="audit-page-card">
+    <div class="card-label">Quick Test — Single URL</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input class="inp" id="saUrl" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')runStandaloneAudit()">
+      <button class="b b-ghost b-sm" id="saBtn" onclick="runStandaloneAudit()">Run Audit</button>
+    </div>
+    <div id="saResult"></div>
+    <div id="saSummary" style="display:none;margin-top:12px">
+      <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Raw audit data injected into AI prompt</div>
+      <pre id="saSummaryText" style="font-size:10px;color:var(--sub);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto"></pre>
+    </div>
+  </div>
+
+  <!-- Batch audit -->
+  <div class="audit-page-card">
+    <div class="card-label">Batch Audit — No API key needed</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button class="b b-sm b-pri" id="abModeUrlsBtn" onclick="switchAuditBatchMode('urls')">Paste URLs</button>
+      <button class="b b-sm b-ghost" id="abModeCsvBtn" onclick="switchAuditBatchMode('csv')">Upload CSV</button>
+    </div>
+    <!-- Paste URLs mode -->
+    <div id="abModeUrls">
+      <textarea class="ta" id="abUrls" placeholder="Paste one URL per line:&#10;https://example.com&#10;https://another.com&#10;www.third.com" style="min-height:120px;font-size:12px"></textarea>
+    </div>
+    <!-- CSV mode -->
+    <div id="abModeCsv" style="display:none">
+      <input type="file" id="abCsvFile" accept=".csv" class="inp" style="padding:6px;margin-bottom:8px" onchange="onAuditCsvChange(this)">
+      <div id="abColPicker" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--dim);flex-shrink:0">URL column:</span>
+          <select class="sel" id="abUrlCol" style="flex:1;min-width:140px"></select>
+          <span id="abRowCount" style="font-size:11px;color:var(--dim);white-space:nowrap"></span>
+        </div>
+      </div>
+    </div>
+    <div id="abErr" style="font-size:12px;color:var(--red);margin-top:6px"></div>
+    <button class="b b-pri" id="abBtn" onclick="runBatchAudit()" style="margin-top:12px;width:100%">Start Batch Audit</button>
+  </div>
+
+  <!-- Progress + Results -->
+  <div id="auditRunning" style="display:none">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+      <div class="pbar" style="flex:1"><div class="pfill" id="auditProgBar"></div></div>
+      <span style="font-size:11px;font-family:var(--mono);color:var(--sub)" id="auditProgText">0 / 0</span>
+      <button class="b b-red b-sm" onclick="cancelJob()">⏹ Stop</button>
+    </div>
+    <div class="log-box" id="auditLogBox" style="max-height:80px"></div>
+  </div>
+  <div id="auditResultsBanner" style="display:none;margin-top:12px"></div>
+  <div id="auditResults" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>
+</div>
+
+</div>
 
 <!-- ═══ DRAWER OVERLAY ═══ -->
 <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
@@ -1067,90 +1134,118 @@ async function resumeJob(jid){if(jobRunning){alert('A job is already running.');
   jobId=jid;jobRunning=true;document.getElementById('completeBanner').style.display='none';document.getElementById('progressBar').style.display='';
   document.getElementById('runningState').style.display='';document.getElementById('btnGo').disabled=true;addLog('Resuming...');connectSSE(jid);}catch(e){alert(e.message);}}
 
-// ─── Audit Drawer ───
-function buildAuditDrawer(){
-  return `<h3>Website Auditor <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>
-<div style="display:flex;gap:6px;margin-bottom:16px">
-  <button class="b b-sm b-pri" id="auditTabBtnSingle" onclick="switchAuditTab('single')">Test Single URL</button>
-  <button class="b b-sm b-ghost" id="auditTabBtnBatch" onclick="switchAuditTab('batch')">Batch Audit (CSV)</button>
-</div>
+// ─── Audit Page ───
+function showView(v){
+  document.querySelector('.main').style.display=v==='research'?'':'none';
+  document.getElementById('progressBar').style.display=v==='research'?'':'none';
+  document.getElementById('auditView').style.display=v==='audit'?'':'none';}
 
-<div id="auditTabSingle">
-  <p style="font-size:12px;color:var(--dim);margin-bottom:10px">Run a live technical audit on any website. Checks performance, SSL, SEO basics, and PageSpeed data.</p>
-  <div style="display:flex;gap:8px;margin-bottom:14px">
-    <input class="inp" id="saUrl" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')runStandaloneAudit()">
-    <button class="b b-pri" id="saBtn" onclick="runStandaloneAudit()">Run Audit</button>
-  </div>
-  <div id="saResult"></div>
-  <div id="saSummary" style="display:none;margin-top:14px">
-    <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Raw data injected into AI prompt</div>
-    <pre id="saSummaryText" style="font-size:10px;color:var(--sub);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto"></pre>
-  </div>
-</div>
+function switchAuditBatchMode(mode){
+  document.getElementById('abModeUrls').style.display=mode==='urls'?'':'none';
+  document.getElementById('abModeCsv').style.display=mode==='csv'?'':'none';
+  document.getElementById('abModeUrlsBtn').className='b b-sm '+(mode==='urls'?'b-pri':'b-ghost');
+  document.getElementById('abModeCsvBtn').className='b b-sm '+(mode==='csv'?'b-pri':'b-ghost');}
 
-<div id="auditTabBatch" style="display:none">
-  <p style="font-size:12px;color:var(--dim);margin-bottom:12px">Audit a list of websites in bulk. Results appear in the main view and can be exported as CSV — <b>no API key needed</b>.</p>
-  <div style="display:flex;gap:8px;margin-bottom:10px">
-    <button class="b b-sm" id="batchModeUrlsBtn" onclick="switchBatchMode('urls')" style="border-color:var(--pri);color:var(--pri-h)">Paste URLs</button>
-    <button class="b b-sm b-ghost" id="batchModeCsvBtn" onclick="switchBatchMode('csv')">Upload CSV</button>
-  </div>
-  <div id="batchModeUrls">
-    <textarea class="ta" id="batchUrls" placeholder="Paste one URL per line:&#10;https://example.com&#10;https://another.com&#10;www.third.com" style="min-height:140px;font-size:12px"></textarea>
-  </div>
-  <div id="batchModeCsv" style="display:none">
-    <p style="font-size:11px;color:var(--dim);margin-bottom:6px">Upload a CSV with a website/URL column. The column will be auto-detected.</p>
-    <input type="file" id="batchCsvFile" accept=".csv" class="inp" style="padding:6px">
-  </div>
-  <div id="batchErr" style="font-size:12px;color:var(--red);margin-top:8px"></div>
-  <button class="b b-pri" id="batchBtn" onclick="runBatchAudit()" style="margin-top:12px;width:100%">Start Batch Audit</button>
-</div>`;}
+async function onAuditCsvChange(input){
+  const file=input.files[0];if(!file)return;
+  const text=await file.text();
+  const nl=text.indexOf('\n');
+  if(nl===-1){document.getElementById('abErr').textContent='CSV appears to have no data rows.';return;}
+  const headerLine=text.slice(0,nl);
+  const headers=[];let cur='',inQ=false;
+  for(const ch of headerLine){if(ch==='"'){inQ=!inQ;}else if(ch===','&&!inQ){headers.push(cur.trim().replace(/^"|"$/g,''));cur='';}else{cur+=ch;}}
+  headers.push(cur.trim().replace(/^"|"$/g,''));
+  const rowCount=(text.match(/\n/g)||[]).length;
+  document.getElementById('abRowCount').textContent=rowCount+' rows';
+  const sel=document.getElementById('abUrlCol');
+  sel.innerHTML=headers.map(h=>'<option value="'+esc(h)+'">'+esc(h)+'</option>').join('');
+  const urlLike=headers.find(h=>/url|website|domain|link|site/i.test(h));
+  if(urlLike)sel.value=urlLike;
+  document.getElementById('abColPicker').style.display='';
+  document.getElementById('abErr').textContent='';}
 
-function switchAuditTab(tab){
-  document.getElementById('auditTabSingle').style.display=tab==='single'?'':'none';
-  document.getElementById('auditTabBatch').style.display=tab==='batch'?'':'none';
-  document.getElementById('auditTabBtnSingle').className='b b-sm '+(tab==='single'?'b-pri':'b-ghost');
-  document.getElementById('auditTabBtnBatch').className='b b-sm '+(tab==='batch'?'b-pri':'b-ghost');}
-
-function switchBatchMode(mode){
-  document.getElementById('batchModeUrls').style.display=mode==='urls'?'':'none';
-  document.getElementById('batchModeCsv').style.display=mode==='csv'?'':'none';
-  document.getElementById('batchModeUrlsBtn').className='b b-sm'+(mode==='urls'?' b-pri':' b-ghost');
-  document.getElementById('batchModeUrlsBtn').style.cssText=mode==='urls'?'border-color:var(--pri);color:var(--pri-h)':'';
-  document.getElementById('batchModeCsvBtn').className='b b-sm'+(mode==='csv'?' b-pri':' b-ghost');}
+function remapUrlColumn(csvText,fromCol){
+  if(!fromCol||fromCol==='URL')return csvText;
+  const nl=csvText.indexOf('\n');if(nl===-1)return csvText;
+  const headerLine=csvText.slice(0,nl);const rest=csvText.slice(nl);
+  const headers=[];let cur='',inQ=false;
+  for(const ch of headerLine){if(ch==='"'){inQ=!inQ;}else if(ch===','&&!inQ){headers.push(cur.trim().replace(/^"|"$/g,''));cur='';}else{cur+=ch;}}
+  headers.push(cur.trim().replace(/^"|"$/g,''));
+  const idx=headers.indexOf(fromCol);if(idx===-1)return csvText;
+  headers[idx]='URL';
+  return headers.map(h=>h.includes(',')?'"'+h+'"':h).join(',')+rest;}
 
 async function runBatchAudit(){
-  const btn=document.getElementById('batchBtn');
-  const errEl=document.getElementById('batchErr');
+  const btn=document.getElementById('abBtn');
+  const errEl=document.getElementById('abErr');
   errEl.textContent='';
-  const csvMode=document.getElementById('batchModeCsv').style.display!=='none';
-  let csvText='';
+  const csvMode=document.getElementById('abModeCsv').style.display!=='none';
+  let batchCsv='';
   if(csvMode){
-    const file=document.getElementById('batchCsvFile').files[0];
+    const file=document.getElementById('abCsvFile').files[0];
     if(!file){errEl.textContent='Please select a CSV file.';return;}
-    csvText=await file.text();
+    const raw=await file.text();
+    const urlCol=document.getElementById('abUrlCol')?.value||'';
+    batchCsv=remapUrlColumn(raw,urlCol);
   }else{
-    const raw=document.getElementById('batchUrls').value.trim();
+    const raw=document.getElementById('abUrls').value.trim();
     if(!raw){errEl.textContent='Please paste at least one URL.';return;}
     const urls=raw.split('\n').map(l=>l.trim()).filter(l=>l.length>3);
     if(!urls.length){errEl.textContent='No valid URLs found.';return;}
-    csvText='URL\n'+urls.join('\n');
+    batchCsv='URL\n'+urls.join('\n');
   }
   btn.disabled=true;btn.textContent='Starting…';
   try{
-    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only — no AI prompt used.',templateId:'audit-only'})});
+    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:batchCsv,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only — no AI prompt used.',templateId:'audit-only'})});
     const d=await r.json();
     if(!r.ok)throw new Error(d.error);
-    closeDrawer();
     jobId=d.jobId;jobRunning=true;results=[];currentSections=[];
-    document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';
-    document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
-    document.getElementById('wizardNav').style.display='none';
-    for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
-    document.getElementById('runningState').style.display='';document.getElementById('logBox').innerHTML='';
-    document.getElementById('progressBar').style.display='';document.getElementById('progText').textContent='Auditing…';
-    addLog('Started batch audit of '+d.total+' URLs');
-    connectSSE(d.jobId);
+    document.getElementById('auditResults').innerHTML='';
+    document.getElementById('auditResultsBanner').style.display='none';
+    document.getElementById('auditLogBox').innerHTML='';
+    document.getElementById('auditProgBar').style.width='0%';
+    document.getElementById('auditProgText').textContent='0 / '+d.total;
+    document.getElementById('auditRunning').style.display='';
+    connectAuditSSE(d.jobId);
   }catch(e){errEl.textContent=e.message;btn.disabled=false;btn.textContent='Start Batch Audit';}}
+
+function connectAuditSSE(id){
+  if(es)es.close();
+  es=new EventSource('/api/stream/'+id+'?token='+encodeURIComponent(token));
+  const progBar=document.getElementById('auditProgBar');
+  const progText=document.getElementById('auditProgText');
+  const logBox=document.getElementById('auditLogBox');
+  const resultsEl=document.getElementById('auditResults');
+  const runningEl=document.getElementById('auditRunning');
+  const bannerEl=document.getElementById('auditResultsBanner');
+  es.onmessage=e=>{
+    let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.type==='meta'){currentSections=d.sections||[];}
+    if(d.type==='result'){
+      results.push(d);
+      const div=document.createElement('div');div.className='result fade-in';div.dataset.idx=d.idx;
+      const ok=d.status==='success';const res=d.research||{};
+      let body='';
+      if(ok&&res._parsed&&currentSections.length){body=currentSections.map(s=>{const val=res[s.key];if(!val)return'';return'<h3>'+esc(s.label)+'</h3>'+mdH(val);}).join('');}
+      else if(ok){body=mdH(researchText(res));}
+      else{body='<p style="color:var(--red)">'+esc(d.error)+'</p>';}
+      div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(d.company)+'</span><span style="font-size:11px;color:var(--dim);margin-left:auto">▼</span></div><div class="result-body"><div class="md">'+body+'</div></div>';
+      resultsEl.appendChild(div);
+      logBox.scrollTop=logBox.scrollHeight;}
+    if(d.type==='progress'){
+      const pct=d.total?Math.round((d.succeeded+d.failed)/d.total*100):0;
+      progBar.style.width=pct+'%';
+      progText.textContent=(d.succeeded+d.failed)+' / '+d.total+(d.current?' — '+d.current.slice(0,40):'');}
+    if(d.type==='log'){logBox.insertAdjacentHTML('beforeend','<div style="font-size:11px;color:var(--dim)">'+esc(d.msg)+'</div>');logBox.scrollTop=logBox.scrollHeight;}
+    if(d.type==='done'){
+      jobRunning=false;runningEl.style.display='none';
+      const btn=document.getElementById('abBtn');if(btn){btn.disabled=false;btn.textContent='Start Batch Audit';}
+      bannerEl.style.display='flex';bannerEl.className='banner fade-in '+(d.status==='complete'?'banner-ok':'banner-err');
+      let t=(d.status==='complete'?'✅':'⚠')+' '+d.succeeded+' audited, '+d.failed+' failed';
+      if(d.elapsed)t+=' · '+Math.round(d.elapsed)+'s';
+      bannerEl.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button>';
+      es.close();}};
+  es.onerror=()=>{es.close();};}
 
 async function runStandaloneAudit(){
   const urlEl=document.getElementById('saUrl');
@@ -1180,15 +1275,14 @@ function openDrawer(mode){document.getElementById('drawerOverlay').classList.add
   else if(mode==='mapping')c.innerHTML=buildMappingDrawer();
   else if(mode==='prompt')c.innerHTML=buildPromptDrawer();
   else if(mode==='export')c.innerHTML=buildExportDrawer();
-  else if(mode==='admin'){c.innerHTML=buildAdminDrawer();loadAdminUsers();loadAdminJobs();}
-  else if(mode==='audit'){c.innerHTML=buildAuditDrawer();}}
+  else if(mode==='admin'){c.innerHTML=buildAdminDrawer();loadAdminUsers();loadAdminJobs();}}
 function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
 
 function buildSettingsDrawer(){
   let h='<h3>Settings <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>';
   h+='<div class="drawer-section"><div class="label">API Keys</div><p style="font-size:11px;color:var(--dim);margin-bottom:8px">Keys are stored per-account. <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--pri-h)">Get Gemini key</a></p>';
-  const keys=[['Gemini','GEMINI_API_KEY','gemini'],['Anthropic','ANTHROPIC_API_KEY','claude'],['OpenAI','OPENAI_API_KEY','gpt5'],['DeepSeek','DEEPSEEK_API_KEY','deepseek']];
-  keys.forEach(([label,env,pid])=>{h+='<div class="key-row"><span class="lbl">'+label+'</span><input class="inp" type="password" id="dk_'+env+'" placeholder="Paste key..." style="flex:1"/><button class="b b-ghost b-sm" onclick="saveKeyD(\''+env+'\')">Save</button><span class="st" id="dks_'+env+'">'+(providers[pid]?.hasKey?'✅':'')+'</span></div>';});
+  const keys=[['Gemini','GEMINI_API_KEY','gemini'],['Anthropic','ANTHROPIC_API_KEY','claude'],['OpenAI','OPENAI_API_KEY','gpt5'],['DeepSeek','DEEPSEEK_API_KEY','deepseek'],['Google Places','GOOGLE_PLACES_API_KEY',null]];
+  keys.forEach(([label,env,pid])=>{h+='<div class="key-row"><span class="lbl">'+label+(pid===null?' <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="font-size:10px;color:var(--pri-h)">(get key)</a>':'')+' </span><input class="inp" type="password" id="dk_'+env+'" placeholder="Paste key..." style="flex:1"/><button class="b b-ghost b-sm" onclick="saveKeyD(\''+env+'\')">Save</button><span class="st" id="dks_'+env+'">'+(pid&&providers[pid]?.hasKey?'✅':'')+'</span></div>';});
   h+='</div>';
   return h;}
 

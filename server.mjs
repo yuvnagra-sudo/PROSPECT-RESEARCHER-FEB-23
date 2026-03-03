@@ -893,7 +893,7 @@ async function runJob(jobId){
         }
         try{
           emit({type:'log',level:'info',msg:`🔍 Auditing ${row.company}…`});
-          const audit=await auditWebsite(urlMatch[1]);
+          const audit=await auditWebsite(urlMatch[1],{placesApiKey:userKey(job.user_id,'GOOGLE_PLACES_API_KEY')});
           const structured=buildAuditStructured(audit);
           S.uR.run('success',JSON.stringify(structured),null,0,0,0,0,jobId,row.idx);
           ok++;
@@ -915,7 +915,7 @@ async function runJob(jobId){
         if(urlMatch){
           try{
             emit({type:'log',level:'info',msg:`🔍 Auditing website for "${row.company}"…`});
-            const audit=await auditWebsite(urlMatch[1]);
+            const audit=await auditWebsite(urlMatch[1],{placesApiKey:userKey(job.user_id,'GOOGLE_PLACES_API_KEY')});
             rowPrompt=audit.summary+'\n\n---\n\n'+row.prompt;
             emit({type:'log',level:'info',msg:`✅ Audit complete for "${row.company}" (${audit.issues.length} issues, ${audit.elapsedMs}ms)`});
           }catch(auditErr){
@@ -1012,7 +1012,7 @@ async function runJob(jobId){
 const PORT=parseInt(process.env.PORT||'3000');
 function readB(req){return new Promise(r=>{let b='';req.on('data',c=>b+=c);req.on('end',()=>r(b));});}
 function json(res,d,s=200){res.writeHead(s,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify(d));}
-const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY'];
+const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY','GOOGLE_PLACES_API_KEY'];
 
 const server=createServer(async(req,res)=>{
   const url=new URL(req.url,`http://localhost:${PORT}`);const p=url.pathname;
@@ -1270,7 +1270,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     try{
       const{url}=JSON.parse(body);
       if(!url)return json(res,{error:'url required'},400);
-      const result=await auditWebsite(url);
+      const result=await auditWebsite(url,{placesApiKey:userKey(uid,'GOOGLE_PLACES_API_KEY')});
       json(res,result);
     }catch(e){json(res,{error:e.message},500);}
     return;}

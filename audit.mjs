@@ -118,6 +118,8 @@ async function checkHTTP(url) {
     status: res.status,
     finalUrl: res.url,
     responseMs,
+    rawHtml: html,
+    rawHeaders: hdrs,
     headers: {
       hsts: hdrs['strict-transport-security'] || null,
       csp: hdrs['content-security-policy'] || null,
@@ -252,6 +254,231 @@ async function checkRobots(url) {
   } catch {}
 
   return result;
+}
+
+// ─── Tech Stack Detection ─────────────────────────────────────────────────────
+function detectTechStack(html, headers) {
+  const h = headers || {};
+  let platform = 'Custom / Unknown';
+  if (/wp-content\/|wp-includes\/|wp-json/i.test(html) || /meta[^>]+generator[^>]+WordPress/i.test(html)) platform = 'WordPress';
+  else if (/wixsite\.com|_wix_browser_sess/i.test(html) || Object.keys(h).some(k => k.startsWith('x-wix-'))) platform = 'Wix';
+  else if (/static1\.squarespace\.com|squarespace-cdn\.com/i.test(html) || /meta[^>]+generator[^>]+Squarespace/i.test(html)) platform = 'Squarespace';
+  else if (/cdn\.shopify\.com|Shopify\.theme|myshopify\.com/i.test(html)) platform = 'Shopify';
+  else if (/webflow\.io|assets-global\.website-files\.com|data-wf-site/i.test(html)) platform = 'Webflow';
+  else if (/Drupal\.settings|\/sites\/default\/files\//i.test(html) || /meta[^>]+generator[^>]+Drupal/i.test(html)) platform = 'Drupal';
+  else if (/\/media\/jui\//i.test(html) || /meta[^>]+generator[^>]+Joomla/i.test(html)) platform = 'Joomla';
+  else if (/godaddysites\.com|img1\.wsimg\.com/i.test(html)) platform = 'GoDaddy Website Builder';
+
+  const booking = [];
+  if (/calendly\.com/i.test(html)) booking.push('Calendly');
+  if (/acuityscheduling\.com/i.test(html)) booking.push('Acuity Scheduling');
+  if (/simplybook\.me/i.test(html)) booking.push('SimplyBook');
+  if (/squareup\.com\/appointments/i.test(html)) booking.push('Square Appointments');
+  if (/mindbodyonline\.com/i.test(html)) booking.push('Mindbody');
+  if (/janeapp\.com/i.test(html)) booking.push('Jane App');
+
+  const chat = [];
+  if (/tawk\.to/i.test(html)) chat.push('Tawk.to');
+  if (/widget\.intercom\.io|intercom\.io\/widget/i.test(html)) chat.push('Intercom');
+  if (/js\.driftt\.com|drift\.com\/widget/i.test(html)) chat.push('Drift');
+  if (/livechatinc\.com/i.test(html)) chat.push('LiveChat');
+  if (/zopim\.|zendesk\.com\/embeddable/i.test(html)) chat.push('Zendesk');
+  if (/crisp\.chat/i.test(html)) chat.push('Crisp');
+  if (/js\.hs-scripts\.com/i.test(html)) chat.push('HubSpot Chat');
+
+  const payments = [];
+  if (/js\.stripe\.com/i.test(html)) payments.push('Stripe');
+  if (/squareup\.com\/js/i.test(html)) payments.push('Square');
+  if (/paypal\.com\/sdk/i.test(html)) payments.push('PayPal');
+  if (/braintree-api\.com|braintreegateway\.com/i.test(html)) payments.push('Braintree');
+
+  const email = [];
+  if (/js\.hsforms\.net|js\.hs-scripts\.com/i.test(html)) email.push('HubSpot');
+  if (/mailchimp\.com|list-manage\.com/i.test(html)) email.push('Mailchimp');
+  if (/activehosted\.com/i.test(html)) email.push('ActiveCampaign');
+  if (/klaviyo\.com/i.test(html)) email.push('Klaviyo');
+  if (/constantcontact\.com/i.test(html)) email.push('Constant Contact');
+
+  const analytics = [];
+  if (/hotjar\.com/i.test(html)) analytics.push('Hotjar');
+  if (/clarity\.ms/i.test(html)) analytics.push('Microsoft Clarity');
+  if (/fbq\(|facebook\.net\/en_US\/fbevents/i.test(html)) analytics.push('Facebook Pixel');
+  if (/snap\.licdn\.com/i.test(html)) analytics.push('LinkedIn Insight');
+  if (/googletagmanager\.com/i.test(html)) analytics.push('Google Tag Manager');
+
+  let cdn = null;
+  const srv = (h['server'] || '').toLowerCase();
+  if (h['cf-ray'] || srv.includes('cloudflare')) cdn = 'Cloudflare';
+  else if ((h['x-served-by'] || '').toLowerCase().includes('fastly') || srv.includes('fastly')) cdn = 'Fastly';
+  else if (h['x-amz-cf-id'] || h['x-amz-cf-pop'] || /cloudfront\.net/i.test(html)) cdn = 'AWS CloudFront';
+  else if (srv.includes('akamai') || h['x-check-cacheable'] || h['akamai-x-cache']) cdn = 'Akamai';
+
+  return { platform, booking, chat, payments, email, analytics, cdn };
+}
+
+// ─── Conversion Path Analysis ─────────────────────────────────────────────────
+function checkConversionPaths(html) {
+  const formMatches = html.match(/<form[\s>]/gi) || [];
+  const formCount = formMatches.length;
+
+  const telMatch = html.match(/href=["']tel:([^"']+)["']/i);
+  const telNumber = telMatch ? telMatch[1] : null;
+
+  const ctaPattern = /\b(book|schedule|contact\s+us|call\s+us|get\s+quote|free\s+consultation|request|appointment)\b/i;
+  const hasCtaLinks = ctaPattern.test(html);
+
+  const first30 = html.slice(0, Math.floor(html.length * 0.3));
+  const phonePattern = /(\+1[\s.\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/;
+  const phoneMatch = first30.match(phonePattern);
+  const phoneAboveFold = phoneMatch ? phoneMatch[0].trim() : null;
+
+  return { formCount, telNumber, hasCtaLinks, phoneAboveFold };
+}
+
+// ─── Business Context Inference (for GBP search) ─────────────────────────────
+function inferBusinessContext(html, finalUrl) {
+  const h1Match = html.match(/<h1[^>]*>([^<]{3,80})<\/h1>/i);
+  const h1Text = h1Match ? h1Match[1].replace(/<[^>]+>/g, '').trim() : null;
+
+  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  const titleFull = titleMatch ? titleMatch[1].trim() : null;
+  const titleShort = titleFull ? titleFull.split(/[|\-–—]/)[0].trim() : null;
+
+  const keyword = h1Text || titleShort || '';
+
+  let city = '';
+  const inCityMatch = ((titleFull || '') + ' ' + (h1Text || '')).match(/\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/);
+  if (inCityMatch) city = inCityMatch[1];
+  if (!city) { const ld = html.match(/"addressLocality"\s*:\s*"([^"]+)"/); if (ld) city = ld[1]; }
+
+  let domain = '';
+  try { domain = new URL(finalUrl).hostname.replace(/^www\./, '').split('.')[0]; } catch {}
+  const companyName = titleShort || domain || keyword;
+
+  return { companyName: companyName.slice(0, 80), city: city.slice(0, 40), keyword: keyword.slice(0, 80) };
+}
+
+// ─── Google Business Profile Lookup ──────────────────────────────────────────
+async function checkGoogleBusinessProfile(companyName, city, keyword, apiKey) {
+  if (!apiKey) return { available: false, reason: 'no_api_key' };
+
+  const BASE = 'https://places.googleapis.com/v1/places:searchText';
+  const MASK = 'places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.types,places.websiteUri,places.googleMapsUri,places.photos';
+
+  async function searchPlaces(textQuery, maxResultCount = 1) {
+    const body = { textQuery };
+    if (maxResultCount > 1) body.maxResultCount = maxResultCount;
+    const r = await fetch(BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': MASK },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`Places API ${r.status}`);
+    return (await r.json()).places || [];
+  }
+
+  const issues = [];
+  let business = null;
+  let competitors = [];
+
+  try {
+    const searchQ = city ? `${companyName} ${city}` : companyName;
+    const bizResults = await searchPlaces(searchQ, 3);
+    const nameLower = companyName.toLowerCase();
+    const match = bizResults.find(p => {
+      const pn = (p.displayName?.text || '').toLowerCase();
+      return pn.includes(nameLower.split(' ')[0]) || nameLower.includes(pn.split(' ')[0]);
+    });
+
+    if (match) {
+      business = {
+        name: match.displayName?.text,
+        address: match.formattedAddress,
+        rating: match.rating,
+        reviewCount: match.userRatingCount,
+        types: match.types,
+        website: match.websiteUri,
+        mapsUrl: match.googleMapsUri,
+        photoCount: match.photos?.length || 0,
+      };
+      if (!business.reviewCount || business.reviewCount < 10)
+        issues.push({ severity: 'medium', category: 'Local SEO', title: 'Low Google review count',
+          detail: `Only ${business.reviewCount || 0} Google reviews. Businesses with 10+ reviews rank higher in local map pack results.` });
+      if (!business.rating)
+        issues.push({ severity: 'medium', category: 'Local SEO', title: 'No Google star rating',
+          detail: 'No star rating on Google Business Profile. This may indicate an unclaimed listing or very few reviews.' });
+      if (business.photoCount < 3)
+        issues.push({ severity: 'low', category: 'Local SEO', title: 'Few Google Business Profile photos',
+          detail: `Only ${business.photoCount} photo(s) on GBP. Listings with more photos get more clicks in Google Maps.` });
+    } else {
+      issues.push({ severity: 'high', category: 'Local SEO', title: 'Business not found on Google Maps',
+        detail: 'Could not find this business in Google Places. An unclaimed or missing GBP listing means the business is invisible in local search and Google Maps.' });
+    }
+
+    const compQ = city ? `${keyword || companyName} ${city}` : (keyword || companyName);
+    const compResults = await searchPlaces(compQ, 5);
+    const bizHostname = business?.website ? (() => { try { return new URL(business.website).hostname; } catch { return ''; } })() : '';
+    competitors = compResults
+      .filter(p => {
+        const pn = (p.displayName?.text || '').toLowerCase();
+        const ps = (p.websiteUri || '').toLowerCase();
+        return !pn.includes(nameLower.split(' ')[0]) && (!bizHostname || !ps.includes(bizHostname));
+      })
+      .slice(0, 3)
+      .map(p => ({ name: p.displayName?.text, rating: p.rating, reviewCount: p.userRatingCount, website: p.websiteUri, photoCount: p.photos?.length || 0 }));
+
+    if (business && competitors.length > 0) {
+      const top = competitors[0];
+      if (top.reviewCount && (business.reviewCount || 0) > 0 && top.reviewCount >= 3 * business.reviewCount)
+        issues.push({ severity: 'high', category: 'Local SEO', title: `Competitor "${top.name}" has ${top.reviewCount}x more reviews`,
+          detail: `${top.name} has ${top.reviewCount} reviews vs your ${business.reviewCount}. Review count is a primary local pack ranking factor.` });
+      else if (top.reviewCount && !business.reviewCount)
+        issues.push({ severity: 'high', category: 'Local SEO', title: 'Competitors have reviews; this business does not',
+          detail: `Top competitor "${top.name}" has ${top.reviewCount} reviews. Getting even 10 reviews can dramatically improve local pack visibility.` });
+      if (top.rating && business.rating && top.rating - business.rating >= 0.5)
+        issues.push({ severity: 'medium', category: 'Local SEO', title: `Competitor has higher Google rating`,
+          detail: `"${top.name}" has ${top.rating}★ vs your ${business.rating}★. Higher ratings improve click-through rates in local search.` });
+    }
+  } catch (e) {
+    return { available: false, reason: e.message };
+  }
+
+  return { available: true, business, competitors, issues };
+}
+
+// ─── Tech/Conversion Issue Generator ─────────────────────────────────────────
+function generateTechIssues(techStack, conversion, html) {
+  const issues = [];
+  if (!techStack || !conversion) return issues;
+  function add(severity, category, title, detail) { issues.push({ severity, category, title, detail }); }
+
+  if (techStack.platform === 'WordPress')
+    add('low', 'Technology', 'Built on WordPress — verify plugins and themes are current',
+      'WordPress powers 40% of the web but is the most targeted CMS for security vulnerabilities. Outdated plugins are the #1 source of WordPress hacks.');
+
+  const serviceWords = /\b(consultation|appointment|schedule|services|therapy|coaching|clinic|studio|salon|spa|treatment|session|booking)\b/i;
+  if (techStack.booking.length === 0 && serviceWords.test(html))
+    add('medium', 'Conversion', 'No online booking system detected',
+      'The site appears service-based but has no online booking tool (Calendly, Acuity, etc.). Requiring prospects to call or email to book creates friction that loses leads.');
+
+  if (techStack.chat.length === 0)
+    add('low', 'Conversion', 'No live chat or messaging widget detected',
+      'No chat widget found. Live chat can increase conversion rates by 20–40% by answering questions in real time when visitors are ready to buy.');
+
+  if (conversion.formCount === 0)
+    add('high', 'Conversion', 'No contact form found on homepage',
+      'No HTML form elements detected. Without a contact form, leads have no easy way to reach out — they must navigate elsewhere or leave.');
+
+  if (!conversion.phoneAboveFold)
+    add('medium', 'Conversion', 'No visible phone number above the fold',
+      'No phone number found in the first third of the page. Service businesses convert significantly better when a phone number is immediately visible without scrolling.');
+
+  if (!conversion.hasCtaLinks)
+    add('high', 'Conversion', 'No clear calls to action detected',
+      'No button or link text containing action words (Book, Schedule, Contact, Get Quote, etc.) was found. Without clear CTAs, visitors do not know what step to take next.');
+
+  return issues;
 }
 
 // ─── Issue Generator ──────────────────────────────────────────────────────────
@@ -428,29 +655,81 @@ function buildSummary(url, metrics, issues) {
     lines.push('No major issues detected — site appears technically healthy.');
   }
 
+  const ts = metrics.techStack;
+  if (ts) {
+    lines.push('');
+    lines.push('TECH STACK:');
+    lines.push(`Platform: ${ts.platform}`);
+    if (ts.booking.length) lines.push(`Booking: ${ts.booking.join(', ')}`);
+    if (ts.chat.length) lines.push(`Chat: ${ts.chat.join(', ')}`);
+    if (ts.payments.length) lines.push(`Payments: ${ts.payments.join(', ')}`);
+    if (ts.email.length) lines.push(`Email/CRM: ${ts.email.join(', ')}`);
+    if (ts.analytics.length) lines.push(`Analytics: ${ts.analytics.join(', ')}`);
+    if (ts.cdn) lines.push(`CDN: ${ts.cdn}`);
+  }
+
+  const cv = metrics.conversion;
+  if (cv) {
+    lines.push('');
+    lines.push('CONVERSION PATHS:');
+    lines.push(`Contact forms: ${cv.formCount}`);
+    if (cv.telNumber) lines.push(`Click-to-call: ${cv.telNumber}`);
+    if (cv.phoneAboveFold) lines.push(`Phone visible above fold: ${cv.phoneAboveFold}`);
+    lines.push(`CTA buttons/links: ${cv.hasCtaLinks ? 'Yes' : 'None detected'}`);
+  }
+
+  const gbp = metrics.gbp;
+  if (gbp?.available && gbp.business) {
+    lines.push('');
+    lines.push('GOOGLE BUSINESS PROFILE:');
+    lines.push(`Business: ${gbp.business.name}`);
+    if (gbp.business.rating) lines.push(`Rating: ${gbp.business.rating}★ (${gbp.business.reviewCount || 0} reviews)`);
+    else lines.push(`Reviews: ${gbp.business.reviewCount || 0}`);
+    lines.push(`Photos: ${gbp.business.photoCount}`);
+    if (gbp.business.address) lines.push(`Address: ${gbp.business.address}`);
+    if (gbp.competitors?.length) {
+      lines.push('');
+      lines.push('LOCAL COMPETITORS:');
+      gbp.competitors.forEach((c, i) => lines.push(`${i + 1}. ${c.name} — ${c.rating ? c.rating + '★' : 'no rating'} (${c.reviewCount || 0} reviews)`));
+    }
+  }
+
   return lines.join('\n');
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export async function auditWebsite(inputUrl) {
+export async function auditWebsite(inputUrl, { placesApiKey } = {}) {
   const t0 = Date.now();
   const errors = [];
 
   const url = normalizeUrl(inputUrl);
   if (!url) return { url: inputUrl, finalUrl: inputUrl, elapsedMs: 0, issues: [], topIssues: [], metrics: {}, summary: 'Invalid URL', errors: ['Invalid URL'] };
 
-  // Run all four checks in parallel for speed
-  const [httpRes, pageSpeedRes, sslRes, robotsRes] = await Promise.allSettled([
-    checkHTTP(url),
+  // GBP chains off the HTTP promise so HTML is available for keyword inference
+  const httpPromise = checkHTTP(url);
+  const effectivePlacesKey = placesApiKey || process.env.GOOGLE_PLACES_API_KEY || '';
+  const gbpPromise = effectivePlacesKey
+    ? httpPromise.then(httpData => {
+        if (!httpData?.ok) return { available: false, reason: 'http_failed' };
+        const ctx = inferBusinessContext(httpData.rawHtml, httpData.finalUrl || url);
+        return checkGoogleBusinessProfile(ctx.companyName, ctx.city, ctx.keyword, effectivePlacesKey);
+      }).catch(e => ({ available: false, reason: e.message }))
+    : Promise.resolve({ available: false, reason: 'no_api_key' });
+
+  // Run all checks in parallel (GBP starts as soon as HTTP resolves)
+  const [httpRes, pageSpeedRes, sslRes, robotsRes, gbpRes] = await Promise.allSettled([
+    httpPromise,
     checkPageSpeed(url),
     checkSSL(url),
     checkRobots(url),
+    gbpPromise,
   ]);
 
   const httpData = httpRes.status === 'fulfilled' ? httpRes.value : null;
   const pageSpeed = pageSpeedRes.status === 'fulfilled' ? pageSpeedRes.value : null;
   const ssl = sslRes.status === 'fulfilled' ? sslRes.value : null;
   const robots = robotsRes.status === 'fulfilled' ? robotsRes.value : null;
+  const gbp = gbpRes.status === 'fulfilled' ? gbpRes.value : null;
 
   if (httpRes.status === 'rejected') errors.push('HTTP check: ' + (httpRes.reason?.message || String(httpRes.reason)));
   if (pageSpeedRes.status === 'rejected') errors.push('PageSpeed check: ' + (pageSpeedRes.reason?.message || String(pageSpeedRes.reason)));
@@ -460,6 +739,10 @@ export async function auditWebsite(inputUrl) {
   const finalUrl = httpData?.finalUrl || url;
   const html = httpData?.html || {};
   const analytics = html.analytics || {};
+
+  // Tech stack and conversion analysis (synchronous, uses already-fetched HTML)
+  const techStack = httpData?.ok ? detectTechStack(httpData.rawHtml, httpData.rawHeaders) : null;
+  const conversion = httpData?.ok ? checkConversionPaths(httpData.rawHtml) : null;
 
   // Flatten metrics for easy access
   const metrics = {
@@ -498,9 +781,20 @@ export async function auditWebsite(inputUrl) {
     cls: pageSpeed?.ok ? pageSpeed.metrics.cls : null,
     tbt: pageSpeed?.ok ? pageSpeed.metrics.tbt : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
+    // New fields
+    techStack,
+    conversion,
+    gbp,
   };
 
   const issues = generateIssues(httpData, pageSpeed, ssl, robots);
+
+  // Tech/conversion issues
+  const techIssues = generateTechIssues(techStack, conversion, httpData?.rawHtml || '');
+  issues.push(...techIssues);
+
+  // GBP issues
+  if (gbp?.issues?.length) issues.push(...gbp.issues);
 
   // Sort: critical → high → medium → low
   const sevOrd = { critical: 0, high: 1, medium: 2, low: 3 };
