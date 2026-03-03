@@ -218,6 +218,9 @@ sections:[
   {key:'seo_basics',label:'SEO Basics'},
   {key:'critical_issues',label:'Critical Issues'},
   {key:'all_issues',label:'All Issues'},
+  {key:'tech_stack',label:'Tech Stack'},
+  {key:'conversion',label:'Conversion Paths'},
+  {key:'gbp_profile',label:'Google Business Profile'},
 ],
 prompt:'Website audit only — no AI prompt used.'},
 'custom':{name:'Custom Prompt',icon:'\u270F\uFE0F',desc:'Write your own research prompt',
@@ -827,6 +830,40 @@ function buildAuditStructured(audit){
     ].filter(Boolean).join(' · '),
     critical_issues:crit.length?crit.map(i=>`[${i.severity.toUpperCase()}] ${i.title}`).join('\n'):'None',
     all_issues:audit.issues.length?audit.issues.map(i=>`[${i.severity.toUpperCase()}] ${i.title}`).join('\n'):'No issues detected',
+    tech_stack:(()=>{
+      const ts=audit.metrics?.techStack;
+      if(!ts)return'Not checked';
+      const lines=[`Platform: ${ts.platform}`];
+      if(ts.booking?.length)lines.push(`Booking: ${ts.booking.join(', ')}`);
+      if(ts.chat?.length)lines.push(`Chat: ${ts.chat.join(', ')}`);
+      if(ts.payments?.length)lines.push(`Payments: ${ts.payments.join(', ')}`);
+      if(ts.email?.length)lines.push(`Email/CRM: ${ts.email.join(', ')}`);
+      if(ts.analytics?.length)lines.push(`Analytics: ${ts.analytics.join(', ')}`);
+      if(ts.cdn)lines.push(`CDN: ${ts.cdn}`);
+      return lines.join(' · ');
+    })(),
+    conversion:(()=>{
+      const cv=audit.metrics?.conversion;
+      if(!cv)return'Not checked';
+      const parts=[`Forms: ${cv.formCount}`];
+      if(cv.telNumber)parts.push(`Phone link: ${cv.telNumber}`);
+      if(cv.phoneAboveFold)parts.push(`Phone visible: ${cv.phoneAboveFold}`);
+      parts.push(`CTAs: ${cv.hasCtaLinks?'Yes':'None detected'}`);
+      return parts.join(' · ');
+    })(),
+    gbp_profile:(()=>{
+      const gbp=audit.metrics?.gbp;
+      if(!gbp?.available)return gbp?.reason==='no_api_key'?'No Places API key':'Not found / lookup failed';
+      if(!gbp.business)return'Business not found on Google Maps';
+      const b=gbp.business;
+      const parts=[b.name];
+      if(b.rating)parts.push(`${b.rating}★ (${b.reviewCount||0} reviews)`);
+      if(b.photoCount!==undefined)parts.push(`${b.photoCount} photos`);
+      if(gbp.competitors?.length){
+        parts.push('Competitors: '+gbp.competitors.map(c=>`${c.name} ${c.rating?c.rating+'★':''}(${c.reviewCount||0})`).join(', '));
+      }
+      return parts.join(' · ');
+    })(),
   };
 }
 
