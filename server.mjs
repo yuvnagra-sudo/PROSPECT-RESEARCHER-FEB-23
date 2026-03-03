@@ -185,7 +185,8 @@ prompt:`You are a recruiting industry researcher. For each company:
 4. **Culture & Employer Brand** - Glassdoor rating, review themes, remote policy, perks/concerns
 5. **Hiring Pain Points** (top 2-3): Scaling post-funding, high turnover, competing for talent, niche roles, leadership building, geographic limits
 6. **Outreach Recommendation** - Best angle for recruiter/staffing firm, sample opening line`},
-'website-audit':{name:'Website Services Prospecting',icon:'\u{1F310}',desc:'Website audit, technical issues, and pain points for web agency outreach',preAudit:true,
+'website-audit':{name:'Website Services Prospecting',icon:'\u{1F310}',desc:'Website audit, technical issues, and pain points for web agency outreach',
+preAudit:true,
 sections:[
   {key:'company_snapshot',label:'Company Snapshot'},
   {key:'website_audit',label:'Website Audit'},
@@ -195,20 +196,19 @@ sections:[
   {key:'pain_points',label:'Pain Points'},
   {key:'outreach_hook',label:'Outreach Hook'}
 ],
-prompt:`You are an expert B2B sales researcher selling website services (design, development, SEO, security, performance optimization). For each prospect, provide:
-1. **Company Snapshot** (2-3 sentences) - What they do, who they serve, approximate size
-2. **Website Audit** - Overall technical summary of the website. If WEBSITE AUDIT DATA is provided below (marked "WEBSITE AUDIT DATA FOR:"), summarize the key metrics (PageSpeed scores, response time, HTTPS status, top issues) in plain business language. Do NOT fabricate metrics — only report what the audit data shows.
-3. **Issue 1** - The single most impactful website problem. MUST reference a specific verifiable metric from the audit data (e.g. "PageSpeed score of 42/100 on mobile means..."). Explain the business impact in plain language a non-technical buyer understands.
-4. **Issue 2** - Second most impactful issue. Same specificity and metric-referencing requirement.
-5. **Issue 3** - Third most impactful issue. Same specificity requirement.
-6. **Pain Points** (2-3) - Specific operational challenges this business likely faces beyond the website. Be concrete.
-7. **Outreach Hook** - A cold email opening line referencing ONE specific real audit finding. Format: "I noticed [specific metric/finding] on [company]'s website — [business impact in 1 sentence]." Make it sound human, not robotic.
+prompt:`You are an expert B2B sales researcher selling website services (design, development, SEO, security, performance optimization).
 
-CRITICAL INSTRUCTIONS FOR USING AUDIT DATA:
-- When WEBSITE AUDIT DATA is provided below the prospect info, use those REAL findings. Do NOT invent technical problems that aren't in the data.
-- Translate every technical finding into business-impact language (e.g. "PageSpeed 38/100" → "loads in 8+ seconds on phones, losing most mobile visitors before the page appears")
-- If the audit data shows an area is healthy (e.g. HTTPS working, good SEO score), acknowledge it — credibility comes from accuracy, not from finding fake problems
-- If no audit data is provided, use web search to inspect the website and be explicit about what you observe directly`},
+IMPORTANT: Real audit data for this prospect's website has been automatically collected and will be prepended to their row data below. Use it. Do NOT claim you "cannot access" the website — the audit data IS the access.
+
+For each prospect, provide:
+1. **Company Snapshot** (2-3 sentences) - What they do, who they serve, approximate size
+2. **Website Audit** - Using the real audit data provided, summarize the technical state of the website covering performance score, SEO health (meta tags, headings), security indicators (HTTPS, SSL validity), and mobile responsiveness.
+3. **Issue 1** - The single most impactful technical website issue from the audit data. Be very specific: name the exact problem and the business impact.
+4. **Issue 2** - The second most impactful website issue from the audit data. Same specificity.
+5. **Issue 3** - The third most impactful website issue from the audit data. Same specificity.
+6. **Pain Points** (2-3) - Specific operational challenges this business likely faces based on the audit findings.
+7. **Outreach Hook** - One personalized cold email opening line that directly references a specific finding from the real audit data.
+Be specific and actionable. Every observation must reference concrete data from the audit results provided.`},
 'custom':{name:'Custom Prompt',icon:'\u270F\uFE0F',desc:'Write your own research prompt',
 sections:[],
 prompt:`You are an expert B2B sales researcher. For each prospect, provide:\n1. **Company Overview** (2-3 sentences)\n2. **Recent News & Activity** (2-3 points)\n3. **Pain Points & Opportunities** (2-3 points)\n4. **Personalization Hooks** (2-3 suggestions)\n5. **Outreach Recommendation**\nKeep responses concise but actionable.`}
@@ -847,22 +847,18 @@ async function runJob(jobId){
       const row=queue.shift();if(!row)break;
       emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
 
-      // ─── Pre-audit: run website audit before LLM for website-audit template ───
       let rowPrompt=row.prompt;
       if(TEMPLATES[job.template_id]?.preAudit){
-        const urlM=row.prompt.match(/\*\*Website:\*\*\s*(\S+)/i);
-        if(urlM){
-          emit({type:'log',level:'info',msg:`🔍 Auditing ${urlM[1]}…`});
+        const urlMatch=row.prompt.match(/\*\*Website:\*\*\s*(\S+)/i);
+        if(urlMatch){
           try{
-            const audit=await auditWebsite(urlM[1]);
-            rowPrompt=row.prompt+'\n\n--- AUTOMATED AUDIT DATA ---\n'+audit.summary;
-            emit({type:'log',level:'info',msg:`✓ Audit done: ${audit.issues.length} issue(s) found (${Math.round(audit.elapsedMs/100)/10}s)`});
-          }catch(e){
-            rowPrompt=row.prompt+'\n\n[Automated website audit failed. Use web search to inspect the website directly and report what you find.]';
-            emit({type:'log',level:'warn',msg:`⚠ Audit failed for ${urlM[1]}: ${e.message}`});
+            emit({type:'log',level:'info',msg:`🔍 Auditing website for "${row.company}"…`});
+            const audit=await auditWebsite(urlMatch[1]);
+            rowPrompt=audit.summary+'\n\n---\n\n'+row.prompt;
+            emit({type:'log',level:'info',msg:`✅ Audit complete for "${row.company}" (${audit.issues.length} issues, ${audit.elapsedMs}ms)`});
+          }catch(auditErr){
+            emit({type:'log',level:'warn',msg:`⚠️ Audit failed for "${row.company}": ${auditErr.message} — continuing without audit data`});
           }
-        }else{
-          emit({type:'log',level:'warn',msg:`No website URL in prompt for "${row.company}" — skipping pre-audit`});
         }
       }
 
@@ -1193,12 +1189,15 @@ Return ONLY valid JSON (no markdown, no code fences):
     }catch(exportErr){res.writeHead(500,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify({error:'Export failed: '+exportErr.message}));}
     return;}
 
-  if(req.method==='POST'&&p==='/api/audit-website'){const b=await readB(req);try{
-    const{url}=JSON.parse(b);
-    if(!url||typeof url!=='string'||!url.trim())return json(res,{error:'url required'},400);
-    const result=await auditWebsite(url.trim());
-    json(res,result);
-  }catch(e){json(res,{error:e.message||'Audit failed'},500);}return;}
+  if(req.method==='POST'&&p==='/api/audit-website'){
+    let body='';req.on('data',c=>body+=c);await new Promise(r=>req.on('end',r));
+    try{
+      const{url}=JSON.parse(body);
+      if(!url)return json(res,{error:'url required'},400);
+      const result=await auditWebsite(url);
+      json(res,result);
+    }catch(e){json(res,{error:e.message},500);}
+    return;}
 
   if(req.method==='GET'&&p==='/api/jobs'){json(res,S.lJ.all(uid).map(j=>({...j,templateName:TEMPLATES[j.template_id]?.name||'Custom',templateIcon:TEMPLATES[j.template_id]?.icon||'\u270F\uFE0F',providerName:PROVDEFS[j.provider]?.name||j.provider})));return;}
 

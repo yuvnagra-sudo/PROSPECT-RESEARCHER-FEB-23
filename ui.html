@@ -211,29 +211,24 @@ textarea.ta:focus{border-color:var(--pri)}
 .desc-textarea::placeholder{color:var(--dim)}
 .or-divider{display:flex;align-items:center;gap:12px;margin:12px 0;font-size:11px;color:var(--dim)}
 .or-divider::before,.or-divider::after{content:'';flex:1;height:1px;background:var(--border)}
-
-/* ── Audit UI ── */
-#auditTestSection{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px}
-.audit-engine-hd{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.audit-engine-hd h4{font-size:12px;font-weight:700;color:var(--fg);text-transform:uppercase;letter-spacing:.4px;margin:0}
-.audit-badge{background:var(--green-d);color:var(--green);border:1px solid rgba(34,197,94,.2);font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;letter-spacing:.4px;text-transform:uppercase}
-.audit-url-row{display:flex;gap:6px;margin-bottom:10px}
-.audit-result{animation:fadeUp .3s ease}
-.audit-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
-@media(max-width:640px){.audit-metrics{grid-template-columns:repeat(2,1fr)}}
-.audit-metric{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
-.audit-metric .met-lbl{font-size:10px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
-.audit-metric .val{font-size:19px;font-weight:700;font-family:var(--mono);line-height:1.2}
-.audit-metric .val.good{color:var(--green)}.audit-metric .val.warn{color:var(--amber)}.audit-metric .val.bad{color:var(--red)}.audit-metric .val.neu{color:var(--sub)}
-.audit-issue{padding:9px 12px;border-radius:6px;margin-bottom:5px;border-left:3px solid var(--border);background:var(--card)}
-.audit-issue.critical{border-left-color:var(--red);background:var(--red-d)}
-.audit-issue.high{border-left-color:var(--amber);background:rgba(245,158,11,.06)}
-.audit-issue.medium{border-left-color:var(--pri);background:var(--pri-dim)}
-.audit-issue.low{border-left-color:var(--border-h);background:var(--card)}
-.audit-issue .issue-title{font-size:12px;font-weight:600;color:var(--fg);margin-bottom:2px;display:flex;align-items:center;gap:6px}
-.audit-issue .issue-detail{font-size:11px;color:var(--sub);line-height:1.5}
-.audit-sev{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:.4px;flex-shrink:0}
-.audit-sev.critical{background:var(--red);color:#fff}.audit-sev.high{background:var(--amber);color:#000}.audit-sev.medium{background:var(--pri);color:#fff}.audit-sev.low{background:var(--border-h);color:var(--sub)}
+/* Audit styles */
+.audit-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:10px 0}
+.audit-metric{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center}
+.audit-metric .val{font-size:22px;font-weight:700;line-height:1}
+.audit-metric .val.good{color:var(--green)}
+.audit-metric .val.warn{color:#f59e0b}
+.audit-metric .val.bad{color:var(--red)}
+.audit-metric .lbl{font-size:10px;color:var(--dim);margin-top:4px}
+.audit-issue{padding:6px 10px;border-radius:6px;font-size:12px;margin:4px 0;display:flex;align-items:center;gap:8px}
+.audit-issue.critical{background:#2d1010;border-left:3px solid #ef4444}
+.audit-issue.high{background:#2d1a10;border-left:3px solid #f97316}
+.audit-issue.medium{background:#2d2910;border-left:3px solid #eab308}
+.audit-issue.low{background:#10202d;border-left:3px solid #3b82f6}
+.audit-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:#1a2d1a;color:var(--green);border:1px solid var(--green);letter-spacing:.5px}
+.audit-sev{font-size:9px;font-weight:700;text-transform:uppercase;opacity:.7;min-width:50px}
+#auditTestSection{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin:12px 0}
+#auditTestSection h4{margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:8px}
+#auditTestSection p{margin:0 0 10px;font-size:11px;color:var(--dim)}
 </style></head><body>
 
 <!-- ═══ AUTH ═══ -->
@@ -392,17 +387,13 @@ textarea.ta:focus{border-color:var(--pri)}
     <!-- Summary -->
     <div class="wiz-summary" id="wizSummary"></div>
 
-    <!-- ── Audit Test Section (shown only for website-audit template) ── -->
+    <!-- Audit Test Section -->
     <div id="auditTestSection" style="display:none">
-      <div class="audit-engine-hd">
-        <h4>Website Audit Engine</h4>
-        <span class="audit-badge">REAL DATA</span>
-        <span style="font-size:11px;color:var(--dim);margin-left:4px">Automated technical audit runs before each AI research call</span>
-      </div>
-      <div style="font-size:11px;color:var(--sub);margin-bottom:10px">Test the audit engine on any URL before running your full list.</div>
-      <div class="audit-url-row">
-        <input class="inp" id="auditTestUrl" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')testAudit()"/>
-        <button class="b b-pri b-sm" id="auditTestBtn" onclick="testAudit()">Run Test Audit</button>
+      <h4>🔍 Website Audit Engine <span class="audit-badge">✓ REAL DATA</span></h4>
+      <p>This template runs a live technical audit on each prospect's website before the AI writes the report. Test it with any URL:</p>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input class="inp" id="auditTestUrl" placeholder="https://example.com" style="flex:1;font-size:13px">
+        <button class="b b-pri b-sm" onclick="testAudit()">Run Test Audit</button>
       </div>
       <div id="auditTestResult"></div>
     </div>
@@ -586,6 +577,48 @@ async function doAuth(){const em=document.getElementById('authEmail').value.trim
   try{const r=await fetch(isSignup?'/api/signup':'/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(isSignup?{email:em,password:pw,name:nm}:{email:em,password:pw})});
     const d=await r.json();if(!r.ok){er.textContent=d.error;return;}token=d.token;currentUser=d.user;localStorage.setItem('pr_token',token);boot();}catch(e){er.textContent=e.message;}}
 function logout(){token='';currentUser=null;localStorage.removeItem('pr_token');document.getElementById('authScreen').style.display='';document.getElementById('appScreen').style.display='none';}
+async function testAudit(){
+  const url=document.getElementById('auditTestUrl').value.trim();
+  if(!url)return;
+  const btn=event.target;btn.disabled=true;btn.textContent='Auditing…';
+  const container=document.getElementById('auditTestResult');
+  container.innerHTML='<p style="font-size:12px;color:var(--dim)">Running audit checks (up to 30s)…</p>';
+  try{
+    const r=await api('/api/audit-website',{method:'POST',body:JSON.stringify({url})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Audit failed');
+    renderAuditResult(d,container);
+  }catch(e){container.innerHTML='<p style="font-size:12px;color:var(--red)">'+esc(e.message)+'</p>';}
+  btn.disabled=false;btn.textContent='Run Test Audit';}
+
+function renderAuditResult(d,container){
+  const perf=d.metrics?.performanceScore??null;
+  const perfCls=perf===null?'':'perf>=80'?'good':perf>=50?'warn':'bad';
+  const sslOk=d.metrics?.sslValid===true;
+  const fcp=d.metrics?.fcpMs?Math.round(d.metrics.fcpMs/100)/10+'s':'—';
+  const lcp=d.metrics?.lcpMs?Math.round(d.metrics.lcpMs/100)/10+'s':'—';
+  container.innerHTML=`
+    <div style="font-size:11px;color:var(--dim);margin-bottom:6px">
+      <b style="color:var(--fg)">${esc(d.finalUrl||d.url)}</b> · ${d.elapsedMs}ms
+      ${d.errors?.length?'<span style="color:var(--red)"> · '+d.errors.length+' check errors</span>':''}
+    </div>
+    <div class="audit-metrics">
+      <div class="audit-metric"><div class="val ${perf!==null?(perf>=80?'good':perf>=50?'warn':'bad'):''}">${perf!==null?perf:'—'}</div><div class="lbl">Perf Score</div></div>
+      <div class="audit-metric"><div class="val ${sslOk?'good':'bad'}">${sslOk?'✓':'✗'}</div><div class="lbl">SSL Valid</div></div>
+      <div class="audit-metric"><div class="val">${fcp}</div><div class="lbl">FCP</div></div>
+      <div class="audit-metric"><div class="val">${lcp}</div><div class="lbl">LCP</div></div>
+    </div>
+    ${d.topIssues?.length?'<div style="margin-top:8px">'+d.topIssues.slice(0,5).map(i=>`<div class="audit-issue ${i.severity}"><span class="audit-sev">${i.severity}</span> ${esc(i.message)}</div>`).join('')+'</div>':'<p style="font-size:12px;color:var(--green)">No major issues found.</p>'}
+  `;}
+
+function updateAuditSection(){
+  const tmpl=templates[selTmpl];
+  const sec=document.getElementById('auditTestSection');
+  if(sec)sec.style.display=(tmpl?.preAudit)?'':'none';}
+
+const _origRenderStep3Summary=renderStep3Summary;
+renderStep3Summary=function(){_origRenderStep3Summary.call(this);updateAuditSection();};
+
 async function checkAuth(){if(!token)return;try{const r=await api('/api/me');if(!r.ok)throw 0;currentUser=await r.json();boot();}catch{token='';localStorage.removeItem('pr_token');}}
 
 async function boot(){document.getElementById('authScreen').style.display='none';document.getElementById('appScreen').style.display='';
@@ -1270,75 +1303,5 @@ function addTableRow(r){
 
 document.getElementById('authPass').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
 window.addEventListener('beforeunload',()=>{if(es)es.close();});
-
-// ─── Audit UI ───
-async function testAudit(){
-  const url=document.getElementById('auditTestUrl').value.trim();
-  if(!url){alert('Enter a URL to audit.');return;}
-  const btn=document.getElementById('auditTestBtn');
-  btn.disabled=true;btn.textContent='Running…';
-  const res=document.getElementById('auditTestResult');
-  res.innerHTML='<div style="font-size:11px;color:var(--dim);padding:8px 0">Auditing — takes 20-35 seconds (PageSpeed API)…</div>';
-  try{
-    const r=await api('/api/audit-website',{method:'POST',body:JSON.stringify({url})});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.error||'Audit failed');
-    renderAuditResult(d,res);
-  }catch(e){
-    res.innerHTML='<div style="color:var(--red);font-size:12px;padding:8px 0">Audit failed: '+esc(e.message)+'</div>';
-  }finally{btn.disabled=false;btn.textContent='Run Test Audit';}
-}
-
-function renderAuditResult(d,container){
-  const m=d.metrics||{};
-  function scoreClass(v){return(v==null)?'neu':v>=90?'good':v>=50?'warn':'bad';}
-  function msClass(v){return(v==null)?'neu':v<1000?'good':v<3000?'warn':'bad';}
-  function boolClass(v){return v===true?'good':v===false?'bad':'neu';}
-
-  const cards=[
-    {label:'Performance',val:m.performance!=null?m.performance+'/100':'N/A',cls:scoreClass(m.performance)},
-    {label:'SEO Score',val:m.seo!=null?m.seo+'/100':'N/A',cls:scoreClass(m.seo)},
-    {label:'Response',val:m.responseMs!=null?m.responseMs+'ms':'N/A',cls:msClass(m.responseMs)},
-    {label:'FCP',val:m.fcp||'N/A',cls:'neu'},
-    {label:'LCP',val:m.lcp||'N/A',cls:'neu'},
-    {label:'HTTPS',val:m.httpsWorks===true?'✓ Yes':m.httpsWorks===false?'✗ No':'N/A',cls:boolClass(m.httpsWorks)},
-    {label:'Analytics',val:m.hasAnalytics===true?'✓ Found':m.hasAnalytics===false?'✗ None':'N/A',cls:boolClass(m.hasAnalytics)},
-    {label:'Sitemap',val:m.hasSitemap===true?'✓ Found':m.hasSitemap===false?'✗ None':'N/A',cls:boolClass(m.hasSitemap)},
-  ];
-
-  const issueHtml=(d.issues||[]).slice(0,6).map(i=>
-    '<div class="audit-issue '+esc(i.severity)+'">'+
-    '<div class="issue-title"><span class="audit-sev '+esc(i.severity)+'">'+esc(i.severity)+'</span>'+esc(i.title)+'</div>'+
-    '<div class="issue-detail">'+esc(i.detail)+'</div>'+
-    '</div>'
-  ).join('');
-
-  const elapsed=d.elapsedMs?Math.round(d.elapsedMs/100)/10+'s':'';
-  container.innerHTML=
-    '<div class="audit-result">'+
-    '<div style="font-size:11px;color:var(--dim);margin-bottom:8px">'+
-    'Audited: <span style="color:var(--fg)">'+esc(d.finalUrl||d.url)+'</span>'+
-    (elapsed?' · '+elapsed:'')+
-    ' · '+(d.issues?d.issues.length:0)+' issue(s)'+
-    (d.errors&&d.errors.length?' · <span style="color:var(--amber)">'+d.errors.length+' check error(s)</span>':'')+
-    '</div>'+
-    '<div class="audit-metrics">'+
-    cards.map(c=>'<div class="audit-metric"><div class="met-lbl">'+esc(c.label)+'</div><div class="val '+c.cls+'">'+esc(c.val)+'</div></div>').join('')+
-    '</div>'+
-    (issueHtml?
-      '<div style="font-size:10px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Issues Found</div>'+issueHtml
-      :'<div style="font-size:12px;color:var(--green);padding:4px 0">✓ No major issues detected</div>')+
-    '</div>';
-}
-
-function updateAuditSection(){
-  const el=document.getElementById('auditTestSection');if(!el)return;
-  el.style.display=(templates[selTmpl]&&templates[selTmpl].preAudit)?'':'none';
-}
-
-// Monkey-patch renderStep3Summary to also call updateAuditSection
-const _origRenderStep3Summary=renderStep3Summary;
-renderStep3Summary=function(){_origRenderStep3Summary.call(this);updateAuditSection();};
-
 checkAuth();
 </script></body></html>
