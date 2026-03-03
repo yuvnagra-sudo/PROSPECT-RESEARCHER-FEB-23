@@ -325,6 +325,7 @@ textarea.ta:focus{border-color:var(--pri)}
       <span class="suggestion-chip" onclick="fillSuggestion('Industry overview, target customers, competitive landscape, growth opportunities, and recent market trends')">Market research</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Website quality, SEO health, online reviews, social media presence, and specific improvement opportunities');pickTmpl('website-audit')">Website audit</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Open roles, hiring velocity, key departments growing, culture and employer brand, and talent strategy')">Recruiting intel</span>
+      <span class="suggestion-chip" style="border-color:var(--pri);color:var(--pri-h)" onclick="pickTmpl('audit-only');goWizardStep(3)" title="No AI or API key needed — runs live audits on each website URL in your CSV">🔍 Audit CSV (no AI)</span>
     </div>
 
     <!-- Generate button -->
@@ -593,11 +594,11 @@ async function testAudit(){
   btn.disabled=false;btn.textContent='Run Test Audit';}
 
 function renderAuditResult(d,container){
-  const perf=d.metrics?.performanceScore??null;
-  const perfCls=perf===null?'':'perf>=80'?'good':perf>=50?'warn':'bad';
-  const sslOk=d.metrics?.sslValid===true;
-  const fcp=d.metrics?.fcpMs?Math.round(d.metrics.fcpMs/100)/10+'s':'—';
-  const lcp=d.metrics?.lcpMs?Math.round(d.metrics.lcpMs/100)/10+'s':'—';
+  const m=d.metrics||{};
+  const perf=m.performance!==null&&m.performance!==undefined?m.performance:null;
+  const sslOk=m.httpsWorks===true;
+  const fcp=m.fcp||'—';
+  const lcp=m.lcp||'—';
   container.innerHTML=`
     <div style="font-size:11px;color:var(--dim);margin-bottom:6px">
       <b style="color:var(--fg)">${esc(d.finalUrl||d.url)}</b> · ${d.elapsedMs}ms
@@ -605,7 +606,7 @@ function renderAuditResult(d,container){
     </div>
     <div class="audit-metrics">
       <div class="audit-metric"><div class="val ${perf!==null?(perf>=80?'good':perf>=50?'warn':'bad'):''}">${perf!==null?perf:'—'}</div><div class="lbl">Perf Score</div></div>
-      <div class="audit-metric"><div class="val ${sslOk?'good':'bad'}">${sslOk?'✓':'✗'}</div><div class="lbl">SSL Valid</div></div>
+      <div class="audit-metric"><div class="val ${sslOk?'good':'bad'}">${sslOk?'✓':'✗'}</div><div class="lbl">HTTPS</div></div>
       <div class="audit-metric"><div class="val">${fcp}</div><div class="lbl">FCP</div></div>
       <div class="audit-metric"><div class="val">${lcp}</div><div class="lbl">LCP</div></div>
     </div>

@@ -209,6 +209,17 @@ For each prospect, provide:
 6. **Pain Points** (2-3) - Specific operational challenges this business likely faces based on the audit findings.
 7. **Outreach Hook** - One personalized cold email opening line that directly references a specific finding from the real audit data.
 Be specific and actionable. Every observation must reference concrete data from the audit results provided.`},
+'audit-only':{name:'Website Audit (No AI)',icon:'\u{1F50D}',desc:'Batch technical website audits — performance, SSL, SEO. No LLM or API key needed.',
+auditOnly:true,
+sections:[
+  {key:'performance_score',label:'Performance Score'},
+  {key:'ssl_status',label:'SSL / HTTPS'},
+  {key:'page_speed',label:'Page Speed'},
+  {key:'seo_basics',label:'SEO Basics'},
+  {key:'critical_issues',label:'Critical Issues'},
+  {key:'all_issues',label:'All Issues'},
+],
+prompt:'Website audit only — no AI prompt used.'},
 'custom':{name:'Custom Prompt',icon:'\u270F\uFE0F',desc:'Write your own research prompt',
 sections:[],
 prompt:`You are an expert B2B sales researcher. For each prospect, provide:\n1. **Company Overview** (2-3 sentences)\n2. **Recent News & Activity** (2-3 points)\n3. **Pain Points & Opportunities** (2-3 points)\n4. **Personalization Hooks** (2-3 suggestions)\n5. **Outreach Recommendation**\nKeep responses concise but actionable.`}
@@ -797,10 +808,34 @@ const actv=new Map();
 // How many concurrent requests to allow per provider
 const CONCURRENCY={gemini:5,claude:5,haiku:5,gpt5:4,openai:5,deepseek:5};
 
+function buildAuditStructured(audit){
+  const m=audit.metrics||{};
+  const crit=audit.issues.filter(i=>i.severity==='critical'||i.severity==='high');
+  return{
+    _parsed:true,
+    performance_score:m.performance!==null&&m.performance!==undefined?m.performance+'/100':'N/A — PageSpeed unavailable',
+    ssl_status:!m.httpsWorks?'No HTTPS':('HTTPS working ✓'+(m.httpRedirects?' (HTTP→HTTPS redirect ✓)':' (no HTTP→HTTPS redirect)')),
+    page_speed:[m.fcp&&`FCP: ${m.fcp}`,m.lcp&&`LCP: ${m.lcp}`,m.cls&&`CLS: ${m.cls}`,m.tbt&&`TBT: ${m.tbt}`].filter(Boolean).join(' · ')||'N/A — PageSpeed unavailable',
+    seo_basics:[
+      m.title?`Title: "${m.title.slice(0,60)}"` : 'Missing title tag',
+      m.metaDesc?'Has meta description':'No meta description',
+      m.h1Count===0?'No H1 tag':m.h1Count===1?'1 H1 ✓':`${m.h1Count} H1 tags (too many)`,
+      m.altCoverage!==undefined?`Alt text: ${Math.round(m.altCoverage*100)}% coverage`:'',
+      m.hasSitemap?'Has sitemap ✓':'No sitemap',
+      m.viewport?'Viewport meta ✓':'No viewport meta',
+      m.hasAnalytics?'Analytics detected':'No analytics detected',
+    ].filter(Boolean).join(' · '),
+    critical_issues:crit.length?crit.map(i=>`[${i.severity.toUpperCase()}] ${i.message}`).join('\n'):'None',
+    all_issues:audit.issues.length?audit.issues.map(i=>`[${i.severity.toUpperCase()}] ${i.message}`).join('\n'):'No issues detected',
+  };
+}
+
 async function runJob(jobId){
-  const job=S.gJ.get(jobId);if(!job)return;const prov=PROVDEFS[job.provider];if(!prov)return;
-  const apiKey=userKey(job.user_id,prov.envName);
-  if(!apiKey){S.uJ.run(job.succeeded,job.failed,'error',0,0,0,0,0,0,jobId);return;}
+  const job=S.gJ.get(jobId);if(!job)return;
+  const auditOnly=!!TEMPLATES[job.template_id]?.auditOnly;
+  let prov,apiKey;
+  if(auditOnly){prov={name:'Audit',inputCost:0,outputCost:0,webCostPerCall:0,cacheReadCost:0,cacheWriteCost:0};apiKey='';}
+  else{prov=PROVDEFS[job.provider];if(!prov)return;apiKey=userKey(job.user_id,prov.envName);if(!apiKey){S.uJ.run(job.succeeded,job.failed,'error',0,0,0,0,0,0,jobId);return;}}
   const ctx={cancelled:false,listeners:new Set(),abort:new AbortController()};actv.set(jobId,ctx);
   const emit=d=>{const msg=`data: ${JSON.stringify(d)}\n\n`;for(const l of ctx.listeners){try{l.write(msg);}catch{}}};
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -832,7 +867,7 @@ async function runJob(jobId){
 
   // Shared queue — workers pull from the front
   const queue=[...pending];
-  const concurrency=CONCURRENCY[job.provider]||3;
+  const concurrency=auditOnly?5:(CONCURRENCY[job.provider]||3);
 
   // Flush updated job stats to DB periodically
   const flushStats=()=>{
@@ -846,6 +881,33 @@ async function runJob(jobId){
     while(queue.length>0&&!ctx.cancelled){
       const row=queue.shift();if(!row)break;
       emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
+
+      // ── Audit-only path (no LLM) ──
+      if(auditOnly){
+        const urlMatch=row.prompt.match(/\*\*Website:\*\*\s*(\S+)/i)||row.prompt.match(/\*\*URL:\*\*\s*(\S+)/i)||row.prompt.match(/(https?:\/\/\S+)/i);
+        if(!urlMatch){
+          S.uR.run('error',null,'No URL found in row',0,0,0,0,jobId,row.idx);fail++;
+          emit({type:'result',idx:row.idx,company:row.company,status:'error',error:'No URL found in row'});
+          emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
+          flushStats();continue;
+        }
+        try{
+          emit({type:'log',level:'info',msg:`🔍 Auditing ${row.company}…`});
+          const audit=await auditWebsite(urlMatch[1]);
+          const structured=buildAuditStructured(audit);
+          S.uR.run('success',JSON.stringify(structured),null,0,0,0,0,jobId,row.idx);
+          ok++;
+          emit({type:'result',idx:row.idx,company:row.company,status:'success',research:structured,inputTokens:0,outputTokens:0,quality:0});
+          emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
+          flushStats();
+        }catch(e){
+          S.uR.run('error',null,e.message,0,0,0,0,jobId,row.idx);fail++;
+          emit({type:'result',idx:row.idx,company:row.company,status:'error',error:e.message});
+          emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
+          flushStats();
+        }
+        continue;
+      }
 
       let rowPrompt=row.prompt;
       if(TEMPLATES[job.template_id]?.preAudit){
@@ -1090,8 +1152,10 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
     const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,explicitSections}=JSON.parse(b);
-    const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
-    const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);
+    const auditOnlyJob=!!TEMPLATES[templateId]?.auditOnly;
+    const prov=PROVDEFS[pid]||(auditOnlyJob?{name:'Audit',webSearch:false}:null);
+    if(!prov)return json(res,{error:'Unknown provider'},400);
+    if(!auditOnlyJob){const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);}
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
@@ -1106,7 +1170,8 @@ Return ONLY valid JSON (no markdown, no code fences):
   if(req.method==='POST'&&p.match(/^\/api\/resume\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
     if(actv.has(jid))return json(res,{error:'Already running'},400);
-    const prov=PROVDEFS[job.provider];if(!prov||!userKey(uid,prov.envName))return json(res,{error:'No API key'},400);
+    const isAuditOnlyResume=!!TEMPLATES[job.template_id]?.auditOnly;
+    const prov=PROVDEFS[job.provider];if(!isAuditOnlyResume&&(!prov||!userKey(uid,prov.envName)))return json(res,{error:'No API key'},400);
     const pend=S.gP.all(jid);if(!pend.length)return json(res,{error:'No pending rows'},400);
     runJob(jid);json(res,{jobId:jid,remaining:pend.length,total:job.total_rows});return;}
 
