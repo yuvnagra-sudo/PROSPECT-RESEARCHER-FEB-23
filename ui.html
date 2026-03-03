@@ -325,7 +325,6 @@ textarea.ta:focus{border-color:var(--pri)}
       <span class="suggestion-chip" onclick="fillSuggestion('Industry overview, target customers, competitive landscape, growth opportunities, and recent market trends')">Market research</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Website quality, SEO health, online reviews, social media presence, and specific improvement opportunities');pickTmpl('website-audit')">Website audit</span>
       <span class="suggestion-chip" onclick="fillSuggestion('Open roles, hiring velocity, key departments growing, culture and employer brand, and talent strategy')">Recruiting intel</span>
-      <span class="suggestion-chip" style="border-color:var(--pri);color:var(--pri-h)" onclick="pickTmpl('audit-only');goWizardStep(3)" title="No AI or API key needed — runs live audits on each website URL in your CSV">🔍 Audit CSV (no AI)</span>
     </div>
 
     <!-- Generate button -->
@@ -956,8 +955,8 @@ async function startResearch(maxRows){
   if(!csvText||!selProv)return;
   if(jobRunning){alert('A job is already running. Stop it first or wait for it to finish.');return;}
   // Hard blocks — prevent guaranteed-bad output (skip for audit-only jobs)
-  const isAuditOnly=!!templates[selTmpl]?.auditOnly;
-  if(!isAuditOnly){
+  const skipValidation=!!templates[selTmpl]?.auditOnly||!!templates[selTmpl]?.preAudit;
+  if(!skipValidation){
     if(!providers[selProv]?.hasKey){alert('No API key set for '+providers[selProv]?.name+'. Add your key in Settings first.');openDrawer('settings');return;}
     if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
     if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
@@ -1068,19 +1067,90 @@ async function resumeJob(jid){if(jobRunning){alert('A job is already running.');
   jobId=jid;jobRunning=true;document.getElementById('completeBanner').style.display='none';document.getElementById('progressBar').style.display='';
   document.getElementById('runningState').style.display='';document.getElementById('btnGo').disabled=true;addLog('Resuming...');connectSSE(jid);}catch(e){alert(e.message);}}
 
-// ─── Standalone Audit ───
+// ─── Audit Drawer ───
 function buildAuditDrawer(){
   return `<h3>Website Auditor <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>
-<p style="font-size:12px;color:var(--dim);margin-bottom:14px">Run a live technical audit on any website. Checks performance, SSL, robots.txt, and PageSpeed data. This is the same check that runs automatically during the <b>Website Services Prospecting</b> research job.</p>
-<div style="display:flex;gap:8px;margin-bottom:14px">
-  <input class="inp" id="saUrl" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')runStandaloneAudit()">
-  <button class="b b-pri" id="saBtn" onclick="runStandaloneAudit()">Run Audit</button>
+<div style="display:flex;gap:6px;margin-bottom:16px">
+  <button class="b b-sm b-pri" id="auditTabBtnSingle" onclick="switchAuditTab('single')">Test Single URL</button>
+  <button class="b b-sm b-ghost" id="auditTabBtnBatch" onclick="switchAuditTab('batch')">Batch Audit (CSV)</button>
 </div>
-<div id="saResult"></div>
-<div id="saSummary" style="display:none;margin-top:14px">
-  <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Raw data injected into AI prompt</div>
-  <pre id="saSummaryText" style="font-size:10px;color:var(--sub);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto"></pre>
+
+<div id="auditTabSingle">
+  <p style="font-size:12px;color:var(--dim);margin-bottom:10px">Run a live technical audit on any website. Checks performance, SSL, SEO basics, and PageSpeed data.</p>
+  <div style="display:flex;gap:8px;margin-bottom:14px">
+    <input class="inp" id="saUrl" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')runStandaloneAudit()">
+    <button class="b b-pri" id="saBtn" onclick="runStandaloneAudit()">Run Audit</button>
+  </div>
+  <div id="saResult"></div>
+  <div id="saSummary" style="display:none;margin-top:14px">
+    <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Raw data injected into AI prompt</div>
+    <pre id="saSummaryText" style="font-size:10px;color:var(--sub);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto"></pre>
+  </div>
+</div>
+
+<div id="auditTabBatch" style="display:none">
+  <p style="font-size:12px;color:var(--dim);margin-bottom:12px">Audit a list of websites in bulk. Results appear in the main view and can be exported as CSV — <b>no API key needed</b>.</p>
+  <div style="display:flex;gap:8px;margin-bottom:10px">
+    <button class="b b-sm" id="batchModeUrlsBtn" onclick="switchBatchMode('urls')" style="border-color:var(--pri);color:var(--pri-h)">Paste URLs</button>
+    <button class="b b-sm b-ghost" id="batchModeCsvBtn" onclick="switchBatchMode('csv')">Upload CSV</button>
+  </div>
+  <div id="batchModeUrls">
+    <textarea class="ta" id="batchUrls" placeholder="Paste one URL per line:&#10;https://example.com&#10;https://another.com&#10;www.third.com" style="min-height:140px;font-size:12px"></textarea>
+  </div>
+  <div id="batchModeCsv" style="display:none">
+    <p style="font-size:11px;color:var(--dim);margin-bottom:6px">Upload a CSV with a website/URL column. The column will be auto-detected.</p>
+    <input type="file" id="batchCsvFile" accept=".csv" class="inp" style="padding:6px">
+  </div>
+  <div id="batchErr" style="font-size:12px;color:var(--red);margin-top:8px"></div>
+  <button class="b b-pri" id="batchBtn" onclick="runBatchAudit()" style="margin-top:12px;width:100%">Start Batch Audit</button>
 </div>`;}
+
+function switchAuditTab(tab){
+  document.getElementById('auditTabSingle').style.display=tab==='single'?'':'none';
+  document.getElementById('auditTabBatch').style.display=tab==='batch'?'':'none';
+  document.getElementById('auditTabBtnSingle').className='b b-sm '+(tab==='single'?'b-pri':'b-ghost');
+  document.getElementById('auditTabBtnBatch').className='b b-sm '+(tab==='batch'?'b-pri':'b-ghost');}
+
+function switchBatchMode(mode){
+  document.getElementById('batchModeUrls').style.display=mode==='urls'?'':'none';
+  document.getElementById('batchModeCsv').style.display=mode==='csv'?'':'none';
+  document.getElementById('batchModeUrlsBtn').className='b b-sm'+(mode==='urls'?' b-pri':' b-ghost');
+  document.getElementById('batchModeUrlsBtn').style.cssText=mode==='urls'?'border-color:var(--pri);color:var(--pri-h)':'';
+  document.getElementById('batchModeCsvBtn').className='b b-sm'+(mode==='csv'?' b-pri':' b-ghost');}
+
+async function runBatchAudit(){
+  const btn=document.getElementById('batchBtn');
+  const errEl=document.getElementById('batchErr');
+  errEl.textContent='';
+  const csvMode=document.getElementById('batchModeCsv').style.display!=='none';
+  let csvText='';
+  if(csvMode){
+    const file=document.getElementById('batchCsvFile').files[0];
+    if(!file){errEl.textContent='Please select a CSV file.';return;}
+    csvText=await file.text();
+  }else{
+    const raw=document.getElementById('batchUrls').value.trim();
+    if(!raw){errEl.textContent='Please paste at least one URL.';return;}
+    const urls=raw.split('\n').map(l=>l.trim()).filter(l=>l.length>3);
+    if(!urls.length){errEl.textContent='No valid URLs found.';return;}
+    csvText='URL\n'+urls.join('\n');
+  }
+  btn.disabled=true;btn.textContent='Starting…';
+  try{
+    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only — no AI prompt used.',templateId:'audit-only'})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error);
+    closeDrawer();
+    jobId=d.jobId;jobRunning=true;results=[];currentSections=[];
+    document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';
+    document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
+    document.getElementById('wizardNav').style.display='none';
+    for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
+    document.getElementById('runningState').style.display='';document.getElementById('logBox').innerHTML='';
+    document.getElementById('progressBar').style.display='';document.getElementById('progText').textContent='Auditing…';
+    addLog('Started batch audit of '+d.total+' URLs');
+    connectSSE(d.jobId);
+  }catch(e){errEl.textContent=e.message;btn.disabled=false;btn.textContent='Start Batch Audit';}}
 
 async function runStandaloneAudit(){
   const urlEl=document.getElementById('saUrl');
