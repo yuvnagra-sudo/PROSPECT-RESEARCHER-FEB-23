@@ -909,8 +909,8 @@ function buildAuditStructured(audit){
   };
   // ── Extended analyst columns ─────────────────────────────────────────────
   // Technical / Response
-  s.http_status=m.status||'';
-  s.response_ms=m.responseMs||'';
+  s.http_status=m.status!=null?String(m.status):'';
+  s.response_ms=m.responseMs!=null?String(m.responseMs):'';
   s.final_url=m.finalUrl||'';
   s.page_size_kb=m.docSizeKB!=null?m.docSizeKB+'KB':'';
   s.server_header=m.server||'';

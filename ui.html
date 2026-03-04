@@ -514,8 +514,8 @@ textarea.ta:focus{border-color:var(--pri)}
 
   <!-- View toggle + complete banner + results -->
   <div id="auditViewToggle" style="display:none;margin-top:12px;gap:6px">
-    <button class="b b-pri b-sm" id="auditBtnTableView" onclick="setAuditView('table')">Table View</button>
-    <button class="b b-ghost b-sm" id="auditBtnCardView" onclick="setAuditView('card')">Card View</button>
+    <button class="b b-ghost b-sm" id="auditBtnTableView" onclick="setAuditView('table')">Table View</button>
+    <button class="b b-pri b-sm" id="auditBtnCardView" onclick="setAuditView('card')">Card View</button>
   </div>
   <div id="auditCompleteBanner" style="display:none;margin-top:8px"></div>
   <div id="auditTableContainer" style="display:none;margin-top:8px"></div>
@@ -1181,7 +1181,7 @@ function connectAuditSSE(id){
   const bannerEl=document.getElementById('auditCompleteBanner');
   es.onmessage=e=>{
     let d;try{d=JSON.parse(e.data);}catch{return;}
-    if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('auditViewToggle').style.display='flex';}
+    if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('auditViewToggle').style.display='flex';setAuditView(auditView);}
     if(d.type==='result'){results.push(d);addAuditRC(d);addAuditTableRow(d);}
     if(d.type==='progress'){
       const pct=d.total?Math.round((d.succeeded+d.failed)/d.total*100):0;
@@ -1247,15 +1247,16 @@ function addAuditTableRow(r){
     return;}
   tbody.insertAdjacentHTML('beforeend',buildTableRowHTML(r));}
 
+const AUDIT_TABLE_KEYS=new Set(['performance_score','ssl_status','page_speed','seo_basics','critical_issues','all_issues','tech_stack','conversion','gbp_profile']);
 function renderAuditTable(){
   const c=document.getElementById('auditTableContainer');
   if(!results.length){c.innerHTML='';return;}
-  const secs=currentSections;
+  const secs=currentSections.filter(s=>AUDIT_TABLE_KEYS.has(s.key));
   let h='<div class="sp-wrap"><table class="sp-table"><thead><tr><th>Website</th><th>Status</th>';
   if(secs.length)secs.forEach(s=>{h+='<th>'+esc(s.label)+'</th>';});
   else h+='<th>Audit Results</th>';
   h+='</tr></thead><tbody>';
-  for(const r of results)h+=buildTableRowHTML(r);
+  for(const r of results)h+=buildTableRowHTML(r,secs);
   h+='</tbody></table></div>';
   c.innerHTML=h;}
 
@@ -1485,7 +1486,7 @@ async function loadAdminJobs(){
 // ─── Helpers ───
 function addLog(msg){const b=document.getElementById('logBox');b.innerHTML+='<div>'+new Date().toLocaleTimeString()+' '+esc(msg)+'</div>';b.scrollTop=b.scrollHeight;}
 // Markdown to HTML helper
-function mdH(t){if(!t)return'';if(typeof t==='object')t=t._raw||'';return t.split('\n').map(l=>{const b=l.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');if(l.startsWith('# '))return'<h3>'+b.slice(2)+'</h3>';if(l.match(/^\d+\./))return'<p><strong>'+b+'</strong></p>';if(l.startsWith('- ')||l.startsWith('* '))return'<div class="blt">'+b.slice(2)+'</div>';if(!l.trim())return'';return'<p>'+b+'</p>';}).join('');}
+function mdH(t){if(t==null||t==='')return'';if(typeof t==='object')t=t._raw||'';t=String(t);return t.split('\n').map(l=>{const b=l.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');if(l.startsWith('# '))return'<h3>'+b.slice(2)+'</h3>';if(l.match(/^\d+\./))return'<p><strong>'+b+'</strong></p>';if(l.startsWith('- ')||l.startsWith('* '))return'<div class="blt">'+b.slice(2)+'</div>';if(!l.trim())return'';return'<p>'+b+'</p>';}).join('');}
 
 // Get display text from research (handles structured object or string)
 function researchText(r){
@@ -1532,8 +1533,8 @@ function renderTable(){
   c.innerHTML=h;
 }
 
-function buildTableRowHTML(r){
-  const ok=r.status==='success';const dot=ok?'var(--green)':'var(--red)';const secs=currentSections;
+function buildTableRowHTML(r,secs){
+  const ok=r.status==='success';const dot=ok?'var(--green)':'var(--red)';if(!secs)secs=currentSections.filter(s=>AUDIT_TABLE_KEYS.has(s.key));
   let h='<tr><td title="'+esc(r.company)+'">'+esc(r.company)+'</td><td><span class="status-dot" style="background:'+dot+'"></span>'+esc(r.status)+'</td>';
   if(secs.length&&ok&&r.research?._parsed){
     secs.forEach(s=>{const val=r.research[s.key]||'';
