@@ -853,7 +853,7 @@ function buildAuditStructured(audit){
     })(),
     gbp_profile:(()=>{
       const gbp=audit.metrics?.gbp;
-      if(!gbp?.available)return gbp?.reason==='no_api_key'?'No Places API key':'Not found / lookup failed';
+      if(!gbp?.available)return gbp?.reason==='no_api_key'?'No Places API key':`Not found (${gbp?.reason||'unknown'})`;
       if(!gbp.business)return'Business not found on Google Maps';
       const b=gbp.business;
       const parts=[b.name];
@@ -930,11 +930,21 @@ async function runJob(jobId){
         }
         try{
           emit({type:'log',level:'info',msg:`🔍 Auditing ${row.company}…`});
-          const audit=await auditWebsite(urlMatch[1],{placesApiKey:userKey(job.user_id,'GOOGLE_PLACES_API_KEY')});
+          const audit=await auditWebsite(urlMatch[1],{placesApiKey:userKey(job.user_id,'GOOGLE_PLACES_API_KEY'),companyName:row.company});
           const structured=buildAuditStructured(audit);
           S.uR.run('success',JSON.stringify(structured),null,0,0,0,0,jobId,row.idx);
           ok++;
-          emit({type:'result',idx:row.idx,company:row.company,status:'success',research:structured,inputTokens:0,outputTokens:0,quality:0});
+          emit({type:'result',idx:row.idx,company:row.company,status:'success',research:structured,
+            auditRaw:{
+              finalUrl:audit.finalUrl,elapsedMs:audit.elapsedMs,
+              performance:audit.metrics?.performance,
+              httpsWorks:audit.metrics?.httpsWorks,
+              httpRedirects:audit.metrics?.httpRedirects,
+              fcp:audit.metrics?.fcp,lcp:audit.metrics?.lcp,
+              errors:audit.errors,
+              topIssues:audit.topIssues
+            },
+            inputTokens:0,outputTokens:0,quality:0});
           emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
           flushStats();
         }catch(e){
@@ -952,7 +962,7 @@ async function runJob(jobId){
         if(urlMatch){
           try{
             emit({type:'log',level:'info',msg:`🔍 Auditing website for "${row.company}"…`});
-            const audit=await auditWebsite(urlMatch[1],{placesApiKey:userKey(job.user_id,'GOOGLE_PLACES_API_KEY')});
+            const audit=await auditWebsite(urlMatch[1],{placesApiKey:userKey(job.user_id,'GOOGLE_PLACES_API_KEY'),companyName:row.company});
             rowPrompt=audit.summary+'\n\n---\n\n'+row.prompt;
             emit({type:'log',level:'info',msg:`✅ Audit complete for "${row.company}" (${audit.issues.length} issues, ${audit.elapsedMs}ms)`});
           }catch(auditErr){

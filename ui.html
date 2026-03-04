@@ -1204,14 +1204,30 @@ function connectAuditSSE(id){
 
 function addAuditRC(r){
   const list=document.getElementById('auditResultsList');const div=document.createElement('div');div.className='result fade-in';const ok=r.status==='success';
-  let bodyContent;const q=r.quality||0;
-  const qColor=q>=70?'var(--green)':q>=40?'var(--amber)':'var(--red)';
-  const qBadge=ok&&q?'<span style="font-size:10px;color:'+qColor+';margin-left:8px;font-weight:500">'+q+'%</span>':'';
-  if(ok&&r.research&&r.research._parsed&&currentSections.length){
+  let bodyContent;
+  if(ok&&r.auditRaw){
+    const am=r.auditRaw;const perf=am.performance;const sslOk=am.httpsWorks===true;
+    const fcp=am.fcp||'\u2014';const lcp=am.lcp||'\u2014';
+    bodyContent=
+      '<div style="font-size:11px;color:var(--dim);margin-bottom:6px">'+
+      '<b style="color:var(--fg)">'+esc(am.finalUrl||r.company)+'</b> \u00B7 '+(am.elapsedMs||0)+'ms'+
+      (am.errors?.length?' <span style="color:var(--red)">\u00B7 '+am.errors.length+' errors</span>':'')+
+      '</div>'+
+      '<div class="audit-metrics">'+
+      '<div class="audit-metric"><div class="val '+(perf!=null?(perf>=80?'good':perf>=50?'warn':'bad'):'')+'">'+
+        (perf!=null?perf:'\u2014')+'</div><div class="lbl">Perf Score</div></div>'+
+      '<div class="audit-metric"><div class="val '+(sslOk?'good':'bad')+'">'+(sslOk?'\u2713':'\u2717')+'</div><div class="lbl">HTTPS</div></div>'+
+      '<div class="audit-metric"><div class="val">'+fcp+'</div><div class="lbl">FCP</div></div>'+
+      '<div class="audit-metric"><div class="val">'+lcp+'</div><div class="lbl">LCP</div></div>'+
+      '</div>'+
+      (am.topIssues?.length
+        ?'<div style="margin-top:8px">'+am.topIssues.map(i=>'<div class="audit-issue '+i.severity+'"><span class="audit-sev">'+i.severity+'</span> '+esc(i.title||'Unknown issue')+'</div>').join('')+'</div>'
+        :'<p style="font-size:12px;color:var(--green)">No major issues found.</p>');
+  }else if(ok&&r.research?._parsed&&currentSections.length){
     bodyContent=currentSections.map(s=>{const val=r.research[s.key];if(!val)return'';return'<h3>'+esc(s.label)+'</h3>'+mdH(val);}).join('');
   }else if(ok){bodyContent=mdH(researchText(r.research));}
   else{bodyContent='<p style="color:var(--red)">'+esc(r.error)+'</p>';}
-  div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(r.company)+'</span>'+qBadge+'<span style="font-size:11px;color:var(--dim);margin-left:auto">\u25BC</span></div><div class="result-body" style="display:none"><div class="md">'+bodyContent+'</div></div>';
+  div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(r.company)+'</span><span style="font-size:11px;color:var(--dim);margin-left:auto">\u25BC</span></div><div class="result-body" style="display:none"><div class="md">'+bodyContent+'</div></div>';
   div.dataset.idx=r.idx;list.appendChild(div);}
 
 function addAuditTableRow(r){
