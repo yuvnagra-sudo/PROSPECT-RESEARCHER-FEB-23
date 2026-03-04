@@ -1335,10 +1335,11 @@ async function saveKeyD(env){const v=document.getElementById('dk_'+env).value.tr
 // ─── Export Configuration Drawer ───
 let exportCols=[];
 function buildExportDrawer(){
+  const isAudit=currentSections.some(s=>s.key==='performance_score');
   exportCols=[
     {key:'_company',label:'Company',enabled:true,fixed:true},
+    {key:'_fullresearch',label:isAudit?'Full Audit (all data)':'Full Research',enabled:isAudit,fixed:false},
     ...currentSections.map(s=>({key:s.key,label:s.label,enabled:true,fixed:false})),
-    {key:'_fullresearch',label:'Full Research',enabled:false,fixed:false},
     {key:'_intokens',label:'Input Tokens',enabled:false,fixed:false},
     {key:'_outtokens',label:'Output Tokens',enabled:false,fixed:false}
   ];

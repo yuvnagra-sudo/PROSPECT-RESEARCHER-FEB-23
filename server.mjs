@@ -814,7 +814,7 @@ const CONCURRENCY={gemini:5,claude:5,haiku:5,gpt5:4,openai:5,deepseek:5};
 function buildAuditStructured(audit){
   const m=audit.metrics||{};
   const crit=audit.issues.filter(i=>i.severity==='critical'||i.severity==='high');
-  return{
+  const s={
     _parsed:true,
     performance_score:m.performance!==null&&m.performance!==undefined?m.performance+'/100':'N/A — PageSpeed unavailable',
     ssl_status:!m.httpsWorks?'No HTTPS':('HTTPS working ✓'+(m.httpRedirects?' (HTTP→HTTPS redirect ✓)':' (no HTTP→HTTPS redirect)')),
@@ -865,6 +865,19 @@ function buildAuditStructured(audit){
       return parts.join(' · ');
     })(),
   };
+  s._raw=[
+    'URL: '+(audit.finalUrl||''),
+    'Performance Score: '+s.performance_score,
+    'SSL Status: '+s.ssl_status,
+    'Page Speed: '+s.page_speed,
+    'SEO Basics: '+s.seo_basics,
+    'Critical Issues: '+s.critical_issues,
+    'All Issues: '+s.all_issues,
+    'Tech Stack: '+s.tech_stack,
+    'Conversion: '+s.conversion,
+    'GBP Profile: '+s.gbp_profile,
+  ].join('\n');
+  return s;
 }
 
 async function runJob(jobId){
