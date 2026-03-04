@@ -816,9 +816,9 @@ function buildAuditStructured(audit){
   const crit=audit.issues.filter(i=>i.severity==='critical'||i.severity==='high');
   const s={
     _parsed:true,
-    performance_score:m.performance!==null&&m.performance!==undefined?m.performance+'/100':'N/A — PageSpeed unavailable',
+    performance_score:m.performance!==null&&m.performance!==undefined?m.performance+'/100':(m.pageSpeedError?`N/A — ${m.pageSpeedError}`:'N/A — PageSpeed unavailable'),
     ssl_status:!m.httpsWorks?'No HTTPS':('HTTPS working ✓'+(m.httpRedirects?' (HTTP→HTTPS redirect ✓)':' (no HTTP→HTTPS redirect)')),
-    page_speed:[m.fcp&&`FCP: ${m.fcp}`,m.lcp&&`LCP: ${m.lcp}`,m.cls&&`CLS: ${m.cls}`,m.tbt&&`TBT: ${m.tbt}`].filter(Boolean).join(' · ')||'N/A — PageSpeed unavailable',
+    page_speed:[m.fcp&&`FCP: ${m.fcp}`,m.lcp&&`LCP: ${m.lcp}`,m.cls&&`CLS: ${m.cls}`,m.tbt&&`TBT: ${m.tbt}`].filter(Boolean).join(' · ')||(m.pageSpeedError?`N/A — ${m.pageSpeedError}`:'N/A — PageSpeed unavailable'),
     seo_basics:[
       m.title?`Title: "${m.title.slice(0,60)}"` : 'Missing title tag',
       m.metaDesc?'Has meta description':'No meta description',
@@ -853,7 +853,13 @@ function buildAuditStructured(audit){
     })(),
     gbp_profile:(()=>{
       const gbp=audit.metrics?.gbp;
-      if(!gbp?.available)return gbp?.reason==='no_api_key'?'No Places API key':`Not found (${gbp?.reason||'unknown'})`;
+      if(!gbp?.available){
+        if(gbp?.reason==='no_api_key')return'No Places API key';
+        const r=gbp?.reason||'';
+        if(r.includes('has not been used')||r.includes('it is disabled')||r.includes('API not enabled'))
+          return'Places API not enabled — enable "Places API (New)" in Google Cloud Console';
+        return`Not found (${r||'unknown'})`;
+      }
       if(!gbp.business)return'Business not found on Google Maps';
       const b=gbp.business;
       const parts=[b.name];

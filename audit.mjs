@@ -5,6 +5,26 @@ const TIMEOUT_HTTP = 12000;
 const TIMEOUT_PAGESPEED = 60000;
 const PAGESPEED_API_KEY = process.env.PAGESPEED_API_KEY || '';
 
+// Adaptive PageSpeed semaphore: 2 concurrent with API key, 1 without; 1s cooldown per slot
+const PS_MAX = PAGESPEED_API_KEY ? 2 : 1;
+let _psActive = 0;
+const _psQueue = [];
+function checkPageSpeedQueued(url) {
+  return new Promise((resolve, reject) => {
+    _psQueue.push({ url, resolve, reject });
+    _psDrain();
+  });
+}
+function _psDrain() {
+  while (_psActive < PS_MAX && _psQueue.length) {
+    const { url, resolve, reject } = _psQueue.shift();
+    _psActive++;
+    checkPageSpeed(url).then(resolve, reject).finally(() => {
+      setTimeout(() => { _psActive--; _psDrain(); }, 1000);
+    });
+  }
+}
+
 // ─── URL helpers ──────────────────────────────────────────────────────────────
 function normalizeUrl(raw) {
   let url = (raw || '').trim();
@@ -725,7 +745,7 @@ export async function auditWebsite(inputUrl, { placesApiKey, companyName: hintNa
   // Run all checks in parallel (GBP starts as soon as HTTP resolves)
   const [httpRes, pageSpeedRes, sslRes, robotsRes, gbpRes] = await Promise.allSettled([
     httpPromise,
-    checkPageSpeed(url),
+    checkPageSpeedQueued(url),
     checkSSL(url),
     checkRobots(url),
     gbpPromise,
@@ -787,6 +807,7 @@ export async function auditWebsite(inputUrl, { placesApiKey, companyName: hintNa
     cls: pageSpeed?.ok ? pageSpeed.metrics.cls : null,
     tbt: pageSpeed?.ok ? pageSpeed.metrics.tbt : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
+    pageSpeedError: (!pageSpeed || pageSpeed.ok) ? null : pageSpeed.error,
     // New fields
     techStack,
     conversion,
