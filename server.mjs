@@ -221,6 +221,42 @@ sections:[
   {key:'tech_stack',label:'Tech Stack'},
   {key:'conversion',label:'Conversion Paths'},
   {key:'gbp_profile',label:'Google Business Profile'},
+  {key:'http_status',label:'HTTP Status'},
+  {key:'response_ms',label:'Response Time (ms)'},
+  {key:'final_url',label:'Final URL'},
+  {key:'page_size_kb',label:'Page Size (KB)'},
+  {key:'server_header',label:'Server'},
+  {key:'page_title',label:'Page Title'},
+  {key:'meta_description',label:'Meta Description'},
+  {key:'h1_tags',label:'H1 Tags'},
+  {key:'og_tags',label:'OG Tags'},
+  {key:'has_structured_data',label:'Structured Data (JSON-LD)'},
+  {key:'has_canonical',label:'Canonical Tag'},
+  {key:'is_noindex',label:'Noindex'},
+  {key:'mixed_content',label:'Mixed Content'},
+  {key:'accessibility_score',label:'Accessibility Score'},
+  {key:'seo_lighthouse_score',label:'SEO Lighthouse Score'},
+  {key:'best_practices_score',label:'Best Practices Score'},
+  {key:'cls',label:'CLS'},
+  {key:'tbt',label:'TBT'},
+  {key:'speed_opportunities',label:'Speed Opportunities'},
+  {key:'security_headers',label:'Security Headers'},
+  {key:'hsts_value',label:'HSTS Value'},
+  {key:'analytics_breakdown',label:'Analytics Tools'},
+  {key:'booking_tools',label:'Booking Tools'},
+  {key:'chat_tools',label:'Chat Tools'},
+  {key:'payment_processors',label:'Payment Processors'},
+  {key:'email_crm',label:'Email / CRM'},
+  {key:'cdn',label:'CDN'},
+  {key:'form_count',label:'Form Count'},
+  {key:'phone_number',label:'Phone Number'},
+  {key:'has_cta',label:'Has CTA'},
+  {key:'gbp_address',label:'GBP Address'},
+  {key:'gbp_maps_url',label:'GBP Maps URL'},
+  {key:'gbp_photos',label:'GBP Photos'},
+  {key:'gbp_competitor_1',label:'GBP Competitor 1'},
+  {key:'gbp_competitor_2',label:'GBP Competitor 2'},
+  {key:'gbp_competitor_3',label:'GBP Competitor 3'},
 ],
 prompt:'Website audit only — no AI prompt used.'},
 'custom':{name:'Custom Prompt',icon:'\u270F\uFE0F',desc:'Write your own research prompt',
@@ -871,6 +907,54 @@ function buildAuditStructured(audit){
       return parts.join(' · ');
     })(),
   };
+  // ── Extended analyst columns ─────────────────────────────────────────────
+  // Technical / Response
+  s.http_status=m.status||'';
+  s.response_ms=m.responseMs||'';
+  s.final_url=m.finalUrl||'';
+  s.page_size_kb=m.docSizeKB!=null?m.docSizeKB+'KB':'';
+  s.server_header=m.server||'';
+  // SEO Detail
+  s.page_title=m.title||'';
+  s.meta_description=m.metaDesc||'';
+  s.h1_tags=m.h1s||'';
+  s.og_tags=[m.ogTitle&&`Title: "${m.ogTitle.slice(0,60)}"`,m.ogDescription&&`Desc: "${m.ogDescription.slice(0,80)}"`,m.ogImage==='Yes'&&'Has OG image'].filter(Boolean).join(' · ')||'No OG tags';
+  s.has_structured_data=m.hasJsonLD?'Yes':'No';
+  s.has_canonical=m.hasCanonical?'Yes':'No';
+  s.is_noindex=m.isNoindex?'Yes — Blocked from search':'No';
+  s.mixed_content=m.mixedContentCount>0?m.mixedContentCount+' mixed-content URLs':'None';
+  // PageSpeed Extended
+  s.accessibility_score=m.accessibility!=null?m.accessibility+'/100':(m.pageSpeedError?`N/A — ${m.pageSpeedError}`:'N/A');
+  s.seo_lighthouse_score=m.seo!=null?m.seo+'/100':(m.pageSpeedError?`N/A — ${m.pageSpeedError}`:'N/A');
+  s.best_practices_score=m.bestPractices!=null?m.bestPractices+'/100':(m.pageSpeedError?`N/A — ${m.pageSpeedError}`:'N/A');
+  s.cls=m.cls||'N/A';
+  s.tbt=m.tbt||'N/A';
+  s.speed_opportunities=(m.opportunities||[]).length?(m.opportunities).map(o=>`${o.title}${o.savings?' ('+o.savings+')':''}`).join(' · '):'None identified';
+  // Security Headers
+  s.security_headers=[m.hsts?'HSTS ✓':'No HSTS',m.csp?'CSP ✓':'No CSP',m.xContentType?'X-Content-Type ✓':'No X-Content-Type',m.xFrame?'X-Frame ✓':'No X-Frame',m.referrerPolicy?'Referrer-Policy ✓':'No Referrer-Policy'].join(' · ');
+  s.hsts_value=m.hsts||'Not set';
+  // Analytics Breakdown
+  s.analytics_breakdown=[m.hasGA&&'Google Analytics',m.hasGTM&&'Google Tag Manager',m.hasOtherAnalytics&&'Other'].filter(Boolean).join(', ')||'None detected';
+  // Tech Stack Breakdown
+  s.booking_tools=(()=>{const ts=m.techStack;return ts?.booking?.length?ts.booking.join(', '):'None detected';})();
+  s.chat_tools=(()=>{const ts=m.techStack;return ts?.chat?.length?ts.chat.join(', '):'None detected';})();
+  s.payment_processors=(()=>{const ts=m.techStack;return ts?.payments?.length?ts.payments.join(', '):'None detected';})();
+  s.email_crm=(()=>{const ts=m.techStack;return ts?.email?.length?ts.email.join(', '):'None detected';})();
+  s.cdn=(()=>{const ts=m.techStack;return ts?.cdn||'None detected';})();
+  // Conversion Detail
+  s.form_count=m.conversion!=null?String(m.conversion.formCount):'';
+  s.phone_number=m.conversion?.telNumber||m.conversion?.phoneAboveFold||'Not found';
+  s.has_cta=m.conversion?.hasCtaLinks?'Yes':'No';
+  // GBP Detail
+  s.gbp_address=m.gbp?.business?.address||'';
+  s.gbp_maps_url=m.gbp?.business?.mapsUrl||'';
+  s.gbp_photos=m.gbp?.business?.photoCount!=null?String(m.gbp.business.photoCount):'';
+  s.gbp_competitor_1=(()=>{const c=m.gbp?.competitors?.[0];return c?`${c.name}${c.rating?' '+c.rating+'\u2605':''}${c.reviewCount?' ('+c.reviewCount+' reviews)':''}`:'';})();
+  s.gbp_competitor_2=(()=>{const c=m.gbp?.competitors?.[1];return c?`${c.name}${c.rating?' '+c.rating+'\u2605':''}${c.reviewCount?' ('+c.reviewCount+' reviews)':''}`:'';})();
+  s.gbp_competitor_3=(()=>{const c=m.gbp?.competitors?.[2];return c?`${c.name}${c.rating?' '+c.rating+'\u2605':''}${c.reviewCount?' ('+c.reviewCount+' reviews)':''}`:'';})();
+  // Full raw JSON dump (excludes rawHtml/rawHeaders — too large)
+  s._audit_json=JSON.stringify({url:audit.url,finalUrl:audit.finalUrl,elapsedMs:audit.elapsedMs,metrics:Object.fromEntries(Object.entries(audit.metrics||{}).filter(([k])=>k!=='rawHtml'&&k!=='rawHeaders')),issues:audit.issues,errors:audit.errors});
+  // ── Update _raw to include all new fields ────────────────────────────────
   s._raw=[
     'URL: '+(audit.finalUrl||''),
     'Performance Score: '+s.performance_score,
@@ -882,6 +966,33 @@ function buildAuditStructured(audit){
     'Tech Stack: '+s.tech_stack,
     'Conversion: '+s.conversion,
     'GBP Profile: '+s.gbp_profile,
+    'HTTP Status: '+s.http_status,
+    'Response MS: '+s.response_ms,
+    'Page Title: '+s.page_title,
+    'Meta Description: '+s.meta_description,
+    'H1 Tags: '+s.h1_tags,
+    'OG Tags: '+s.og_tags,
+    'Accessibility Score: '+s.accessibility_score,
+    'SEO Lighthouse Score: '+s.seo_lighthouse_score,
+    'Best Practices Score: '+s.best_practices_score,
+    'CLS: '+s.cls,
+    'TBT: '+s.tbt,
+    'Speed Opportunities: '+s.speed_opportunities,
+    'Security Headers: '+s.security_headers,
+    'Analytics: '+s.analytics_breakdown,
+    'Booking Tools: '+s.booking_tools,
+    'Chat Tools: '+s.chat_tools,
+    'Payment Processors: '+s.payment_processors,
+    'Email/CRM: '+s.email_crm,
+    'CDN: '+s.cdn,
+    'Forms: '+s.form_count,
+    'Phone: '+s.phone_number,
+    'Has CTA: '+s.has_cta,
+    'GBP Address: '+s.gbp_address,
+    'GBP Photos: '+s.gbp_photos,
+    'GBP Competitor 1: '+s.gbp_competitor_1,
+    'GBP Competitor 2: '+s.gbp_competitor_2,
+    'GBP Competitor 3: '+s.gbp_competitor_3,
   ].join('\n');
   return s;
 }

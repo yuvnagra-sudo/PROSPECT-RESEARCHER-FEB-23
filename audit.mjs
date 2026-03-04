@@ -26,6 +26,16 @@ function _psDrain() {
 }
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
+function isAuditableUrl(url) {
+  if (!url) return false;
+  try {
+    const h = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    const blocked = ['google.com','maps.google.com','facebook.com','fb.com',
+      'linkedin.com','instagram.com','twitter.com','x.com','youtube.com',
+      'yelp.com','tripadvisor.com','yellowpages.com','bbb.org'];
+    return !blocked.some(b => h === b || h.endsWith('.'+b));
+  } catch { return false; }
+}
 function normalizeUrl(raw) {
   let url = (raw || '').trim();
   if (!url) return '';
@@ -745,7 +755,9 @@ export async function auditWebsite(inputUrl, { placesApiKey, companyName: hintNa
   // Run all checks in parallel (GBP starts as soon as HTTP resolves)
   const [httpRes, pageSpeedRes, sslRes, robotsRes, gbpRes] = await Promise.allSettled([
     httpPromise,
-    checkPageSpeedQueued(url),
+    isAuditableUrl(url)
+      ? checkPageSpeedQueued(url)
+      : Promise.resolve({ok:false, error:'Third-party or non-auditable URL'}),
     checkSSL(url),
     checkRobots(url),
     gbpPromise,
@@ -808,6 +820,16 @@ export async function auditWebsite(inputUrl, { placesApiKey, companyName: hintNa
     tbt: pageSpeed?.ok ? pageSpeed.metrics.tbt : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
     pageSpeedError: (!pageSpeed || pageSpeed.ok) ? null : pageSpeed.error,
+    // Extended raw fields
+    h1s: (html.h1s || []).slice(0, 5).join(' | ') || null,
+    ogTitle: html.ogTags?.['og:title'] || null,
+    ogDescription: html.ogTags?.['og:description'] || null,
+    ogImage: html.ogTags?.['og:image'] ? 'Yes' : 'No',
+    hasGA: analytics.hasGA || false,
+    hasGTM: analytics.hasGTM || false,
+    hasOtherAnalytics: analytics.hasOther || false,
+    sslRedirectTarget: ssl?.redirectTarget || null,
+    referrerPolicy: httpData?.headers?.referrerPolicy || null,
     // New fields
     techStack,
     conversion,
