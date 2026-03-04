@@ -2,7 +2,7 @@
 // Uses only Node 18+ built-ins (fetch, AbortSignal.timeout). No extra deps.
 
 const TIMEOUT_HTTP = 12000;
-const TIMEOUT_PAGESPEED = 30000;
+const TIMEOUT_PAGESPEED = 60000;
 const PAGESPEED_API_KEY = process.env.PAGESPEED_API_KEY || '';
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
@@ -153,12 +153,16 @@ async function checkHTTP(url) {
 async function checkPageSpeed(url) {
   const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&category=performance&category=seo&category=accessibility&category=best-practices${PAGESPEED_API_KEY ? '&key=' + PAGESPEED_API_KEY : ''}`;
   let res;
-  try {
-    res = await fetch(psUrl, { signal: AbortSignal.timeout(TIMEOUT_PAGESPEED) });
-  } catch (e) {
-    return { ok: false, error: e.message };
+  for(let attempt=0;attempt<2;attempt++){
+    try{res=await fetch(psUrl,{signal:AbortSignal.timeout(TIMEOUT_PAGESPEED)});}
+    catch(e){return{ok:false,error:e.message};}
+    if(res.status===429||res.status===503){
+      if(attempt===0){await new Promise(r=>setTimeout(r,4000));continue;}
+      return{ok:false,error:`PageSpeed API ${res.status} (rate limited)`};
+    }
+    break;
   }
-  if (!res.ok) return { ok: false, error: `PageSpeed API ${res.status}` };
+  if(!res.ok)return{ok:false,error:`PageSpeed API ${res.status}`};
   let data;
   try { data = await res.json(); } catch { return { ok: false, error: 'Invalid JSON from PageSpeed' }; }
 
@@ -374,8 +378,9 @@ async function checkGoogleBusinessProfile(companyName, city, keyword, apiKey) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) throw new Error(`Places API ${r.status}`);
-    return (await r.json()).places || [];
+    const json = await r.json();
+    if (!r.ok) throw new Error(`Places API ${r.status}: ${json.error?.message||json.error?.status||r.statusText}`);
+    return json.places || [];
   }
 
   const issues = [];
@@ -698,7 +703,7 @@ function buildSummary(url, metrics, issues) {
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export async function auditWebsite(inputUrl, { placesApiKey } = {}) {
+export async function auditWebsite(inputUrl, { placesApiKey, companyName: hintName } = {}) {
   const t0 = Date.now();
   const errors = [];
 
@@ -712,7 +717,8 @@ export async function auditWebsite(inputUrl, { placesApiKey } = {}) {
     ? httpPromise.then(httpData => {
         if (!httpData?.ok) return { available: false, reason: 'http_failed' };
         const ctx = inferBusinessContext(httpData.rawHtml, httpData.finalUrl || url);
-        return checkGoogleBusinessProfile(ctx.companyName, ctx.city, ctx.keyword, effectivePlacesKey);
+        const name = hintName || ctx.companyName;
+        return checkGoogleBusinessProfile(name, ctx.city, ctx.keyword, effectivePlacesKey);
       }).catch(e => ({ available: false, reason: e.message }))
     : Promise.resolve({ available: false, reason: 'no_api_key' });
 

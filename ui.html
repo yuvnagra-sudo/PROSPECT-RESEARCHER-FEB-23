@@ -230,7 +230,7 @@ textarea.ta:focus{border-color:var(--pri)}
 #auditTestSection h4{margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:8px}
 #auditTestSection p{margin:0 0 10px;font-size:11px;color:var(--dim)}
 /* Audit page */
-#auditView{padding:24px 20px 80px;max-width:900px;margin:0 auto}
+#auditView{padding:24px 20px 80px;}
 .audit-page-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
 .audit-page-card .card-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:10px}
 #auditResults .result-body{display:none}
@@ -291,6 +291,7 @@ textarea.ta:focus{border-color:var(--pri)}
     <div class="wiz-step-ind locked" onclick="goWizardStep(2)"><span class="wiz-dot">2</span> Configure</div>
     <div class="wiz-sep"></div>
     <div class="wiz-step-ind locked" onclick="goWizardStep(3)"><span class="wiz-dot">3</span> Review &amp; Run</div>
+    <span id="startOverBtn" style="display:none;font-size:11px;color:var(--dim);cursor:pointer;text-decoration:underline;margin-left:auto;padding:6px 12px" onclick="goWizardStep(1)">Start over</span>
   </div>
 
   <!-- ═══ STEP 1: UPLOAD ═══ -->
@@ -571,6 +572,7 @@ function goWizardStep(n){
     el.className='wiz-step-ind'+(s===n?' active':s<n?' done':' locked');
     el.querySelector('.wiz-dot').textContent=s<n?'\u2713':s;
   });
+  const soBtn=document.getElementById('startOverBtn');if(soBtn)soBtn.style.display=n>1?'':'none';
   if(n===2){renderGeneratedSections();document.getElementById('promptEdit').value=customPrompt;updatePromptMeta();if(builderSections.length>=1)setPromptMode('builder');}
   if(n===3){updateCost();renderStep3Summary();if(csvText&&!results.length)refreshPreview(colMap);}
   if(!results.length)window.scrollTo({top:0,behavior:'smooth'});
@@ -671,10 +673,10 @@ function renderAuditResult(d,container){
       ${d.errors?.length?'<span style="color:var(--red)"> · '+d.errors.length+' check errors</span>':''}
     </div>
     <div class="audit-metrics">
-      <div class="audit-metric"><div class="val ${perf!==null?(perf>=80?'good':perf>=50?'warn':'bad'):''}">${perf!==null?perf:'—'}</div><div class="lbl">Perf Score</div></div>
-      <div class="audit-metric"><div class="val ${sslOk?'good':'bad'}">${sslOk?'✓':'✗'}</div><div class="lbl">HTTPS</div></div>
-      <div class="audit-metric"><div class="val">${fcp}</div><div class="lbl">FCP</div></div>
-      <div class="audit-metric"><div class="val">${lcp}</div><div class="lbl">LCP</div></div>
+      <div class="audit-metric"><div class="val ${perf!==null?(perf>=80?'good':perf>=50?'warn':'bad'):''}">${perf!==null?perf:'—'}</div><div class="lbl" title="Google Lighthouse performance score (0–100)">Perf Score</div></div>
+      <div class="audit-metric"><div class="val ${sslOk?'good':'bad'}">${sslOk?'✓':'✗'}</div><div class="lbl" title="Whether the site uses HTTPS and redirects HTTP traffic">HTTPS</div></div>
+      <div class="audit-metric"><div class="val">${fcp}</div><div class="lbl" title="First Contentful Paint — how quickly the first content appears">FCP</div></div>
+      <div class="audit-metric"><div class="val">${lcp}</div><div class="lbl" title="Largest Contentful Paint — when the main content finishes loading">LCP</div></div>
     </div>
     ${d.topIssues?.length?'<div style="margin-top:8px">'+d.topIssues.slice(0,5).map(i=>`<div class="audit-issue ${i.severity}"><span class="audit-sev">${i.severity}</span> ${esc(i.title||i.message||'Unknown issue')}</div>`).join('')+'</div>':'<p style="font-size:12px;color:var(--green)">No major issues found.</p>'}
   `;}
@@ -1044,13 +1046,7 @@ async function startResearch(maxRows){
     if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
       alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
   }
-  // Slice CSV to maxRows if testing
-  let csvToSend=csvText;
-  if(maxRows&&maxRows>0){
-    const lines=csvText.split('\n');const header=lines[0];
-    const dataLines=lines.slice(1).filter(l=>l.trim());
-    csvToSend=[header,...dataLines.slice(0,maxRows)].join('\n');
-  }
+  const csvToSend=csvText;
   // Large CSV cost warning — right before spending money (skip for test runs)
   if(!maxRows&&rowCount>500){
     const pe=providers[selProv];
@@ -1078,7 +1074,7 @@ async function startResearch(maxRows){
   // Hide wizard during research
   document.getElementById('wizardNav').style.display='none';
   for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
-  try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
+  try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined,maxRows:maxRows||undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);jobId=d.jobId;jobRunning=true;lockPromptUI(true);
     document.getElementById('progressBar').style.display='';document.getElementById('progText').textContent='Researching...';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
   }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Start Research';
@@ -1159,11 +1155,11 @@ async function startBatchAudit(maxRows){
   if(!csvText){document.getElementById('auditBatchErr').textContent='Upload a CSV first.';return;}
   if(jobRunning){alert('A job is already running. Stop it first.');return;}
   const errEl=document.getElementById('auditBatchErr');errEl.textContent='';
-  let csvToSend=csvText;
-  if(maxRows){const lines=csvText.split('\n');csvToSend=[lines[0],...lines.slice(1).filter(l=>l.trim()).slice(0,maxRows)].join('\n');}
+  const websiteCol=colMap['website']||colMap['url'];
+  if(!websiteCol){errEl.textContent='No website column mapped. Click "Map Columns" and assign the Website role to your URL column.';return;}
   const btn=document.getElementById('auditBatchBtn');btn.disabled=true;btn.textContent='Starting\u2026';
   try{
-    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only \u2014 no AI prompt used.',templateId:'audit-only',colMapOverride:colMap})});
+    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only \u2014 no AI prompt used.',templateId:'audit-only',colMapOverride:colMap,maxRows:maxRows||undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);
     jobId=d.jobId;jobRunning=true;results=[];currentSections=[];
     document.getElementById('auditResultsList').innerHTML='';
@@ -1200,7 +1196,20 @@ function connectAuditSSE(id){
       if(d.elapsed)t+=' \u00B7 '+Math.round(d.elapsed)+'s';
       bannerEl.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button>';
       es.close();}};
-  es.onerror=()=>{es.close();};}
+  let retries=0;
+  es.onerror=()=>{
+    es.close();
+    if(retries<3&&jobRunning){
+      retries++;
+      setTimeout(()=>connectAuditSSE(id),2000*retries);
+    }else{
+      jobRunning=false;
+      document.getElementById('auditRunning').style.display='none';
+      const btn=document.getElementById('auditBatchBtn');if(btn){btn.disabled=false;btn.textContent='Start Batch Audit';}
+      bannerEl.style.display='flex';bannerEl.className='banner fade-in banner-err';
+      bannerEl.innerHTML='<span style="flex:1">\u26A0 Connection lost \u2014 <button class="b b-ghost b-sm" onclick="connectAuditSSE(\''+id+'\')">Reconnect</button></span>';
+    }
+  };}
 
 function addAuditRC(r){
   const list=document.getElementById('auditResultsList');const div=document.createElement('div');div.className='result fade-in';const ok=r.status==='success';
@@ -1215,10 +1224,10 @@ function addAuditRC(r){
       '</div>'+
       '<div class="audit-metrics">'+
       '<div class="audit-metric"><div class="val '+(perf!=null?(perf>=80?'good':perf>=50?'warn':'bad'):'')+'">'+
-        (perf!=null?perf:'\u2014')+'</div><div class="lbl">Perf Score</div></div>'+
-      '<div class="audit-metric"><div class="val '+(sslOk?'good':'bad')+'">'+(sslOk?'\u2713':'\u2717')+'</div><div class="lbl">HTTPS</div></div>'+
-      '<div class="audit-metric"><div class="val">'+fcp+'</div><div class="lbl">FCP</div></div>'+
-      '<div class="audit-metric"><div class="val">'+lcp+'</div><div class="lbl">LCP</div></div>'+
+        (perf!=null?perf:'\u2014')+'</div><div class="lbl" title="Google Lighthouse performance score (0\u2013100)">Perf Score</div></div>'+
+      '<div class="audit-metric"><div class="val '+(sslOk?'good':'bad')+'">'+(sslOk?'\u2713':'\u2717')+'</div><div class="lbl" title="Whether the site uses HTTPS and redirects HTTP traffic">HTTPS</div></div>'+
+      '<div class="audit-metric"><div class="val">'+fcp+'</div><div class="lbl" title="First Contentful Paint \u2014 how quickly the first content appears">FCP</div></div>'+
+      '<div class="audit-metric"><div class="val">'+lcp+'</div><div class="lbl" title="Largest Contentful Paint \u2014 when the main content finishes loading">LCP</div></div>'+
       '</div>'+
       (am.topIssues?.length
         ?'<div style="margin-top:8px">'+am.topIssues.map(i=>'<div class="audit-issue '+i.severity+'"><span class="audit-sev">'+i.severity+'</span> '+esc(i.title||'Unknown issue')+'</div>').join('')+'</div>'
@@ -1232,7 +1241,10 @@ function addAuditRC(r){
 
 function addAuditTableRow(r){
   const tbody=document.querySelector('#auditTableContainer tbody');
-  if(!tbody){renderAuditTable();return;}
+  if(!tbody){
+    renderAuditTable();
+    document.getElementById('auditTableContainer').style.display=auditView==='table'?'':'none';
+    return;}
   tbody.insertAdjacentHTML('beforeend',buildTableRowHTML(r));}
 
 function renderAuditTable(){
@@ -1296,7 +1308,7 @@ function openDrawer(mode){document.getElementById('drawerOverlay').classList.add
   else if(mode==='history'){c.innerHTML='<h3>Job History <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3><div id="histList"></div>';loadHistory();}
   else if(mode==='mapping')c.innerHTML=buildMappingDrawer();
   else if(mode==='prompt')c.innerHTML=buildPromptDrawer();
-  else if(mode==='export')c.innerHTML=buildExportDrawer();
+  else if(mode==='export'){c.innerHTML=buildExportDrawer();updateExpCount();}
   else if(mode==='admin'){c.innerHTML=buildAdminDrawer();loadAdminUsers();loadAdminJobs();}}
 function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
 
@@ -1310,7 +1322,15 @@ function buildSettingsDrawer(){
 
 function buildMappingDrawer(){
   let h='<h3>Column Mapping <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>';
-  h+='<p style="font-size:11px;color:var(--dim);margin-bottom:12px">Map CSV columns to roles for better prompts.</p>';
+  if(sampleRows.length&&csvHeaders.length){
+    h+='<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:6px">Preview (first '+Math.min(sampleRows.length,3)+' rows)</div>';
+    h+='<div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px;margin-bottom:14px">';
+    h+='<table style="border-collapse:collapse;width:100%;font-size:11px;white-space:nowrap">';
+    h+='<thead><tr>'+csvHeaders.map(hd=>'<th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border);color:var(--dim);font-weight:600;background:var(--surface)">'+esc(hd)+'</th>').join('')+'</tr></thead>';
+    h+='<tbody>'+sampleRows.slice(0,3).map(row=>'<tr>'+csvHeaders.map(hd=>{const v=(row[hd]||'').slice(0,60);return'<td style="padding:5px 8px;border-bottom:1px solid var(--border);color:var(--fg);max-width:180px;overflow:hidden;text-overflow:ellipsis">'+(v?esc(v):'<span style="color:var(--dim)">—</span>')+'</td>';}).join('')+'</tr>').join('')+'</tbody>';
+    h+='</table></div>';
+  }
+  h+='<p style="font-size:11px;color:var(--dim);margin-bottom:10px">Assign CSV columns to roles for better prompts.</p>';
   ROLES.forEach(role=>{const cur=colMap[role]||'';
     let opts='<option value="">(none)</option>';csvHeaders.forEach(c=>{opts+='<option value="'+esc(c)+'"'+(c===cur?' selected':'')+'>'+esc(c)+'</option>';});
     h+='<div class="mrow"><span class="role">'+role+'</span><select class="sel" style="flex:1" data-role="'+role+'">'+opts+'</select></div>';});
@@ -1347,15 +1367,21 @@ function buildExportDrawer(){
   h+='<p style="font-size:11px;color:var(--dim);margin-bottom:12px">Toggle columns on/off and rename headers to match your sequencer.</p>';
   exportCols.forEach((c,i)=>{
     h+='<div class="mrow" style="padding:6px 0;align-items:center">';
-    h+='<input type="checkbox" '+(c.enabled?'checked':'')+(c.fixed?' disabled':'')+' data-expidx="'+i+'" style="margin-right:6px"/>';
+    h+='<input type="checkbox" '+(c.enabled?'checked':'')+(c.fixed?' disabled':'')+' data-expidx="'+i+'" onchange="updateExpCount()" style="margin-right:6px"/>';
     h+='<input class="inp" value="'+esc(c.label)+'" data-expidx="'+i+'" style="flex:1;font-size:12px;padding:4px 8px"/>';
     h+='</div>';
   });
+  h+='<div id="expColCount" style="font-size:11px;color:var(--dim);margin-top:8px"></div>';
   h+='<div style="margin-top:16px;display:flex;gap:6px">';
   h+='<button class="b b-pri" style="flex:1" onclick="doConfiguredExport()">Download CSV</button>';
   h+='<button class="b b-ghost" onclick="exportCSV()">Quick Export (all columns)</button>';
   h+='</div>';
   return h;
+}
+function updateExpCount(){
+  const total=document.querySelectorAll('[data-expidx][type="checkbox"]').length;
+  const on=document.querySelectorAll('[data-expidx][type="checkbox"]:checked').length;
+  const el=document.getElementById('expColCount');if(el)el.textContent=on+' of '+total+' columns selected';
 }
 function sanitizeClient(t){
   if(!t||typeof t!=='string')return'';let s=t;

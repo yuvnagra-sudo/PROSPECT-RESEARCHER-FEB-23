@@ -759,7 +759,7 @@ function parseCSV(text){
     const row={};hdrs.forEach((h,idx)=>{row[h]=(v[idx]||'').replace(/^["']|["']$/g,'').trim();});rows.push(row);}
   return{headers:hdrs,rows};
 }
-const GUESSES={company:['company','company_name','business name','business','organization','name','firm','account'],website:['url','website','web','domain','site','webpage'],email:['email','email_address','e-mail','mail'],contact:['contact','contact_name','person','full name','first name'],title:['title','job_title','role','position','designation'],phone:['phone','telephone','tel','mobile','cell'],address:['address','location','city','street','region'],industry:['industry','sector','vertical','category','type','segment'],rating:['rating','score','stars'],reviews:['reviews','review count'],notes:['notes','additional_info','description','context','comments','bio']};
+const GUESSES={company:['company','company_name','business name','business','organization','name','firm','account'],website:['website','web','domain','site','webpage','url'],email:['email','email_address','e-mail','mail'],contact:['contact','contact_name','person','full name','first name'],title:['title','job_title','role','position','designation'],phone:['phone','telephone','tel','mobile','cell'],address:['address','location','city','street','region'],industry:['industry','sector','vertical','category','type','segment'],rating:['rating','score','stars'],reviews:['reviews','review count'],notes:['notes','additional_info','description','context','comments','bio']};
 function autoGuess(headers,rows){const map={};
   // Stage 1: Header-name matching
   for(const[role,guesses]of Object.entries(GUESSES)){let found=null;
@@ -917,7 +917,7 @@ async function runJob(jobId){
 
   // Shared queue — workers pull from the front
   const queue=[...pending];
-  const concurrency=auditOnly?5:(CONCURRENCY[job.provider]||3);
+  const concurrency=auditOnly?3:(CONCURRENCY[job.provider]||3);
 
   // Flush updated job stats to DB periodically
   const flushStats=()=>{
@@ -1211,12 +1211,13 @@ Return ONLY valid JSON (no markdown, no code fences):
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
-    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,explicitSections}=JSON.parse(b);
+    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,explicitSections,maxRows}=JSON.parse(b);
     const auditOnlyJob=!!TEMPLATES[templateId]?.auditOnly;
     const prov=PROVDEFS[pid]||(auditOnlyJob?{name:'Audit',webSearch:false}:null);
     if(!prov)return json(res,{error:'Unknown provider'},400);
     if(!auditOnlyJob){const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);}
-    const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
+    const{headers,rows:allRows}=parseCSV(csv);if(!allRows.length)return json(res,{error:'No data'},400);
+    const rows=(maxRows&&maxRows>0)?allRows.slice(0,maxRows):allRows;
     const cm=colMapOverride||autoGuess(headers,rows);
     if(auditOnlyJob){
       // Auto-detect URL column if not already mapped
@@ -1260,7 +1261,9 @@ Return ONLY valid JSON (no markdown, no code fences):
       res.write(`data: ${JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:parsed,error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens})}\n\n`);
     }
     if(job.status==='complete'||job.status==='cancelled') res.write(`data: ${JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})}\n\n`);
-    const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}return;}
+    const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));
+      const hb=setInterval(()=>{try{res.write(': ping\n\n');}catch{}},15000);
+      req.on('close',()=>clearInterval(hb));}return;}
 
   if(req.method==='POST'&&p.match(/^\/api\/cancel\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(job&&job.user_id===uid){const a2=actv.get(jid);if(a2){a2.cancelled=true;if(a2.abort)a2.abort.abort();}}json(res,{ok:true});return;}
