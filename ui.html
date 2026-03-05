@@ -303,6 +303,10 @@ textarea.ta:focus{border-color:var(--pri)}
       <div class="ico" id="dzIco">📁</div>
       <div class="main-text" id="dzText">Drop your CSV here, or click to browse</div>
       <div class="sub-text" id="dzSub">Any CSV with a company name column</div>
+      <div id="dzUploadInfo" style="display:none;width:100%;padding:0 8px;margin-top:8px">
+        <div style="background:var(--border);border-radius:3px;height:3px;overflow:hidden;margin-bottom:5px"><div id="dzBar" style="height:100%;background:var(--pri);width:0%;transition:width .12s ease"></div></div>
+        <div id="dzBarLbl" style="font-size:10px;color:var(--dim);text-align:center;letter-spacing:.2px"></div>
+      </div>
     </div>
     <div id="mapBar" style="display:none;margin-top:16px">
       <div style="font-size:11px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Column mapping</div>
@@ -491,6 +495,10 @@ textarea.ta:focus{border-color:var(--pri)}
       <div class="ico" id="auditDzIco">📂</div>
       <div class="main-text" id="auditDzText">Drop CSV here or click to upload</div>
       <div class="sub-text" id="auditDzSub">website URLs, one per row</div>
+      <div id="auditUploadInfo" style="display:none;width:100%;padding:0 8px;margin-top:8px">
+        <div style="background:var(--border);border-radius:3px;height:3px;overflow:hidden;margin-bottom:5px"><div id="auditBar" style="height:100%;background:var(--pri);width:0%;transition:width .12s ease"></div></div>
+        <div id="auditBarLbl" style="font-size:10px;color:var(--dim);text-align:center;letter-spacing:.2px"></div>
+      </div>
     </div>
     <div id="auditBatchRow" style="display:none;margin-top:10px;gap:8px;flex-wrap:wrap;align-items:center">
       <span id="auditRowCount" style="font-size:12px;color:var(--dim)"></span>
@@ -538,6 +546,8 @@ let providers={},templates={},selProv='gemini',selTmpl='b2b-outreach';
 let csvText='',rowCount=0,jobId=null,es=null,results=[],runCost=0,runStart=0;
 let colMap={},csvHeaders=[],useWeb=true,customPrompt='',promptDirty=false,jobRunning=false,auditView='card';
 let sampleRows=[];
+const MAX_FILE_MB=10;
+function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB';}
 const ROLES=['company','website','contact','email','title','phone','address','industry','notes','rating','reviews'];
 
 // Table view state
@@ -948,22 +958,41 @@ if(auditDzEl){
   auditDzEl.addEventListener('drop',e=>{e.preventDefault();auditDzEl.classList.remove('drag');if(e.dataTransfer.files[0])loadAuditFile(e.dataTransfer.files[0]);});
   auditFiEl.addEventListener('change',()=>{if(auditFiEl.files[0])loadAuditFile(auditFiEl.files[0]);});}
 async function loadAuditFile(f){
-  await loadFile(f);
+  await loadFile(f,'audit');
   if(!csvText)return;
-  auditDzEl.classList.add('loaded');
-  document.getElementById('auditDzIco').textContent='✅';
-  document.getElementById('auditDzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
-  document.getElementById('auditDzSub').textContent='Click to change';
   document.getElementById('auditRowCount').textContent=rowCount+' websites';
   document.getElementById('auditBatchRow').style.display='flex';}
-async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading a new file will not stop it but may mix results. Continue?'))return;}
+async function loadFile(f, target){
+  if(jobRunning){if(!confirm('A job is running. Loading a new file will not stop it but may mix results. Continue?'))return;}
   if(results.length&&!jobRunning&&!confirm('Loading a new file will clear current results. Continue?'))return;
   if(f.name.match(/\.xlsx?$/i)){alert('Excel files (.xlsx/.xls) are not supported yet.\n\nPlease save your spreadsheet as CSV first:\nFile \u2192 Save As \u2192 CSV (Comma delimited)');return;}
-  csvText=await f.text();dz.classList.add('loaded');
-  document.getElementById('dzIco').textContent='✅';document.getElementById('dzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
-  document.getElementById('dzSub').textContent='Click to change';
-  await refreshPreview();updateCost();
-  document.getElementById('wizStep1Actions').style.display='flex';}
+  if(f.size>MAX_FILE_MB*1048576){alert('File too large ('+fmtSize(f.size)+').\nMaximum is '+MAX_FILE_MB+' MB — split your CSV into smaller batches.');return;}
+  const isAudit=target==='audit';
+  const g=id=>document.getElementById(id);
+  const dzEl=g(isAudit?'auditDz':'dz');
+  const icoId=isAudit?'auditDzIco':'dzIco',textId=isAudit?'auditDzText':'dzText',subId=isAudit?'auditDzSub':'dzSub';
+  const infoId=isAudit?'auditUploadInfo':'dzUploadInfo',barId=isAudit?'auditBar':'dzBar',lblId=isAudit?'auditBarLbl':'dzBarLbl';
+  dzEl.classList.add('loaded');
+  g(icoId).textContent='⏳';
+  g(textId).innerHTML='<strong>'+esc(f.name)+'</strong>';
+  g(subId).textContent=fmtSize(f.size)+' · Reading\u2026';
+  g(infoId).style.display='';g(barId).style.width='0%';g(lblId).textContent='Reading file\u2026';
+  try{
+    csvText=await new Promise((resolve,reject)=>{
+      const r=new FileReader();
+      r.onprogress=e=>{if(e.lengthComputable){const p=Math.round(e.loaded/e.total*100);g(barId).style.width=p+'%';g(lblId).textContent='Reading\u2026 '+p+'%';}};
+      r.onload=e=>resolve(e.target.result);
+      r.onerror=()=>reject(new Error('File read failed'));
+      r.readAsText(f);
+    });
+  }catch(err){g(icoId).textContent='❌';g(subId).textContent='Error: '+err.message;g(infoId).style.display='none';csvText='';return;}
+  g(barId).style.width='100%';g(lblId).textContent='Sending to server\u2026';
+  g(subId).textContent=fmtSize(f.size)+' · Parsing\u2026';
+  await refreshPreview();
+  g(infoId).style.display='none';
+  g(icoId).textContent='✅';
+  g(subId).textContent=fmtSize(f.size)+' \u00B7 '+rowCount+' rows \u00B7 Click to change';
+  if(!isAudit){updateCost();document.getElementById('wizStep1Actions').style.display='flex';}}
 
 // ─── Preview + Mapping ───
 async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMapOverride=om;
