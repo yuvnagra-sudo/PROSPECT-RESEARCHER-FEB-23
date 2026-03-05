@@ -259,9 +259,9 @@ async function checkSSL(url) {
 // ─── Check: robots.txt + sitemap.xml ─────────────────────────────────────────
 async function checkRobots(url) {
   const origin = getOrigin(url);
-  if (!origin) return { robotsTxtExists: false, allDisallowed: false, sitemapInRobots: false, sitemapXmlExists: false };
+  if (!origin) return {robotsTxtExists:false,allDisallowed:false,hasSelectiveDisallows:false,disallowedPaths:[],sitemapInRobots:false,sitemapXmlExists:false};
 
-  const result = { robotsTxtExists: false, allDisallowed: false, sitemapInRobots: false, sitemapXmlExists: false };
+  const result = {robotsTxtExists:false,allDisallowed:false,hasSelectiveDisallows:false,disallowedPaths:[],sitemapInRobots:false,sitemapXmlExists:false};
 
   try {
     const r = await fetch(origin + '/robots.txt', {
@@ -272,8 +272,25 @@ async function checkRobots(url) {
     if (r.ok && r.headers.get('content-type')?.includes('text')) {
       result.robotsTxtExists = true;
       const text = await r.text();
-      result.allDisallowed = /(?:^|\n)\s*Disallow:\s*\/\s*(?:\n|$)/m.test(text);
-      result.sitemapInRobots = /Sitemap:/i.test(text);
+      // Parse block-by-block — only collect Disallow entries under User-agent: *
+      let inStarBlock = false;
+      for (const raw of text.split('\n')) {
+        const line = raw.split('#')[0].trim(); // strip inline comments
+        if (!line) continue;
+        if (/^user-agent:/i.test(line)) {
+          inStarBlock = line.replace(/^user-agent:\s*/i, '').trim() === '*';
+        } else if (/^disallow:/i.test(line)) {
+          if (inStarBlock) {
+            const path = line.replace(/^disallow:\s*/i, '').trim();
+            if (path) result.disallowedPaths.push(path);
+          }
+        } else if (/^sitemap:/i.test(line)) {
+          result.sitemapInRobots = true;
+        }
+      }
+      // Full block only if exact "Disallow: /" (nothing after slash)
+      result.allDisallowed = result.disallowedPaths.some(p => p === '/');
+      result.hasSelectiveDisallows = !result.allDisallowed && result.disallowedPaths.length > 0;
     }
   } catch {}
 
@@ -604,11 +621,12 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
       'No analytics platform detected (Google Analytics, GTM, etc.). The business is making marketing decisions without data on visitor behavior, traffic sources, or conversion rates.');
 
     // Robots / Crawlability
-    if (robots?.allDisallowed) add('critical', 'SEO', 'robots.txt blocks all search engines',
-      '"Disallow: /" in robots.txt tells Google and all search engines not to crawl any page. The site will not appear in search results. Almost certainly a configuration error that costs all organic traffic.');
+    if (robots?.allDisallowed) add('critical', 'SEO', 'robots.txt blocks all crawlers',
+      '"Disallow: /" under User-agent: * in robots.txt tells all search engines not to crawl any page. The site will not appear in search results. Almost certainly a misconfiguration that costs all organic traffic.');
 
-    if (!robots?.robotsTxtExists) add('low', 'SEO', 'No robots.txt file',
-      'Missing robots.txt means search engines crawl without guidance. While not critical, it\'s a basic technical signal that the site lacks professional web configuration.');
+    if (!robots?.robotsTxtExists) add('low', 'SEO', 'No robots.txt found',
+      'robots.txt is missing (404). Search engines crawl without guidance. Not critical but a basic technical hygiene signal.');
+    // Selective disallows (e.g. /wp-admin/) are intentional — no issue raised
 
     if (!robots?.sitemapInRobots && !robots?.sitemapXmlExists) add('low', 'SEO', 'No XML sitemap found',
       'No sitemap.xml detected. Sitemaps tell search engines what pages exist. Without one, deep or new pages may take months to be discovered and indexed.');
@@ -803,6 +821,7 @@ export async function auditWebsite(inputUrl, { placesApiKey, companyName: hintNa
     altCoverage: html.altCoverage?.coverage,
     hasAnalytics: analytics.hasGA || analytics.hasGTM || analytics.hasOther || undefined,
     hasSitemap: robots?.sitemapXmlExists || robots?.sitemapInRobots,
+    robotsDisallowedPaths: robots?.disallowedPaths?.length ? robots.disallowedPaths.join(' | ') : null,
     mixedContentCount: html.mixedContent?.length,
     hsts: httpData?.headers?.hsts,
     csp: httpData?.headers?.csp,

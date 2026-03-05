@@ -1182,7 +1182,7 @@ function connectAuditSSE(id){
   es.onmessage=e=>{
     let d;try{d=JSON.parse(e.data);}catch{return;}
     if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('auditViewToggle').style.display='flex';setAuditView(auditView);}
-    if(d.type==='result'){results.push(d);addAuditRC(d);addAuditTableRow(d);}
+    if(d.type==='result'){results.push(d);if(results.length>200)results.shift();addAuditRC(d);addAuditTableRow(d);const _cards=document.getElementById('auditCards');if(_cards&&_cards.children.length>200)_cards.removeChild(_cards.firstChild);}
     if(d.type==='progress'){
       const pct=d.total?Math.round((d.succeeded+d.failed)/d.total*100):0;
       progBar.style.width=pct+'%';
@@ -1405,26 +1405,17 @@ function doConfiguredExport(){
     if(cb.checked)cols.push({key:exportCols[i].key,label:labels[i].value.trim()||exportCols[i].label});
   });
   if(!cols.length){alert('Select at least one column');return;}
-  const csvEsc=v=>'"'+String(v||'').replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
-  let csv='\uFEFF';
-  csv+=cols.map(c=>csvEsc(c.label)).join(',')+'\r\n';
-  for(const r of results){
-    if(r.status!=='success')continue;
-    const vals=cols.map(c=>{
-      if(c.key==='_company')return r.company;
-      if(c.key==='_fullresearch')return r.research?._raw||'';
-      if(c.key==='_intokens')return r.inputTokens||0;
-      if(c.key==='_outtokens')return r.outputTokens||0;
-      if(r.research&&r.research._parsed)return sanitizeClient(r.research[c.key]||'');
-      return'';
-    });
-    csv+=vals.map(v=>csvEsc(v)).join(',')+'\r\n';
-  }
-  const blob=new Blob([csv],{type:'text/csv'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;
-  a.download='prospect_research_'+new Date().toISOString().slice(0,10)+'.csv';
-  a.click();URL.revokeObjectURL(url);closeDrawer();
+  if(!jobId){alert('No active job — please run an audit first');return;}
+  fetch('/api/export/'+jobId,{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer '+token},
+    body:JSON.stringify({columns:cols})})
+  .then(r=>{if(!r.ok)throw new Error('Server error '+r.status);return r.blob();})
+  .then(blob=>{
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;
+    a.download='export_'+new Date().toISOString().slice(0,10)+'.csv';
+    a.click();URL.revokeObjectURL(url);closeDrawer();
+  })
+  .catch(e=>alert('Export failed: '+e.message));
 }
 
 // ─── History ───
