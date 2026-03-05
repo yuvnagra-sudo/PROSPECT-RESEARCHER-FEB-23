@@ -3,9 +3,11 @@ import { createServer } from 'http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, join } from 'path';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { auditWebsite } from './audit.mjs';
 
 try { const ep=resolve(process.cwd(),'.env'); if(existsSync(ep)) readFileSync(ep,'utf8').split('\n').forEach(l=>{const m=l.match(/^\s*([^#=]+?)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^["']|["']$/g,'');}); } catch{}
 const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex');
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
 const DD=resolve(process.cwd(),'.data'); if(!existsSync(DD))mkdirSync(DD,{recursive:true});
 
 // Simple JSON file DB
@@ -49,6 +51,48 @@ const EMAIL_FRAMEWORKS={
   'quick':{name:'Quick Question (ultra-short)',instruction:'2-3 sentences max. One specific question about a pain/trigger. Soft CTA. Under 50 words.'},
   'case-study':{name:'Case Study Lead',instruction:'Lead with sender result/proof. Connect to prospect via research. Under 100 words.'},
 };
+
+const AUDIT_SECTIONS=[
+  {key:'performance_score',label:'Performance Score'},
+  {key:'seo_score',label:'SEO Score'},
+  {key:'https',label:'HTTPS'},
+  {key:'fcp',label:'FCP'},
+  {key:'lcp',label:'LCP'},
+  {key:'title',label:'Page Title'},
+  {key:'meta_desc',label:'Meta Description'},
+  {key:'h1_count',label:'H1 Count'},
+  {key:'canonical',label:'Canonical Tag'},
+  {key:'sitemap',label:'Sitemap'},
+  {key:'analytics',label:'Analytics'},
+  {key:'tech_stack',label:'Tech Stack'},
+  {key:'robots_directives',label:'Robots Disallowed Paths'},
+  {key:'top_issues',label:'Top Issues'},
+  {key:'issues_critical',label:'Critical Issues'},
+  {key:'summary',label:'Audit Summary'},
+];
+function normalizeAuditUrl(u){u=(u||'').replace(/^[\u00b7\u2022\s]+/,'').trim();if(!u)return'';if(!/^https?:\/\//i.test(u))u='https://'+u;return u;}
+function getAuditField(key,aRaw){
+  if(!aRaw)return'';
+  switch(key){
+    case'performance_score':return aRaw.performance??'';
+    case'seo_score':return aRaw.seo??'';
+    case'https':return aRaw.httpsWorks?'Yes':'No';
+    case'fcp':return aRaw.fcp||'';
+    case'lcp':return aRaw.lcp||'';
+    case'title':return aRaw.title||'';
+    case'meta_desc':return aRaw.metaDesc||'';
+    case'h1_count':return aRaw.h1Count??'';
+    case'canonical':return aRaw.hasCanonical?'Yes':'No';
+    case'sitemap':return aRaw.hasSitemap?'Yes':'No';
+    case'analytics':return aRaw.hasAnalytics?'Yes':'No';
+    case'tech_stack':return aRaw.techStack?.platform||'';
+    case'robots_directives':return aRaw.robotsDisallowedPaths||'';
+    case'top_issues':return(aRaw.topIssues||[]).map(i=>`${i.severity}: ${i.title}`).join(' | ');
+    case'issues_critical':return(aRaw.issues||[]).filter(i=>i.severity==='critical').map(i=>i.title).join(' | ');
+    case'summary':return aRaw.summary||'';
+    default:return'';
+  }
+}
 
 function gradeResearch(text,tid){
   if(!text||typeof text!=='string')return{score:0,tier:'weak'};const t=text.trim();
@@ -128,8 +172,48 @@ function buildPrompt(row,map,idx){
 const actv=new Map();const CONC={gemini:5,claude:5,haiku:5,gpt5:4,openai:5,deepseek:5};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
+async function runAuditJob(jobId){
+  const job=DB.jobs.find(j=>j.id===jobId);if(!job)return;
+  const ctx={cancelled:false,listeners:new Set()};actv.set(jobId,ctx);
+  const emit=d=>{const msg=`data: ${JSON.stringify(d)}\n\n`;for(const l of ctx.listeners){try{l.write(msg);}catch{}}};
+  const allRows=DB.rows.filter(r=>r.jobId===jobId);
+  const pending=allRows.filter(r=>r.status==='pending');
+  const completed=allRows.filter(r=>r.status!=='pending');
+  if(!pending.length){job.status='complete';saveDB();emit({type:'done',status:'complete',succeeded:job.succeeded,failed:job.failed});actv.delete(jobId);return;}
+  emit({type:'meta',sections:AUDIT_SECTIONS});
+  for(const r of completed){const aRaw=r.auditJson?JSON.parse(r.auditJson):null;emit({type:'result',idx:r.idx,company:r.company,status:r.status,auditRaw:aRaw,error:r.error});}
+  job.status='running';saveDB();
+  const t0=Date.now();let ok=job.succeeded||0,fl=job.failed||0;
+  emit({type:'progress',succeeded:ok,failed:fl,total:job.totalRows,current:'Starting\u2026'});
+  const queue=[...pending];
+  const flush=()=>{job.succeeded=ok;job.failed=fl;job.elapsed=((Date.now()-t0)/1000)+(job._prevElapsed||0);saveDB();};
+  async function auditWorker(){
+    while(queue.length>0&&!ctx.cancelled){
+      const row=queue.shift();if(!row)break;
+      emit({type:'progress',succeeded:ok,failed:fl,total:job.totalRows,current:row.company});
+      try{
+        const u=normalizeAuditUrl(row.urlVal||'');
+        if(!u){row.status='error';row.error='No website URL';fl++;emit({type:'result',idx:row.idx,company:row.company,status:'error',error:row.error});flush();continue;}
+        const result=await auditWebsite(u,{companyName:row.company});
+        const auditRaw={...result.metrics,finalUrl:result.finalUrl,elapsedMs:result.elapsedMs,errors:result.errors,issues:result.issues,topIssues:result.topIssues,summary:result.summary};
+        row.status='success';row.research=result.summary;row.auditJson=JSON.stringify(auditRaw);row.qualityScore=0;row.qualityTier='moderate';
+        ok++;emit({type:'result',idx:row.idx,company:row.company,status:'success',auditRaw});emit({type:'progress',succeeded:ok,failed:fl,total:job.totalRows,current:row.company});flush();
+      }catch(err){
+        row.status='error';row.error=(err.message||String(err)).slice(0,200);fl++;
+        emit({type:'result',idx:row.idx,company:row.company,status:'error',error:row.error});flush();
+      }
+    }
+  }
+  await Promise.all(Array.from({length:3},()=>auditWorker()));
+  const fs=ctx.cancelled?'cancelled':(DB.rows.filter(r=>r.jobId===jobId&&r.status==='pending').length>0?'paused':'complete');
+  job.status=fs;job.succeeded=ok;job.failed=fl;job.elapsed=((Date.now()-t0)/1000)+(job._prevElapsed||0);saveDB();
+  emit({type:'done',status:fs,succeeded:ok,failed:fl,elapsed:job.elapsed.toFixed(1)});
+  actv.delete(jobId);
+}
+
 async function runJob(jobId){
-  const job=DB.jobs.find(j=>j.id===jobId);if(!job)return;const prov=PROVDEFS[job.provider];if(!prov)return;
+  const job=DB.jobs.find(j=>j.id===jobId);if(!job)return;if(job.templateId==='audit-only')return runAuditJob(jobId);
+  const prov=PROVDEFS[job.provider];if(!prov)return;
   const apiKey=userKey(job.uid,prov.envName);if(!apiKey){job.status='error';saveDB();return;}
   const ctx={cancelled:false,listeners:new Set()};actv.set(jobId,ctx);
   const emit=d=>{const msg=`data: ${JSON.stringify(d)}\n\n`;for(const l of ctx.listeners){try{l.write(msg);}catch{}}};
@@ -206,10 +290,10 @@ const server=createServer(async(req,res)=>{
   if(req.method==='GET'&&p==='/api/email-frameworks'){json(res,Object.fromEntries(Object.entries(EMAIL_FRAMEWORKS).map(([k,v])=>[k,{name:v.name}])));return;}
   let user=getUser(req);if(!user){const qt=url.searchParams.get('token');if(qt)user=jwtVerify(qt);}
   if(!user)return json(res,{error:'Unauthorized'},401);const uid=user.uid;
-  if(req.method==='GET'&&p==='/api/me'){const u=DB.users.find(x=>x.id===uid);json(res,u?{id:u.id,email:u.email,name:u.name}:{});return;}
+  if(req.method==='GET'&&p==='/api/me'){let u=DB.users.find(x=>x.id===uid);if(u&&ADMIN_EMAIL&&u.email===ADMIN_EMAIL.toLowerCase().trim()&&!u.is_admin){u.is_admin=1;saveDB();}json(res,u?{id:u.id,email:u.email,name:u.name,is_admin:u.is_admin||0}:{});return;}
   if(req.method==='GET'&&p==='/api/providers'){json(res,provSt(uid));return;}
   if(req.method==='POST'&&p==='/api/setkey'){const b=await readB(req);try{const{envName,key}=JSON.parse(b);if(!['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY'].includes(envName))return json(res,{error:'Invalid'},400);DB.keys=DB.keys.filter(k=>!(k.uid===uid&&k.name===envName));if(key)DB.keys.push({uid,name:envName,value:key});saveDB();json(res,provSt(uid));}catch(e){json(res,{error:e.message},400);}return;}
-  if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride,systemPrompt,rowStart,rowEnd}=JSON.parse(b);const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);const cm=colMapOverride||autoGuess(headers);const rs=Math.max(0,(rowStart||1)-1);const re=(!rowEnd||rowEnd<0)?rows.length:Math.min(rowEnd,rows.length);const sl=rows.slice(rs,re);json(res,{headers,colMap:cm,total:rows.length,selectedCount:sl.length,rowStart:rs+1,rowEnd:re,previews:sl.slice(0,5).map((r,i)=>buildPrompt(r,cm,rs+i)),systemPrompt:systemPrompt||null});}catch(e){json(res,{error:e.message},400);}return;}
+  if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride,systemPrompt,rowStart,rowEnd}=JSON.parse(b);const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);const cm=colMapOverride||autoGuess(headers);const rs=Math.max(0,(rowStart||1)-1);const re=(!rowEnd||rowEnd<0)?rows.length:Math.min(rowEnd,rows.length);const sl=rows.slice(rs,re);json(res,{headers,colMap:cm,total:rows.length,selectedCount:sl.length,rowStart:rs+1,rowEnd:re,previews:sl.slice(0,5).map((r,i)=>buildPrompt(r,cm,rs+i)),systemPrompt:systemPrompt||null,sampleRows:rows.slice(0,3)});}catch(e){json(res,{error:e.message},400);}return;}
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
     const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,offerJson,emailFramework,generateEmails,emailProvider,fallbackProvider,fallbackThreshold,fallbackBudget,fallbackMaxPct,rowStart,rowEnd}=JSON.parse(b);
     const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);if(!userKey(uid,prov.envName))return json(res,{error:'No API key for '+prov.name},400);
@@ -218,12 +302,14 @@ const server=createServer(async(req,res)=>{
     const sys=sp||TEMPLATES['b2b-outreach'].prompt;const web=uw!==false&&prov.webSearch;
     const jid=DB.nextId.job++;const job={id:jid,uid,name:`${sl.length} prospects via ${prov.name}`,provider:pid,templateId:templateId||'custom',systemPrompt:sys,useWebSearch:web?1:0,totalRows:sl.length,succeeded:0,failed:0,status:'queued',totalIn:0,totalOut:0,cost:0,elapsed:0,_prevElapsed:0,createdAt:new Date().toISOString(),offerJson:offerJson||null,emailFramework:emailFramework||null,generateEmails:generateEmails?1:0,emailProvider:emailProvider||null,fallbackProvider:fallbackProvider||null,fallbackThreshold:fallbackThreshold||50,fallbackBudget:fallbackBudget||2,fallbackMaxPct:fallbackMaxPct||20,fallbackSpent:0};
     DB.jobs.push(job);
-    for(let i=0;i<sl.length;i++){const{company,prompt}=buildPrompt(sl[i],cm,rs+i);DB.rows.push({id:DB.nextId.row++,jobId:jid,idx:i,company,prompt,status:'pending',research:null,error:null,inputTokens:0,outputTokens:0,qualityScore:-1,qualityTier:null,emailDraft:null,emailStatus:'pending',wasFallback:0,primaryScore:-1});}
+    for(let i=0;i<sl.length;i++){const{company,prompt}=buildPrompt(sl[i],cm,rs+i);const urlVal=cm.website?(sl[i][cm.website]||'').replace(/^[\u00b7\u2022\s]+/,'').trim():'';DB.rows.push({id:DB.nextId.row++,jobId:jid,idx:i,company,prompt,urlVal,status:'pending',research:null,error:null,inputTokens:0,outputTokens:0,qualityScore:-1,qualityTier:null,emailDraft:null,emailStatus:'pending',wasFallback:0,primaryScore:-1,auditJson:null});}
     saveDB();runJob(jid);json(res,{jobId:jid,total:sl.length,provider:prov.name});
   }catch(e){json(res,{error:e.message},400);}return;}
   if(req.method==='POST'&&p.match(/^\/api\/resume\/\d+$/)){const jid=+p.split('/').pop();const j=DB.jobs.find(x=>x.id===jid&&x.uid===uid);if(!j)return json(res,{error:'Not found'},404);if(actv.has(jid))return json(res,{error:'Running'},400);j._prevElapsed=j.elapsed||0;runJob(jid);json(res,{jobId:jid});return;}
   if(req.method==='GET'&&p.match(/^\/api\/stream\/\d+$/)){const jid=+p.split('/').pop();const j=DB.jobs.find(x=>x.id===jid&&x.uid===uid);if(!j){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});
-    for(const r of DB.rows.filter(x=>x.jobId===jid&&x.status!=='pending'))res.write(`data: ${JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:r.research,error:r.error,qualityScore:r.qualityScore,qualityTier:r.qualityTier,emailDraft:r.emailDraft,wasFallback:r.wasFallback})}\n\n`);
+    const isAuditJob=j.templateId==='audit-only';
+    if(isAuditJob)res.write(`data: ${JSON.stringify({type:'meta',sections:AUDIT_SECTIONS})}\n\n`);
+    for(const r of DB.rows.filter(x=>x.jobId===jid&&x.status!=='pending')){const evt={type:'result',idx:r.idx,company:r.company,status:r.status,error:r.error};if(isAuditJob){evt.auditRaw=r.auditJson?JSON.parse(r.auditJson):null;}else{evt.research=r.research;evt.qualityScore=r.qualityScore;evt.qualityTier=r.qualityTier;evt.emailDraft=r.emailDraft;evt.wasFallback=r.wasFallback;}res.write(`data: ${JSON.stringify(evt)}\n\n`);}
     if(j.status==='complete'||j.status==='cancelled')res.write(`data: ${JSON.stringify({type:'done',status:j.status,succeeded:j.succeeded,failed:j.failed,elapsed:String(j.elapsed),cost:String(j.cost)})}\n\n`);
     const a=actv.get(jid);if(a){a.listeners.add(res);req.on('close',()=>a.listeners.delete(res));}return;}
   if(req.method==='POST'&&p.match(/^\/api\/cancel\/\d+$/)){const jid=+p.split('/').pop();const j=DB.jobs.find(x=>x.id===jid&&x.uid===uid);if(j){const a=actv.get(jid);if(a)a.cancelled=true;}json(res,{ok:true});return;}
@@ -235,6 +321,9 @@ const server=createServer(async(req,res)=>{
     res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="research_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*'});res.end('\uFEFF'+[h,...c].join('\r\n'));return;}
   if(req.method==='GET'&&p==='/api/jobs'){json(res,DB.jobs.filter(j=>j.uid===uid).sort((a,b)=>b.id-a.id).slice(0,50).map(j=>({id:j.id,name:j.name,provider:j.provider,templateId:j.templateId,totalRows:j.totalRows,succeeded:j.succeeded,failed:j.failed,status:j.status,cost:j.cost,elapsed:j.elapsed,created_at:j.createdAt,generateEmails:j.generateEmails,templateName:TEMPLATES[j.templateId]?.name||'Custom',templateIcon:TEMPLATES[j.templateId]?.icon||'✏️',providerName:PROVDEFS[j.provider]?.name||j.provider})));return;}
   if(req.method==='DELETE'&&p.match(/^\/api\/jobs\/\d+$/)){const jid=+p.split('/').pop();DB.rows=DB.rows.filter(r=>r.jobId!==jid);DB.jobs=DB.jobs.filter(j=>!(j.id===jid&&j.uid===uid));saveDB();json(res,{ok:true});return;}
+  if(req.method==='POST'&&p==='/api/audit-website'){const b=await readB(req);try{const{url,companyName}=JSON.parse(b);if(!url)return json(res,{error:'url required'},400);const nu=normalizeAuditUrl(url);if(!nu)return json(res,{error:'invalid url'},400);const result=await auditWebsite(nu,{companyName:companyName||''});json(res,result);}catch(e){json(res,{error:e.message},500);}return;}
+  if(req.method==='POST'&&p.match(/^\/api\/export\/\d+$/)){const jid=+p.split('/').pop();const j=DB.jobs.find(x=>x.id===jid&&x.uid===uid);if(!j){res.writeHead(404);res.end();return;}const b=await readB(req);let cols;try{cols=JSON.parse(b).columns||[];}catch{cols=[];}if(!cols.length)cols=[{key:'_company',label:'Company'},{key:'_fullresearch',label:'Research'}];const rows=DB.rows.filter(r=>r.jobId===jid).sort((a,b)=>a.idx-b.idx);const isAJ=j.templateId==='audit-only';const esc2=s=>'"'+String(s==null?'':s).replace(/"/g,'""').replace(/\n/g,' ')+'"';const csvH=cols.map(c=>esc2(c.label)).join(',');const csvD=rows.map(r=>{const aRaw=isAJ&&r.auditJson?JSON.parse(r.auditJson):null;return cols.map(c=>{if(c.key==='_company')return esc2(r.company||'');if(c.key==='_fullresearch')return esc2(r.research||'');if(c.key==='_intokens')return r.inputTokens||0;if(c.key==='_outtokens')return r.outputTokens||0;return esc2(getAuditField(c.key,aRaw));}).join(',');}).join('\r\n');res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="export_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*'});res.end('\uFEFF'+csvH+'\r\n'+csvD);return;}
+  if(p.startsWith('/api/admin/')){const adm=DB.users.find(x=>x.id===uid);if(!adm?.is_admin)return json(res,{error:'Forbidden'},403);if(req.method==='GET'&&p==='/api/admin/users'){json(res,DB.users.map(u=>({id:u.id,email:u.email,name:u.name,is_admin:u.is_admin||0,created_at:u.created_at||null,keyCount:DB.keys.filter(k=>k.uid===u.id).length})));return;}if(req.method==='GET'&&p==='/api/admin/jobs'){const uMap={};DB.users.forEach(u=>uMap[u.id]=u.email);json(res,DB.jobs.slice().reverse().map(j=>({...j,user_email:uMap[j.uid]||'?',templateName:TEMPLATES[j.templateId]?.name||'Custom',templateIcon:TEMPLATES[j.templateId]?.icon||'✏️',providerName:PROVDEFS[j.provider]?.name||j.provider})));return;}if(req.method==='GET'&&p==='/api/admin/backup'){res.writeHead(200,{'content-type':'application/json','content-disposition':`attachment; filename="backup_${new Date().toISOString().slice(0,10)}.json"`,'access-control-allow-origin':'*'});res.end(JSON.stringify(DB,null,2));return;}if(req.method==='GET'&&p==='/api/admin/export-all'){res.writeHead(200,{'content-type':'application/json','content-disposition':`attachment; filename="export_${new Date().toISOString().slice(0,10)}.json"`,'access-control-allow-origin':'*'});res.end(JSON.stringify({users:DB.users.map(u=>({id:u.id,email:u.email,name:u.name,is_admin:u.is_admin||0})),jobs:DB.jobs,rows:DB.rows},null,2));return;}json(res,{error:'Not found'},404);return;}
   res.writeHead(404);res.end('Not found');
 });
 server.listen(PORT,process.env.HOST||'0.0.0.0',()=>{console.log(`\n  🔍 Prospect Researcher v7\n  URL: http://localhost:${PORT}\n  Data: ${DD}\n`);});
