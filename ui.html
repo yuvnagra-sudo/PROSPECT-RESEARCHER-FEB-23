@@ -1188,7 +1188,7 @@ async function startBatchAudit(maxRows){
   if(!websiteCol){errEl.textContent='No website column mapped. Click "Map Columns" and assign the Website role to your URL column.';return;}
   const btn=document.getElementById('auditBatchBtn');btn.disabled=true;btn.textContent='Starting\u2026';
   try{
-    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only \u2014 no AI prompt used.',templateId:'audit-only',colMapOverride:colMap,maxRows:maxRows||undefined})});
+    const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvText,provider:selProv,useWebSearch:false,systemPrompt:'Website audit only \u2014 no AI prompt used.',templateId:'audit-only',colMapOverride:colMap,rowEnd:maxRows||undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);
     jobId=d.jobId;jobRunning=true;results=[];currentSections=[];
     document.getElementById('auditResultsList').innerHTML='';
@@ -1276,7 +1276,29 @@ function addAuditTableRow(r){
     return;}
   tbody.insertAdjacentHTML('beforeend',buildTableRowHTML(r));}
 
-const AUDIT_TABLE_KEYS=new Set(['performance_score','ssl_status','page_speed','seo_basics','critical_issues','all_issues','tech_stack','conversion','gbp_profile']);
+const AUDIT_TABLE_KEYS=new Set(['performance_score','seo_score','https','fcp','lcp','tech_stack','issues_critical','top_issues','summary']);
+function getAuditFieldClient(key,ar){
+  if(!ar)return'';
+  switch(key){
+    case'performance_score':return ar.performance!=null?ar.performance+'':'—';
+    case'seo_score':return ar.seo!=null?ar.seo+'':'—';
+    case'https':return ar.httpsWorks?'✓ Yes':'✗ No';
+    case'fcp':return ar.fcp||'—';
+    case'lcp':return ar.lcp||'—';
+    case'title':return ar.title||'';
+    case'meta_desc':return ar.metaDesc||'';
+    case'h1_count':return ar.h1Count!=null?ar.h1Count+'':'';
+    case'canonical':return ar.hasCanonical?'Yes':'No';
+    case'sitemap':return ar.hasSitemap?'Yes':'No';
+    case'analytics':return ar.hasAnalytics?'Yes':'No';
+    case'tech_stack':return ar.techStack?.platform||'';
+    case'robots_directives':return ar.robotsDisallowedPaths||'';
+    case'top_issues':return(ar.topIssues||[]).map(i=>i.severity+': '+i.title).join(' | ');
+    case'issues_critical':return(ar.issues||[]).filter(i=>i.severity==='critical').map(i=>i.title).join(' | ');
+    case'summary':return ar.summary||'';
+    default:return'';
+  }
+}
 function renderAuditTable(){
   const c=document.getElementById('auditTableContainer');
   if(!results.length){c.innerHTML='';return;}
@@ -1556,7 +1578,10 @@ function renderTable(){
 function buildTableRowHTML(r,secs){
   const ok=r.status==='success';const dot=ok?'var(--green)':'var(--red)';if(!secs)secs=currentSections.filter(s=>AUDIT_TABLE_KEYS.has(s.key));
   let h='<tr><td title="'+esc(r.company)+'">'+esc(r.company)+'</td><td><span class="status-dot" style="background:'+dot+'"></span>'+esc(r.status)+'</td>';
-  if(secs.length&&ok&&r.research?._parsed){
+  if(secs.length&&ok&&r.auditRaw){
+    secs.forEach(s=>{const val=getAuditFieldClient(s.key,r.auditRaw);
+      h+='<td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(val||'')+'">'+esc(val||'—')+'</td>';});
+  }else if(secs.length&&ok&&r.research?._parsed){
     secs.forEach(s=>{const val=r.research[s.key]||'';
       h+='<td><div class="cell-trunc" onclick="this.classList.toggle(\'open\')">'+mdH(val)+(val.length>150?'<div class="cell-fade"></div>':'')+'</div></td>';});
   }else if(!ok){
