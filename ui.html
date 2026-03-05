@@ -1240,6 +1240,26 @@ function connectAuditSSE(id){
     }
   };}
 
+function friendlyAuditError(e){
+  if(!e)return e;
+  if(e==='Invalid URL')return'Website URL is missing or invalid';
+  if(/rate.limit/i.test(e))return'PageSpeed API is rate-limited \u2014 try again in a few minutes';
+  if(e.includes('Invalid JSON from PageSpeed'))return'PageSpeed returned an unexpected response';
+  if(/Third-party|non-auditable/i.test(e))return'Non-auditable URL \u2014 PageSpeed check skipped';
+  if(/TimeoutError|timed? ?out|abort/i.test(e))return'PageSpeed API timed out (60s) \u2014 server may be slow';
+  if(e.startsWith('PageSpeed check:')||e.startsWith('PageSpeed API'))return'PageSpeed error: '+e.replace(/^PageSpeed (check: |API )/,'');
+  if(e.startsWith('HTTP check:')){
+    const m=e.slice(12).trim();
+    if(/ENOTFOUND|getaddrinfo/i.test(m))return'Domain not found \u2014 DNS error (site may not exist)';
+    if(/ECONNREFUSED/i.test(m))return'Connection refused (server down or port blocked)';
+    if(/ETIMEDOUT|UND_ERR|timeout/i.test(m))return'Connection timed out \u2014 site did not respond';
+    return'Website unreachable: '+m;
+  }
+  if(e.startsWith('SSL check:'))return'SSL certificate check failed';
+  if(e.startsWith('Robots check:'))return'Could not fetch robots.txt';
+  return e;
+}
+
 function addAuditRC(r){
   const list=document.getElementById('auditResultsList');const div=document.createElement('div');div.className='result fade-in';const ok=r.status==='success';
   let bodyContent;
@@ -1249,7 +1269,7 @@ function addAuditRC(r){
     bodyContent=
       '<div style="font-size:11px;color:var(--dim);margin-bottom:6px">'+
       '<b style="color:var(--fg)">'+esc(am.finalUrl||r.company)+'</b> \u00B7 '+(am.elapsedMs||0)+'ms'+
-      (am.errors?.length?' <span style="color:var(--red)">\u00B7 '+am.errors.length+' errors</span>':'')+
+      (am.errors?.length?' <span style="color:var(--amber)">\u00B7 '+am.errors.length+' warning'+(am.errors.length>1?'s':'')+'</span>':'')+
       '</div>'+
       '<div class="audit-metrics">'+
       '<div class="audit-metric"><div class="val '+(perf!=null?(perf>=80?'good':perf>=50?'warn':'bad'):'')+'">'+
@@ -1260,7 +1280,12 @@ function addAuditRC(r){
       '</div>'+
       (am.topIssues?.length
         ?'<div style="margin-top:8px">'+am.topIssues.map(i=>'<div class="audit-issue '+i.severity+'"><span class="audit-sev">'+i.severity+'</span> '+esc(i.title||'Unknown issue')+'</div>').join('')+'</div>'
-        :'<p style="font-size:12px;color:var(--green)">No major issues found.</p>');
+        :'<p style="font-size:12px;color:var(--green)">No major issues found.</p>')+
+      (am.errors?.length
+        ?'<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">'+
+          am.errors.map(e=>'<div style="font-size:11px;color:var(--amber);padding:2px 0">\u26a0 '+esc(friendlyAuditError(e))+'</div>').join('')+
+          '</div>'
+        :'');
   }else if(ok&&r.research?._parsed&&currentSections.length){
     bodyContent=currentSections.map(s=>{const val=r.research[s.key];if(!val)return'';return'<h3>'+esc(s.label)+'</h3>'+mdH(val);}).join('');
   }else if(ok){bodyContent=mdH(researchText(r.research));}
@@ -1399,6 +1424,17 @@ function applyDrawerMap(){
   refreshPreview(m);closeDrawer();
 }
 
+function buildPromptDrawer(){
+  let h='<h3>Research Prompt <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>';
+  h+='<p style="font-size:11px;color:var(--dim);margin-bottom:8px">Edit the AI system prompt. Applies to the next job run.</p>';
+  h+='<textarea class="ta" id="promptDrawerTa" style="min-height:300px">'+esc(customPrompt)+'</textarea>';
+  h+='<div style="margin-top:10px;display:flex;gap:6px">';
+  h+='<button class="b b-pri b-sm" onclick="document.getElementById(\'promptEdit\').value=document.getElementById(\'promptDrawerTa\').value;savePrompt();closeDrawer()">Apply</button>';
+  h+='<button class="b b-ghost b-sm" onclick="closeDrawer()">Cancel</button>';
+  h+='</div>';
+  return h;
+}
+
 async function saveKeyD(env){const v=document.getElementById('dk_'+env).value.trim();if(!v)return;
   const btn=document.querySelector(`[onclick="saveKeyD('${env}')"]`);if(btn)btn.disabled=true;
   try{providers=await(await api('/api/setkey',{method:'POST',body:JSON.stringify({envName:env,key:v})})).json();
@@ -1456,7 +1492,7 @@ function doConfiguredExport(){
     if(cb.checked)cols.push({key:exportCols[i].key,label:labels[i].value.trim()||exportCols[i].label});
   });
   if(!cols.length){alert('Select at least one column');return;}
-  if(!jobId){alert('No active job — please run an audit first');return;}
+  if(!jobId){alert('No active job — please load or start a job first');return;}
   fetch('/api/export/'+jobId,{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer '+token},
     body:JSON.stringify({columns:cols})})
   .then(r=>{if(!r.ok)throw new Error('Server error '+r.status);return r.blob();})
@@ -1539,7 +1575,7 @@ function researchText(r){
 
 // ─── Card View ───
 function addRC(r){const list=document.getElementById('resultsList');const div=document.createElement('div');div.className='result fade-in';const ok=r.status==='success';
-  let bodyContent;const q=r.quality||0;
+  let bodyContent;const q=r.qualityScore||r.quality||0;
   const qColor=q>=70?'var(--green)':q>=40?'var(--amber)':'var(--red)';
   const qBadge=ok&&q?'<span style="font-size:10px;color:'+qColor+';margin-left:8px;font-weight:500">'+q+'%</span>':'';
   const retryBtn=ok&&q<50?'<button class="b b-ghost b-sm" style="font-size:10px;margin-left:6px" onclick="event.stopPropagation();retryRow('+r.idx+',this)">Retry</button>':'';
@@ -1576,7 +1612,7 @@ function renderTable(){
 }
 
 function buildTableRowHTML(r,secs){
-  const ok=r.status==='success';const dot=ok?'var(--green)':'var(--red)';if(!secs)secs=currentSections.filter(s=>AUDIT_TABLE_KEYS.has(s.key));
+  const ok=r.status==='success';const dot=ok?'var(--green)':'var(--red)';if(!secs){const isAudit=currentSections.some(s=>s.key==='performance_score');secs=isAudit?currentSections.filter(s=>AUDIT_TABLE_KEYS.has(s.key)):currentSections;}
   let h='<tr><td title="'+esc(r.company)+'">'+esc(r.company)+'</td><td><span class="status-dot" style="background:'+dot+'"></span>'+esc(r.status)+'</td>';
   if(secs.length&&ok&&r.auditRaw){
     secs.forEach(s=>{const val=getAuditFieldClient(s.key,r.auditRaw);
