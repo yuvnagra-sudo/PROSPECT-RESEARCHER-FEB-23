@@ -212,6 +212,32 @@ textarea.ta:focus{border-color:var(--pri)}
 .or-divider{display:flex;align-items:center;gap:12px;margin:12px 0;font-size:11px;color:var(--dim)}
 .or-divider::before,.or-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 
+/* ── Toast Notifications ── */
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;display:flex;align-items:center;gap:8px;animation:toastIn .25s ease;pointer-events:auto;max-width:320px;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+.toast-ok{background:#166534;border:1px solid rgba(34,197,94,.3);color:#86efac}
+.toast-err{background:#7f1d1d;border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+.toast-info{background:var(--card);border:1px solid var(--border);color:var(--text)}
+@keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(12px)}}
+.toast.out{animation:toastOut .25s ease forwards}
+
+/* ── Mobile improvements ── */
+@media(max-width:600px){
+  .main{padding:16px 12px 80px}
+  .wiz-nav{gap:0;overflow-x:auto;padding:8px 0}
+  .wiz-step-ind{padding:4px 8px;font-size:11px}
+  .tmpl-grid{gap:6px}
+  .tmpl-card{min-width:110px;padding:8px}
+  .config-bar{gap:6px}
+  .wiz-actions{flex-wrap:wrap;gap:6px}
+  .wiz-actions .b{flex:1;min-width:120px;justify-content:center}
+  .drawer{width:100%;max-width:100vw;right:-100%}
+  .audit-metrics{grid-template-columns:repeat(2,1fr)}
+  .topbar{padding:0 12px}
+  .sp-table th,.sp-table td{padding:6px 8px}
+}
+
 /* ── Audit UI ── */
 #auditTestSection{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px}
 .audit-engine-hd{display:flex;align-items:center;gap:8px;margin-bottom:10px}
@@ -460,9 +486,12 @@ textarea.ta:focus{border-color:var(--pri)}
   </div>
 
   <div id="tableContainer" style="display:none;margin-top:8px"></div>
-  <div id="resultsList" style="display:none;flex-direction:column;gap:6px;margin-top:14px"></div>
+  <div id="resultsList" style="display:none;flex-direction:column;gap:6px;margin-top:14px"></div></div>
 
-</div></div>
+</div>
+
+<!-- ═══ TOAST CONTAINER ═══ -->
+<div class="toast-container" id="toastContainer"></div>
 
 <!-- ═══ DRAWER OVERLAY ═══ -->
 <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
@@ -473,6 +502,21 @@ textarea.ta:focus{border-color:var(--pri)}
 </div>
 
 <script>
+// ─── Toast Notification System ───
+function toast(msg,type='info',duration=3500){
+  const c=document.getElementById('toastContainer');if(!c)return;
+  const t=document.createElement('div');
+  t.className='toast toast-'+type;
+  t.textContent=msg;
+  const close=document.createElement('span');
+  close.textContent='×';close.style.cssText='cursor:pointer;opacity:.7;font-size:14px;margin-left:auto;padding-left:8px';
+  close.onclick=()=>dismiss(t);
+  t.appendChild(close);
+  c.appendChild(t);
+  const dismiss=el=>{el.classList.add('out');setTimeout(()=>el.remove(),250);};
+  setTimeout(()=>dismiss(t),duration);
+}
+
 let token=localStorage.getItem('pr_token')||'',currentUser=null,isSignup=true;
 let providers={},templates={},selProv='gemini',selTmpl='b2b-outreach';
 let csvText='',rowCount=0,jobId=null,es=null,results=[],runCost=0,runStart=0;
@@ -961,15 +1005,17 @@ async function startResearch(maxRows){
   for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
   try{const r=await api('/api/research',{method:'POST',body:JSON.stringify({csv:csvToSend,provider:selProv,useWebSearch:useWeb&&!!providers[selProv]?.webSearch,systemPrompt:customPrompt,templateId:selTmpl,colMapOverride:colMap,explicitSections:explicitSections.length>=2?explicitSections:undefined})});
     const d=await r.json();if(!r.ok)throw new Error(d.error);jobId=d.jobId;jobRunning=true;lockPromptUI(true);
-    document.getElementById('progressBar').style.display='';document.getElementById('progText').textContent='Researching...';addLog('Started '+d.total+' via '+d.provider);connectSSE(jobId);
-  }catch(e){alert(e.message);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Start Research';
-    document.getElementById('wizardNav').style.display='flex';document.getElementById('wizStep3').style.display='';}}
+    document.getElementById('progressBar').style.display='';document.getElementById('progText').textContent='Researching...';addLog('Started '+d.total+' via '+d.provider);toast('Research started — '+d.total+' rows via '+d.provider,'info');connectSSE(jobId);
+  }catch(e){toast(e.message,'err',5000);document.getElementById('runningState').style.display='none';btn.disabled=false;btn.textContent='Start Research';
+    document.getElementById('wizardNav').style.display='flex';document.getElementById('wizStep3').style.display='';}
+}
 
 function connectSSE(id){if(es)es.close();let sseRetries=0;
   es=new EventSource('/api/stream/'+id+'?token='+encodeURIComponent(token));
   es.onerror=()=>{sseRetries++;if(sseRetries>=3){es.close();
     const b=document.getElementById('completeBanner');b.style.display='flex';b.className='banner fade-in banner-err';
-    b.innerHTML='<span style="flex:1">Connection lost. Results may be incomplete.</span><button class="b b-pri b-sm" onclick="connectSSE('+id+')">Reconnect</button>';
+    b.innerHTML='<span style="flex:1">⚠ Connection lost. Results may be incomplete.</span><button class="b b-pri b-sm" onclick="connectSSE('+id+')">Reconnect</button>';
+    toast('Connection lost — click Reconnect to resume','err',8000);
     jobRunning=false;document.getElementById('btnGo').disabled=false;document.getElementById('btnGo').textContent='Start Research';
     document.getElementById('wizardNav').style.display='flex';goWizardStep(3);}};
   es.onmessage=e=>{sseRetries=0;let d;try{d=JSON.parse(e.data);}catch{return;}
@@ -995,9 +1041,12 @@ function connectSSE(id){if(es)es.close();let sseRetries=0;
       const ok=d.status==='complete';b.className='banner fade-in '+(ok?'banner-ok':'banner-err');
       let t=(ok?'✅':'⚠')+' '+d.succeeded+' researched, '+d.failed+' failed';
       if(d.cost)t+=' · $'+d.cost;if(d.elapsed)t+=' · '+d.elapsed+'s';
-      b.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button><button class="b b-ghost b-sm" onclick="exportCSV()" style="margin-left:4px">Quick Export</button>';
+      b.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer('export')">Export CSV</button><button class="b b-ghost b-sm" onclick="exportCSV()" style="margin-left:4px">Quick Export</button>';
+      if(ok)toast(d.succeeded+' rows complete — $'+(d.cost||'0'),'ok');
+      else if(d.status==='paused')toast('Job paused — '+d.succeeded+' done, '+d.failed+' failed','info');
+      else if(d.status==='cancelled')toast('Job cancelled','info');
       if(d.status==='paused'){b.innerHTML+='<button class="b b-green b-sm" onclick="resumeJob('+jobId+')">Resume</button>';
-        document.getElementById('progText').innerHTML='Paused — <b>'+d.succeeded+'</b> / '+(d.succeeded+d.failed)+' complete';}
+        document.getElementById('progText').innerHTML='Paused — <b>'+d.succeeded+'</b> / '+(d.succeeded+d.failed)+' complete';
       es.close();}};}
 
 async function cancelJob(){
@@ -1011,8 +1060,8 @@ async function cancelJob(){
   jobRunning=false;document.getElementById('btnGo').disabled=false;document.getElementById('btnGo').textContent='Start Research';lockPromptUI(false);
   document.getElementById('wizardNav').style.display='flex';goWizardStep(3);
 }
-function exportCSV(){if(jobId)window.open('/api/export/'+jobId+'?token='+encodeURIComponent(token));}
-function exportCSV2(jid){window.open('/api/export/'+jid+'?token='+encodeURIComponent(token));}
+function exportCSV(){if(jobId){window.open('/api/export/'+jobId+'?token='+encodeURIComponent(token));toast('CSV download started','ok');}}
+function exportCSV2(jid){window.open('/api/export/'+jid+'?token='+encodeURIComponent(token));toast('CSV download started','ok');}
 async function retryRow(idx,btn){
   if(!jobId)return;if(btn){btn.disabled=true;btn.textContent='Retrying...';}
   try{
@@ -1024,11 +1073,11 @@ async function retryRow(idx,btn){
     // Re-render views
     if(currentView==='table')renderTable();
     else{const card=document.querySelector('[data-idx="'+idx+'"]');if(card)card.remove();addRC(results[ri]||{idx,company:'',status:'success',research:d.research,quality:d.quality});}
-    addLog('Retried row '+idx+' — quality: '+(d.quality||0)+'%');
-  }catch(e){alert('Retry failed: '+e.message);if(btn){btn.disabled=false;btn.textContent='Retry';}}}
-async function resumeJob(jid){if(jobRunning){alert('A job is already running.');return;}try{const d=await(await api('/api/resume/'+jid,{method:'POST'})).json();if(d.error)throw new Error(d.error);
+    addLog('Retried row '+idx+' — quality: '+(d.quality||0)+'%');toast('Row retried — quality: '+(d.quality||0)+'%','ok');
+  }catch(e){toast('Retry failed: '+e.message,'err');if(btn){btn.disabled=false;btn.textContent='Retry';}}}
+async function resumeJob(jid){if(jobRunning){toast('A job is already running. Stop it first.','err');return;}try{const d=await(await api('/api/resume/'+jid,{method:'POST'})).json();if(d.error)throw new Error(d.error);
   jobId=jid;jobRunning=true;document.getElementById('completeBanner').style.display='none';document.getElementById('progressBar').style.display='';
-  document.getElementById('runningState').style.display='';document.getElementById('btnGo').disabled=true;addLog('Resuming...');connectSSE(jid);}catch(e){alert(e.message);}}
+  document.getElementById('runningState').style.display='';document.getElementById('btnGo').disabled=true;addLog('Resuming...');toast('Resuming job...','info');connectSSE(jid);}catch(e){toast(e.message,'err');}}
 
 // ─── Drawer ───
 function openDrawer(mode){document.getElementById('drawerOverlay').classList.add('open');document.getElementById('drawer').classList.add('open');
@@ -1039,7 +1088,7 @@ function openDrawer(mode){document.getElementById('drawerOverlay').classList.add
   else if(mode==='prompt')c.innerHTML=buildPromptDrawer();
   else if(mode==='export')c.innerHTML=buildExportDrawer();
   else if(mode==='admin'){c.innerHTML=buildAdminDrawer();loadAdminUsers();loadAdminJobs();}}
-function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
+function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');document.getElementById('drawer').scrollTop=0;}
 
 function buildSettingsDrawer(){
   let h='<h3>Settings <span class="b b-ghost b-sm" onclick="closeDrawer()">✕</span></h3>';
@@ -1068,10 +1117,10 @@ function applyDrawerMap(){
   refreshPreview(m);closeDrawer();
 }
 
-async function saveKeyD(env){const v=document.getElementById('dk_'+env).value.trim();if(!v)return;
-  const btn=document.querySelector(`[onclick="saveKeyD('${env}')"]`);if(btn)btn.disabled=true;
+async function saveKeyD(env){const v=document.getElementById('dk_'+env).value.trim();if(!v){toast('Paste your API key first','err');return;}
+  const btn=document.querySelector(`[onclick="saveKeyD('${env}')"]`);if(btn){btn.disabled=true;btn.textContent='Saving...';}
   try{providers=await(await api('/api/setkey',{method:'POST',body:JSON.stringify({envName:env,key:v})})).json();
-  document.getElementById('dks_'+env).textContent='✅';buildSelects();}finally{if(btn)btn.disabled=false;}}
+  document.getElementById('dks_'+env).textContent='✅';buildSelects();toast('API key saved','ok');}catch(e){toast('Failed to save key: '+e.message,'err');}finally{if(btn){btn.disabled=false;btn.textContent='Save';}}}
 
 // ─── Export Configuration Drawer ───
 let exportCols=[];
@@ -1117,7 +1166,7 @@ function doConfiguredExport(){
   checks.forEach((cb,i)=>{
     if(cb.checked)cols.push({key:exportCols[i].key,label:labels[i].value.trim()||exportCols[i].label});
   });
-  if(!cols.length){alert('Select at least one column');return;}
+  if(!cols.length){toast('Select at least one column to export','err');return;}
   const csvEsc=v=>'"'+String(v||'').replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
   let csv='\uFEFF';
   csv+=cols.map(c=>csvEsc(c.label)).join(',')+'\r\n';
@@ -1137,22 +1186,37 @@ function doConfiguredExport(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=url;
   a.download='prospect_research_'+new Date().toISOString().slice(0,10)+'.csv';
-  a.click();URL.revokeObjectURL(url);closeDrawer();
+  a.click();URL.revokeObjectURL(url);closeDrawer();toast('CSV exported — '+cols.length+' columns, '+results.filter(r=>r.status==='success').length+' rows','ok');
+}
+
+// ─── Helpers ───
+function relTime(iso){
+  if(!iso)return'';
+  try{
+    const d=new Date(iso.endsWith('Z')?iso:iso+'Z');
+    const diff=Math.floor((Date.now()-d.getTime())/1000);
+    if(diff<60)return'just now';
+    if(diff<3600)return Math.floor(diff/60)+'m ago';
+    if(diff<86400)return Math.floor(diff/3600)+'h ago';
+    if(diff<604800)return Math.floor(diff/86400)+'d ago';
+    return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+  }catch{return iso;}
 }
 
 // ─── History ───
 async function loadHistory(){try{const jobs=await(await api('/api/jobs')).json();const el=document.getElementById('histList');
-    if(!jobs.length){el.innerHTML='<p style="font-size:12px;color:var(--dim)">No jobs yet.</p>';return;}
+    if(!jobs.length){el.innerHTML='<p style="font-size:12px;color:var(--dim)">No jobs yet. Upload a CSV and run your first research batch.</p>';return;}
     el.innerHTML=jobs.map(j=>{const sc={complete:'badge-ok',running:'badge-run',paused:'badge-warn',cancelled:'badge-warn',queued:'badge-run',error:'badge-err'};
-      return'<div class="hist-item" onclick="viewJob('+j.id+');closeDrawer()"><div style="font-size:16px">'+(j.templateIcon||'✏')+'</div><div class="hist-info"><div class="hist-name">'+esc(j.name)+'</div><div class="hist-meta">'+esc(j.created_at)+' · $'+(j.cost||0).toFixed(3)+'</div></div><span class="badge '+(sc[j.status]||'')+'">'+j.status+'</span>'
+      return'<div class="hist-item" onclick="viewJob('+j.id+');closeDrawer()"><div style="font-size:16px">'+(j.templateIcon||'✏')+'</div><div class="hist-info"><div class="hist-name">'+esc(j.name)+'</div><div class="hist-meta">'+esc(relTime(j.created_at))+' · $'+(j.cost||0).toFixed(3)+' · '+j.total_rows+' rows</div></div><span class="badge '+(sc[j.status]||'')+'">'+j.status+'</span>'
       +(j.status==='complete'?'<span class="b b-ghost b-sm" onclick="event.stopPropagation();exportCSV2('+j.id+')">CSV</span>':'')
       +(j.status==='paused'?'<span class="b b-green b-sm" onclick="event.stopPropagation();resumeJob('+j.id+');closeDrawer()">Resume</span>':'')
-      +'<span class="b b-ghost b-sm" onclick="event.stopPropagation();deleteJob('+j.id+')">✕</span></div>';}).join('');}catch(e){const el=document.getElementById('histList');if(el)el.innerHTML='<p style="font-size:12px;color:var(--red)">Failed to load history. Check server connection.</p>';}}
+      +'<span class="b b-ghost b-sm" onclick="event.stopPropagation();deleteJob('+j.id+')">✕</span></div>';}).join('');}catch(e){const el=document.getElementById('histList');if(el)el.innerHTML='<p style="font-size:12px;color:var(--red)">Failed to load history.</p>';}}
 async function viewJob(jid){jobId=jid;results=[];currentSections=[];document.getElementById('resultsList').innerHTML='';document.getElementById('tableContainer').innerHTML='';document.getElementById('completeBanner').style.display='none';document.getElementById('viewToggle').style.display='none';
   // Hide wizard steps to show results
   for(let i=1;i<=3;i++){const el=document.getElementById('wizStep'+i);if(el)el.style.display='none';}
+  window.scrollTo({top:0,behavior:'smooth'});
   connectSSE(jid);}
-async function deleteJob(jid){if(!confirm('Delete this job?'))return;await api('/api/jobs/'+jid,{method:'DELETE'});loadHistory();}
+async function deleteJob(jid){if(!confirm('Delete this job?'))return;await api('/api/jobs/'+jid,{method:'DELETE'});toast('Job deleted','ok');loadHistory();}
 
 // ─── Admin Dashboard ───
 let adminTab='users';
@@ -1196,8 +1260,8 @@ async function loadAdminJobs(){
   }catch(e){el.innerHTML='<p style="color:var(--red);font-size:12px">Failed to load jobs</p>';}
 }
 
-// ─── Helpers ───
-function addLog(msg){const b=document.getElementById('logBox');b.innerHTML+='<div>'+new Date().toLocaleTimeString()+' '+esc(msg)+'</div>';b.scrollTop=b.scrollHeight;}
+// ─── Log ───
+function addLog(msg){const b=document.getElementById('logBox');if(!b)return;b.innerHTML+='<div>'+new Date().toLocaleTimeString()+' '+esc(msg)+'</div>';b.scrollTop=b.scrollHeight;}
 // Markdown to HTML helper
 function mdH(t){if(!t)return'';if(typeof t==='object')t=t._raw||'';return t.split('\n').map(l=>{const b=l.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');if(l.startsWith('# '))return'<h3>'+b.slice(2)+'</h3>';if(l.match(/^\d+\./))return'<p><strong>'+b+'</strong></p>';if(l.startsWith('- ')||l.startsWith('* '))return'<div class="blt">'+b.slice(2)+'</div>';if(!l.trim())return'';return'<p>'+b+'</p>';}).join('');}
 
@@ -1235,7 +1299,7 @@ function setView(mode){
 
 function renderTable(){
   const c=document.getElementById('tableContainer');
-  if(!results.length){c.innerHTML='';return;}
+  if(!results.length){c.innerHTML='<div style="padding:32px;text-align:center;color:var(--dim);font-size:13px">No results yet. Start a research job to see data here.</div>';return;}
   const secs=currentSections;
   let h='<div class="sp-wrap"><table class="sp-table"><thead><tr><th>Company</th><th>Status</th>';
   if(secs.length)secs.forEach(s=>{h+='<th>'+esc(s.label)+'</th>';});
@@ -1269,6 +1333,9 @@ function addTableRow(r){
 }
 
 document.getElementById('authPass').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
+document.getElementById('authEmail').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('authPass').focus();});
+document.getElementById('authName').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('authEmail').focus();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){const d=document.getElementById('drawer');if(d&&d.classList.contains('open'))closeDrawer();}});
 window.addEventListener('beforeunload',()=>{if(es)es.close();});
 
 // ─── Audit UI ───

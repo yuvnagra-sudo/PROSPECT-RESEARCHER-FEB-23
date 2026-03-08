@@ -6,6 +6,9 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
 import { auditWebsite } from './audit.mjs';
 
+// Load HTML at module init so it is always available before the server starts
+const HTML = readFileSync(new URL('./ui.html', import.meta.url), 'utf8');
+
 // .env loader
 try { const ep=resolve(process.cwd(),'.env'); if(existsSync(ep)) readFileSync(ep,'utf8').split('\n').forEach(l=>{const m=l.match(/^\s*([^#=]+?)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^["']|["']$/g,'');}); } catch{}
 
@@ -950,12 +953,12 @@ async function runJob(jobId){
   actv.delete(jobId);
 }
 
-// ─── HTTP Server ───
 const PORT=parseInt(process.env.PORT||'3000');
 function readB(req){return new Promise(r=>{let b='';req.on('data',c=>b+=c);req.on('end',()=>r(b));});}
 function json(res,d,s=200){res.writeHead(s,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify(d));}
 const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY'];
 
+// ─── HTTP Server ───
 const server=createServer(async(req,res)=>{
   const url=new URL(req.url,`http://localhost:${PORT}`);const p=url.pathname;
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,DELETE,OPTIONS','access-control-allow-headers':'content-type,authorization'});res.end();return;}
@@ -1029,7 +1032,7 @@ const server=createServer(async(req,res)=>{
   if(req.method==='POST'&&p==='/api/preview-prompt'){const b=await readB(req);try{
     const{csv,systemPrompt,colMapOverride,explicitSections}=JSON.parse(b);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'CSV needs at least 1 data row'},400);
-    const cm=colMapOverride||autoGuess(headers);
+    const cm=colMapOverride||autoGuess(headers,rows);
     const row=rows[0];const{prompt:userMessage}=buildPrompt(row,cm,0);
     let sections=explicitSections||[];
     if(!sections.length&&systemPrompt)sections=extractSectionsFromPrompt(systemPrompt);
@@ -1127,8 +1130,12 @@ Return ONLY valid JSON (no markdown, no code fences):
       if(sseSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,sseSections);
       res.write(`data: ${JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:parsed,error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens})}\n\n`);
     }
-    if(job.status==='complete'||job.status==='cancelled') res.write(`data: ${JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})}\n\n`);
-    const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}return;}
+    if(job.status==='complete'||job.status==='cancelled'||job.status==='paused'||job.status==='error'){
+      const doneMsg='data: '+JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})+'\n\n';res.write(doneMsg);
+    }else{
+      const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}
+    }
+    return;}
 
   if(req.method==='POST'&&p.match(/^\/api\/cancel\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(job&&job.user_id===uid){const a2=actv.get(jid);if(a2){a2.cancelled=true;if(a2.abort)a2.abort.abort();}}json(res,{ok:true});return;}
@@ -1207,6 +1214,7 @@ Return ONLY valid JSON (no markdown, no code fences):
   res.writeHead(404);res.end('Not found');
 });
 
+// ─── Start Server ───
 server.listen(PORT,process.env.HOST||'0.0.0.0',()=>{
   const userCount=db.prepare('SELECT COUNT(*) as c FROM users').get().c;
   const jobCount=db.prepare('SELECT COUNT(*) as c FROM jobs').get().c;
@@ -1221,4 +1229,4 @@ server.listen(PORT,process.env.HOST||'0.0.0.0',()=>{
   console.log(`  Backup: GET /api/admin/backup (admin only)`);
   console.log('  '+'━'.repeat(30)+'\n');
 });
-const HTML=readFileSync(new URL('./ui.html',import.meta.url),'utf8');
+// HTML is loaded at the top of this file
