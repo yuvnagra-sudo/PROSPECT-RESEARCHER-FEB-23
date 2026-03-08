@@ -954,12 +954,17 @@ async function runJob(jobId){
 }
 
 const PORT=parseInt(process.env.PORT||'3000');
-function readB(req){return new Promise(r=>{let b='';req.on('data',c=>b+=c);req.on('end',()=>r(b));});}
+const MAX_BODY=50*1024*1024; // 50 MB hard limit
+function readB(req){return new Promise((resolve,reject)=>{let b='';let size=0;let tooLarge=false;
+  req.on('data',c=>{if(tooLarge)return;size+=c.length;if(size>MAX_BODY){tooLarge=true;reject(new Error('Request body too large (max 50 MB)'));req.resume();return;}b+=c;});
+  req.on('end',()=>{if(!tooLarge)resolve(b);});
+  req.on('error',e=>{if(!tooLarge)reject(e);});});}
 function json(res,d,s=200){res.writeHead(s,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify(d));}
 const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY'];
 
 // ─── HTTP Server ───
 const server=createServer(async(req,res)=>{
+  try{
   const url=new URL(req.url,`http://localhost:${PORT}`);const p=url.pathname;
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,DELETE,OPTIONS','access-control-allow-headers':'content-type,authorization'});res.end();return;}
   if(req.method==='GET'&&p==='/'){res.writeHead(200,{'content-type':'text/html'});res.end(HTML);return;}
@@ -1088,11 +1093,14 @@ Return ONLY valid JSON (no markdown, no code fences):
     json(res,{sections,role:parsed.role||'research assistant',prompt:parsed.prompt||'',provider:prov.name});
   }catch(e){json(res,{error:e.message||'Generation failed'},500);}return;}
 
-  if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride}=JSON.parse(b);
+  if(req.method==='POST'&&p==='/api/preview'){const b=await readB(req);try{const{csv,colMapOverride,totalRows}=JSON.parse(b);
+    // csv here is only a sample (first 200 rows + header) sent by the client for column detection
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers,rows);
     const sampleRows=rows.slice(0,4).map(r=>{const obj={};headers.forEach(h=>{obj[h]=(r[h]||'').trim().slice(0,80);});return obj;});
-    json(res,{headers,colMap:cm,total:rows.length,previews:rows.slice(0,20).map((r,i)=>buildPrompt(r,cm,i)),sampleRows});
+    // Use totalRows from client if provided (client knows the real row count from its own parse)
+    const total=totalRows||rows.length;
+    json(res,{headers,colMap:cm,total,previews:rows.slice(0,3).map((r,i)=>buildPrompt(r,cm,i)),sampleRows});
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
@@ -1105,8 +1113,16 @@ Return ONLY valid JSON (no markdown, no code fences):
     const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=2?JSON.stringify(explicitSections):null;
     const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
     const jobId=Number(result.lastInsertRowid);
-    try{db.transaction(()=>{for(let i=0;i<rows.length;i++){const{company,prompt}=buildPrompt(rows[i],cm,i);S.iR.run(jobId,i,company,prompt);}})();}
-    catch(txErr){try{S.dR.run(jobId);db.prepare('DELETE FROM jobs WHERE id=?').run(jobId);}catch{}return json(res,{error:'Failed to create job rows: '+txErr.message},500);}
+    // Chunked inserts: 500 rows per transaction to avoid blocking the event loop on large files
+    const CHUNK=500;
+    try{
+      for(let start=0;start<rows.length;start+=CHUNK){
+        const chunk=rows.slice(start,start+CHUNK);
+        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const{company,prompt}=buildPrompt(chunk[i],cm,start+i);S.iR.run(jobId,start+i,company,prompt);}})();
+        // Yield to event loop between chunks so the server stays responsive
+        if(start+CHUNK<rows.length)await new Promise(r=>setImmediate(r));
+      }
+    }catch(txErr){try{S.dR.run(jobId);db.prepare('DELETE FROM jobs WHERE id=?').run(jobId);}catch{}return json(res,{error:'Failed to create job rows: '+txErr.message},500);}
     runJob(jobId);json(res,{jobId,total:rows.length,provider:prov.name});
   }catch(e){json(res,{error:e.message},400);}return;}
 
@@ -1119,19 +1135,28 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   if(req.method==='GET'&&p.match(/^\/api\/stream\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
-    res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});
+       res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});
+    let clientClosed=false;req.on('close',()=>{clientClosed=true;});
     // Emit column definitions so frontend knows the table structure
     const completedRows=S.gC.all(jid);
     const sseSections=resolveSections(job,completedRows);
-    res.write(`data: ${JSON.stringify({type:'meta',sections:sseSections,templateId:job.template_id})}\n\n`);
-    for(const r of completedRows){
-      let parsed=safeParseResearch(r.research);
-      // Re-parse old results with detected sections if not already structured
-      if(sseSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,sseSections);
-      res.write(`data: ${JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:parsed,error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens})}\n\n`);
+    res.write('data: '+JSON.stringify({type:'meta',sections:sseSections,templateId:job.template_id,totalCompleted:completedRows.length})+'\n\n');
+    // Page the completed-rows replay in batches of 200 to avoid blocking the event loop
+    const REPLAY_BATCH=200;
+    for(let i=0;i<completedRows.length;i+=REPLAY_BATCH){
+      if(clientClosed)return;
+      const batch=completedRows.slice(i,i+REPLAY_BATCH);
+      for(const r of batch){
+        let parsed=safeParseResearch(r.research);
+        if(sseSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,sseSections);
+        res.write('data: '+JSON.stringify({type:'result',idx:r.idx,company:r.company,status:r.status,research:parsed,error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens})+'\n\n');
+      }
+      // Yield between batches so the event loop stays responsive
+      if(i+REPLAY_BATCH<completedRows.length)await new Promise(r=>setImmediate(r));
     }
+    if(clientClosed)return;
     if(job.status==='complete'||job.status==='cancelled'||job.status==='paused'||job.status==='error'){
-      const doneMsg='data: '+JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})+'\n\n';res.write(doneMsg);
+      res.write('data: '+JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})+'\n\n');
     }else{
       const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}
     }
@@ -1163,8 +1188,11 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   if(req.method==='GET'&&p.match(/^\/api\/export\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
-    try{const rows=S.gR.all(jid);
-    let expSections=resolveSections(job,rows);
+    try{
+    // Use a paginated DB query to avoid loading all rows into memory at once
+    const totalRowCount=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=?').get(jid).c;
+    const sampleRows=db.prepare('SELECT * FROM rows WHERE job_id=? ORDER BY idx LIMIT 20').all(jid);
+    let expSections=resolveSections(job,sampleRows);
     const escRaw=s=>'"'+String(s||'').replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
     const escClean=s=>'"'+sanitizeForCSV(String(s||'')).replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
     const colMap=JSON.parse(job.col_map||'{}');
@@ -1175,29 +1203,37 @@ Return ONLY valid JSON (no markdown, no code fences):
     if(expSections.length)expSections.forEach(s=>hdrCols.push(s.label));
     else hdrCols.push('Research Brief');
     hdrCols.push('Full Research','Input Tokens','Output Tokens','Provider');
-    const hdr=hdrCols.join(',');
-    const csvR=rows.map(r=>{
-      let parsed=safeParseResearch(r.research);
-      const cols=[escRaw(r.company)];
-      origCols.forEach(c=>{
-        const roleLabel=c.role.charAt(0).toUpperCase()+c.role.slice(1);
-        const pat=new RegExp('\\*\\*'+roleLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?:[/A-Za-z]*):\\*\\*\\s*(.+?)(?:\\n|$)','i');
-        const m=r.prompt?r.prompt.match(pat):null;
-        cols.push(escRaw(m?m[1].trim():''));
-      });
-      cols.push(escRaw(r.status));
-      if(expSections.length&&!parsed?._parsed&&parsed?._raw){
-        parsed=parseStructuredResponse(parsed._raw,expSections);
+    res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="prospect_research_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
+    res.write('\uFEFF'+hdrCols.join(',')+'\r\n');
+    // Stream rows in pages of 500 to avoid loading the entire result set into memory
+    const PAGE=500;
+    const pageStmt=db.prepare('SELECT * FROM rows WHERE job_id=? ORDER BY idx LIMIT ? OFFSET ?');
+    for(let offset=0;offset<totalRowCount;offset+=PAGE){
+      const rows=pageStmt.all(jid,PAGE,offset);
+      const lines=[];
+      for(const r of rows){
+        let parsed=safeParseResearch(r.research);
+        const cols=[escRaw(r.company)];
+        origCols.forEach(c=>{
+          const roleLabel=c.role.charAt(0).toUpperCase()+c.role.slice(1);
+          const pat=new RegExp('\\*\\*'+roleLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?:[/A-Za-z]*):\\*\\*\\s*(.+?)(?:\\n|$)','i');
+          const m=r.prompt?r.prompt.match(pat):null;
+          cols.push(escRaw(m?m[1].trim():''));
+        });
+        cols.push(escRaw(r.status));
+        if(expSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,expSections);
+        if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
+        else if(expSections.length)expSections.forEach(()=>cols.push('""'));
+        else cols.push(escClean(parsed?._raw||r.error||''));
+        cols.push(escRaw(parsed?._raw||''),r.input_tokens||0,r.output_tokens||0,escRaw(job.provider));
+        lines.push(cols.join(','));
       }
-      if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
-      else if(expSections.length)expSections.forEach(()=>cols.push('""'));
-      else cols.push(escClean(parsed?._raw||r.error||''));
-      cols.push(escRaw(parsed?._raw||''),r.input_tokens||0,r.output_tokens||0,escRaw(job.provider));
-      return cols.join(',');
-    });
-    res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="prospect_research_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*'});
-    res.end('\uFEFF'+[hdr,...csvR].join('\r\n'));
-    }catch(exportErr){res.writeHead(500,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify({error:'Export failed: '+exportErr.message}));}
+      res.write(lines.join('\r\n')+'\r\n');
+      // Yield between pages
+      if(offset+PAGE<totalRowCount)await new Promise(r=>setImmediate(r));
+    }
+    res.end();
+    }catch(exportErr){try{res.writeHead(500,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify({error:'Export failed: '+exportErr.message}));}catch{}}
     return;}
 
   if(req.method==='POST'&&p==='/api/audit-website'){const b=await readB(req);try{
@@ -1212,6 +1248,11 @@ Return ONLY valid JSON (no markdown, no code fences):
   if(req.method==='DELETE'&&p.match(/^\/api\/jobs\/\d+$/)){const jid=parseInt(p.split('/').pop());S.dR.run(jid);S.dJ.run(jid,uid);json(res,{ok:true});return;}
 
   res.writeHead(404);res.end('Not found');
+  }catch(topErr){
+    // Top-level catch: prevents any unhandled error from crashing the server process
+    console.error('Request error:',topErr.message);
+    try{if(!res.headersSent)json(res,{error:topErr.message||'Internal server error'},topErr.message.includes('too large')?413:500);}catch{}
+  }
 });
 
 // ─── Start Server ───

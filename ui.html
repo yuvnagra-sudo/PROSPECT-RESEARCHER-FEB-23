@@ -529,6 +529,41 @@ let currentView='table',currentSections=[];
 let sectionHints={};
 let wizStep=1;
 
+// ─── Large-file CSV pre-parser (client-side, RFC 4180) ───
+// Parses the full CSV in the browser to get the real row count,
+// but only sends a small sample to the server for column detection.
+function clientParseCSVMeta(text){
+  // Strip BOM
+  if(text.charCodeAt(0)===0xfeff)text=text.slice(1);
+  text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  // Count rows without building objects (memory-efficient)
+  let rows=0,inQ=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(inQ){if(ch==='"'){if(i+1<text.length&&text[i+1]==='"')i++;else inQ=false;}}
+    else{if(ch==='"')inQ=true;else if(ch==='\n')rows++;}
+  }
+  // Last row may not end with newline
+  if(text.length&&text[text.length-1]!=='\n')rows++;
+  // rows includes header; subtract 1 for data rows
+  return Math.max(0,rows-1);
+}
+// Build a sample CSV string (header + first N rows) for server-side column detection
+function clientCSVSample(text,maxRows=200){
+  if(text.charCodeAt(0)===0xfeff)text=text.slice(1);
+  text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  let lineCount=0,inQ=false,i=0;
+  for(;i<text.length;i++){
+    const ch=text[i];
+    if(inQ){if(ch==='"'){if(i+1<text.length&&text[i+1]==='"')i++;else inQ=false;}}
+    else{if(ch==='"')inQ=true;else if(ch==='\n'){lineCount++;if(lineCount>maxRows)break;}}
+  }
+  return text.slice(0,i);
+}
+// Throttle helper: coalesce rapid DOM updates into one per animation frame
+let _rafPending=false,_rafQueue=[];
+function rafUpdate(fn){_rafQueue.push(fn);if(!_rafPending){_rafPending=true;requestAnimationFrame(()=>{_rafPending=false;const fns=[..._rafQueue];_rafQueue=[];fns.forEach(f=>f());});}}
+
 function api(p,o={}){o.headers={...(o.headers||{}),'content-type':'application/json'};if(token)o.headers.authorization='Bearer '+token;return fetch(p,o);}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
 
@@ -885,18 +920,39 @@ fi.addEventListener('change',()=>{if(fi.files[0])loadFile(fi.files[0]);});
 async function loadFile(f){if(jobRunning){if(!confirm('A job is running. Loading a new file will not stop it but may mix results. Continue?'))return;}
   if(results.length&&!jobRunning&&!confirm('Loading a new file will clear current results. Continue?'))return;
   if(f.name.match(/\.xlsx?$/i)){alert('Excel files (.xlsx/.xls) are not supported yet.\n\nPlease save your spreadsheet as CSV first:\nFile \u2192 Save As \u2192 CSV (Comma delimited)');return;}
-  csvText=await f.text();dz.classList.add('loaded');
-  document.getElementById('dzIco').textContent='✅';document.getElementById('dzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
-  document.getElementById('dzSub').textContent='Click to change';
-  await refreshPreview();updateCost();
+  // Show loading state for large files
+  document.getElementById('dzIco').textContent='\u23F3';
+  document.getElementById('dzText').textContent='Reading file...';
+  document.getElementById('dzSub').textContent='';
+  csvText=await f.text();
+  // Count rows client-side (fast, no object allocation) — avoids sending 50MB to server just for a row count
+  const clientRowCount=clientParseCSVMeta(csvText);
+  if(clientRowCount<1){
+    toast('This CSV has no data rows. Add prospect data and re-upload.','err');
+    csvText='';dz.classList.remove('loaded');
+    document.getElementById('dzIco').textContent='\uD83D\uDCC1';
+    document.getElementById('dzText').textContent='Drop your CSV here, or click to browse';
+    document.getElementById('dzSub').textContent='Any CSV with a company name column';
+    return;
+  }
+  dz.classList.add('loaded');
+  document.getElementById('dzIco').textContent='\u2705';document.getElementById('dzText').innerHTML='<strong>'+esc(f.name)+'</strong>';
+  document.getElementById('dzSub').textContent=clientRowCount.toLocaleString()+' rows detected \u00B7 Click to change';
+  await refreshPreview(null,clientRowCount);updateCost();
   document.getElementById('wizStep1Actions').style.display='flex';}
 
 // ─── Preview + Mapping ───
-async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMapOverride=om;
-    const d=await(await api('/api/preview',{method:'POST',body:JSON.stringify(body)})).json();if(d.error){alert(d.error);return;}
+// clientTotalRows: the real row count already computed client-side (avoids re-parsing on server)
+async function refreshPreview(om,clientTotalRows){try{
+    // Only send a sample (header + first 200 rows) to the server for column detection
+    const sampleCsv=clientCSVSample(csvText,200);
+    const body={csv:sampleCsv};
+    if(om)body.colMapOverride=om;
+    if(clientTotalRows)body.totalRows=clientTotalRows;
+    const d=await(await api('/api/preview',{method:'POST',body:JSON.stringify(body)})).json();if(d.error){toast(d.error,'err');return;}
     colMap=d.colMap;csvHeaders=d.headers;rowCount=d.total;sampleRows=d.sampleRows||[];
     if(rowCount<1){
-      alert('This CSV has no data rows. Add prospect data and re-upload.');
+      toast('This CSV has no data rows. Add prospect data and re-upload.','err');
       csvText='';rowCount=0;
       document.getElementById('dz').classList.remove('loaded');
       document.getElementById('dzIco').textContent='\uD83D\uDCC1';
@@ -904,11 +960,11 @@ async function refreshPreview(om){try{const body={csv:csvText};if(om)body.colMap
       document.getElementById('dzSub').textContent='Any CSV with a company name column';
       goWizardStep(1);return;
     }
-    document.getElementById('dzSub').textContent=rowCount+' prospects \u00B7 Click to change';
+    document.getElementById('dzSub').textContent=rowCount.toLocaleString()+' prospects \u00B7 Click to change';
     renderMapTable();renderPreviews(d.previews,d.total);
     document.getElementById('promptEdit').value=customPrompt;
     updatePromptMeta();
-  }catch(e){alert(e.message);}}
+  }catch(e){toast(e.message,'err');}}
 
 function renderPreviews(pv,total){
   document.getElementById('previewSection').style.display='';
@@ -958,7 +1014,7 @@ function renderMapHints(){
 }
 
 function updateCost(){const p=providers[selProv];if(!p||!rowCount)return;const per=(p.inputCost*2000+p.outputCost*2000)/1e6+(useWeb&&p.webSearch?(p.webCostPerCall||0):0);
-  const el=document.getElementById('costChip');el.style.display='inline-flex';document.getElementById('costText').innerHTML=rowCount+' rows ≈ <b>$'+(per*rowCount).toFixed(2)+'</b>';}
+  const el=document.getElementById('costChip');el.style.display='inline-flex';document.getElementById('costText').innerHTML=rowCount.toLocaleString()+' rows ≈ <b>$'+(per*rowCount).toFixed(2)+'</b>';}
 
 // ─── Research ───
 async function startResearch(maxRows){
@@ -969,18 +1025,18 @@ async function startResearch(maxRows){
   if(customPrompt.trim().length<20){alert('Your prompt is too short (minimum 20 characters). Add research instructions first.');return;}
   if(!customPrompt.includes('{company}')&&!/research\s+(this\s+)?prospect/i.test(customPrompt)){
     alert('Your prompt should include {company} so the AI can personalize research for each prospect.\n\nExample: "Research {company} and provide..."');return;}
-  // Slice CSV to maxRows if testing
+  // Slice CSV to maxRows if testing (use client-side slicer for large files)
   let csvToSend=csvText;
   if(maxRows&&maxRows>0){
-    const lines=csvText.split('\n');const header=lines[0];
-    const dataLines=lines.slice(1).filter(l=>l.trim());
-    csvToSend=[header,...dataLines.slice(0,maxRows)].join('\n');
+    // Use the efficient client-side slicer instead of split('\n') which breaks on quoted newlines
+    csvToSend=clientCSVSample(csvText,maxRows);
   }
   // Large CSV cost warning — right before spending money (skip for test runs)
   if(!maxRows&&rowCount>500){
     const pe=providers[selProv];
     const est=pe?((pe.inputCost*2000+pe.outputCost*2000)/1e6+(useWeb&&pe.webSearch?(pe.webCostPerCall||0):0))*rowCount:0;
-    if(!confirm(rowCount+' rows detected.\nEstimated cost: ~$'+est.toFixed(2)+' ('+providers[selProv]?.name+')\nEstimated time: ~'+Math.round(rowCount*0.15)+' minutes\n\nStart research?'))return;
+    const timeEst=rowCount>=5000?Math.round(rowCount/60)+' hours':Math.round(rowCount*0.15)+' minutes';
+    if(!confirm(rowCount.toLocaleString()+' rows detected.\nEstimated cost: ~$'+est.toFixed(2)+' ('+providers[selProv]?.name+')\nEstimated time: ~'+timeEst+'\n\nThe job will run in the background. You can close this tab and return later.\n\nStart research?'))return;
   }
   // Auto-save prompt if dirty
   if(promptDirty)savePrompt();
@@ -1018,36 +1074,54 @@ function connectSSE(id){if(es)es.close();let sseRetries=0;
     toast('Connection lost — click Reconnect to resume','err',8000);
     jobRunning=false;document.getElementById('btnGo').disabled=false;document.getElementById('btnGo').textContent='Start Research';
     document.getElementById('wizardNav').style.display='flex';goWizardStep(3);}};
+  // Batch buffer for incoming results — flushed to DOM via requestAnimationFrame
+  let _sseResultBuf=[];
+  let _sseFlushPending=false;
+  function flushSSEResults(){
+    _sseFlushPending=false;
+    if(!_sseResultBuf.length)return;
+    const batch=_sseResultBuf.splice(0,_sseResultBuf.length);
+    for(const d of batch){
+      results.push(d);
+      if(currentView==='card')addRC(d);
+      else if(currentView==='table')addTableRow(d);
+      if(d.status==='error')addLog('\u2717 '+(d.company||'Row '+d.idx)+': '+(d.error||'Unknown error'));
+    }
+    if(currentView==='table')updateTablePageInfo();
+  }
   es.onmessage=e=>{sseRetries=0;let d;try{d=JSON.parse(e.data);}catch{return;}
-    if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('viewToggle').style.display='flex';setView(currentView);}
-    if(d.type==='result'){results.push(d);addRC(d);if(currentView==='table')addTableRow(d);
-      // Track running cost
+    if(d.type==='meta'){currentSections=d.sections||[];document.getElementById('viewToggle').style.display='flex';setView(currentView);
+      if(d.totalCompleted>200)toast('Loading '+d.totalCompleted.toLocaleString()+' completed rows...','info',5000);}
+    if(d.type==='result'){
       const p=providers[selProv];if(p&&d.inputTokens){runCost+=(d.inputTokens/1e6)*(p.inputCost||0)+(d.outputTokens/1e6)*(p.outputCost||0);}
-      // Log failures with reason
-      if(d.status==='error')addLog('\u2717 '+(d.company||'Row '+d.idx)+': '+(d.error||'Unknown error'));}
-    if(d.type==='progress'){const pct=Math.round((d.succeeded+d.failed)/d.total*100);
-      document.getElementById('progBar').style.width=pct+'%';
-      document.getElementById('progBarInline').style.width=pct+'%';
-      const done=d.succeeded+d.failed;let extra='';
-      if(runCost>0)extra+=' · $'+runCost.toFixed(3);
-      if(done>=3&&done<d.total){const elapsed=(Date.now()-runStart)/1000;const perRow=elapsed/done;const remaining=Math.round(perRow*(d.total-done));extra+=' · ~'+(remaining>=60?Math.round(remaining/60)+'m':remaining+'s')+' left';}
-      document.getElementById('progText').innerHTML='<b>'+d.succeeded+'</b>'+(d.failed?' <span style="color:var(--red)">'+d.failed+' err</span>':'')+' / '+d.total+extra+' — '+esc(d.current);
-      document.getElementById('progTextInline').innerHTML=d.succeeded+(d.failed?'+'+d.failed+'err':'')+' / '+d.total;}
-    if(d.type==='log')addLog(d.msg);
-    if(d.type==='rate_info')addLog('Throttle: '+Math.round(d.delay)+'ms');
+      _sseResultBuf.push(d);
+      if(!_sseFlushPending){_sseFlushPending=true;requestAnimationFrame(flushSSEResults);}}
+    if(d.type==='progress'){
+      rafUpdate(()=>{
+        const pct=Math.round((d.succeeded+d.failed)/d.total*100);
+        document.getElementById('progBar').style.width=pct+'%';
+        document.getElementById('progBarInline').style.width=pct+'%';
+        const done=d.succeeded+d.failed;let extra='';
+        if(runCost>0)extra+=' \u00B7 $'+runCost.toFixed(3);
+        if(done>=3&&done<d.total){const elapsed=(Date.now()-runStart)/1000;const perRow=elapsed/done;const remaining=Math.round(perRow*(d.total-done));extra+=' \u00B7 ~'+(remaining>=60?Math.round(remaining/60)+'m':remaining+'s')+' left';}
+        document.getElementById('progText').innerHTML='<b>'+d.succeeded.toLocaleString()+'</b>'+(d.failed?' <span style="color:var(--red)">'+d.failed+' err</span>':'')+' / '+d.total.toLocaleString()+extra+' \u2014 '+esc(d.current);
+        document.getElementById('progTextInline').innerHTML=d.succeeded.toLocaleString()+(d.failed?'+'+d.failed+'err':'')+' / '+d.total.toLocaleString();
+      });}
+    if(d.type==='log')rafUpdate(()=>addLog(d.msg));
+    if(d.type==='rate_info')rafUpdate(()=>addLog('Throttle: '+Math.round(d.delay)+'ms'));
     if(d.type==='done'){jobRunning=false;lockPromptUI(false);const goBtn=document.getElementById('btnGo');goBtn.disabled=false;goBtn.textContent='Start Research';document.getElementById('progressBar').style.display='none';document.getElementById('runningState').style.display='none';
       document.getElementById('wizardNav').style.display='flex';goWizardStep(3);
       const b=document.getElementById('completeBanner');b.style.display='flex';
       const ok=d.status==='complete';b.className='banner fade-in '+(ok?'banner-ok':'banner-err');
-      let t=(ok?'✅':'⚠')+' '+d.succeeded+' researched, '+d.failed+' failed';
-      if(d.cost)t+=' · $'+d.cost;if(d.elapsed)t+=' · '+d.elapsed+'s';
-      b.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer('export')">Export CSV</button><button class="b b-ghost b-sm" onclick="exportCSV()" style="margin-left:4px">Quick Export</button>';
-      if(ok)toast(d.succeeded+' rows complete — $'+(d.cost||'0'),'ok');
-      else if(d.status==='paused')toast('Job paused — '+d.succeeded+' done, '+d.failed+' failed','info');
+      let t=(ok?'\u2705':'\u26A0')+' '+d.succeeded.toLocaleString()+' researched, '+d.failed+' failed';
+      if(d.cost)t+=' \u00B7 $'+d.cost;if(d.elapsed)t+=' \u00B7 '+d.elapsed+'s';
+      b.innerHTML='<span style="flex:1">'+t+'</span><button class="b b-pri b-sm" onclick="openDrawer(\'export\')">Export CSV</button><button class="b b-ghost b-sm" onclick="exportCSV()" style="margin-left:4px">Quick Export</button>';
+      if(ok)toast(d.succeeded.toLocaleString()+' rows complete \u2014 $'+(d.cost||'0'),'ok');
+      else if(d.status==='paused')toast('Job paused \u2014 '+d.succeeded+' done, '+d.failed+' failed','info');
       else if(d.status==='cancelled')toast('Job cancelled','info');
       if(d.status==='paused'){b.innerHTML+='<button class="b b-green b-sm" onclick="resumeJob('+jobId+')">Resume</button>';
-        document.getElementById('progText').innerHTML='Paused — <b>'+d.succeeded+'</b> / '+(d.succeeded+d.failed)+' complete';
-      es.close();}};}
+        document.getElementById('progText').innerHTML='Paused \u2014 <b>'+d.succeeded.toLocaleString()+'</b> / '+(d.succeeded+d.failed).toLocaleString()+' complete';
+      es.close();}};}}
 
 async function cancelJob(){
   if(!jobId)return;
@@ -1286,7 +1360,10 @@ function addRC(r){const list=document.getElementById('resultsList');const div=do
   div.innerHTML='<div class="result-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\'"><div class="result-dot" style="background:'+(ok?'var(--green)':'var(--red)')+'"></div><span class="result-name">'+esc(r.company)+'</span>'+qBadge+retryBtn+'<span style="font-size:11px;color:var(--dim);margin-left:auto">▼</span></div><div class="result-body" style="display:none"><div class="md">'+bodyContent+'</div></div>';
   div.dataset.idx=r.idx;list.appendChild(div);}
 
-// ─── Table View ───
+// ─── Table View (paginated — 200 rows per page) ───
+let tablePage=0;
+const TABLE_PAGE_SIZE=200;
+
 function setView(mode){
   currentView=mode;
   document.getElementById('tableContainer').style.display=mode==='table'?'':'none';
@@ -1294,25 +1371,59 @@ function setView(mode){
   document.getElementById('btnTableView').className='b b-sm '+(mode==='table'?'b-pri':'b-ghost');
   document.getElementById('btnCardView').className='b b-sm '+(mode==='card'?'b-pri':'b-ghost');
   document.querySelector('.main').classList.toggle('table-mode',mode==='table');
-  if(mode==='table')renderTable();
+  if(mode==='table'){tablePage=0;renderTable();}
 }
 
 function renderTable(){
   const c=document.getElementById('tableContainer');
   if(!results.length){c.innerHTML='<div style="padding:32px;text-align:center;color:var(--dim);font-size:13px">No results yet. Start a research job to see data here.</div>';return;}
   const secs=currentSections;
-  let h='<div class="sp-wrap"><table class="sp-table"><thead><tr><th>Company</th><th>Status</th>';
+  const start=tablePage*TABLE_PAGE_SIZE;
+  const pageRows=results.slice(start,start+TABLE_PAGE_SIZE);
+  let h='<div class="sp-wrap"><table class="sp-table"><thead><tr><th>#</th><th>Company</th><th>Status</th>';
   if(secs.length)secs.forEach(s=>{h+='<th>'+esc(s.label)+'</th>';});
   else h+='<th style="min-width:400px">Research</th>';
   h+='</tr></thead><tbody>';
-  for(const r of results)h+=buildTableRowHTML(r);
+  for(const r of pageRows)h+=buildTableRowHTML(r);
   h+='</tbody></table></div>';
+  // Pagination controls
+  const totalPages=Math.ceil(results.length/TABLE_PAGE_SIZE);
+  if(totalPages>1){
+    h+='<div id="tablePagination" style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:12px;color:var(--dim)">';
+    h+='<button class="b b-ghost b-sm" onclick="tableGoPage('+tablePage+'-1)" '+(tablePage===0?'disabled':'')+'>← Prev</button>';
+    h+='<span id="tablePageInfo">Page '+(tablePage+1)+' of '+totalPages+' ('+results.length.toLocaleString()+' rows)</span>';
+    h+='<button class="b b-ghost b-sm" onclick="tableGoPage('+tablePage+'+1)" '+(tablePage>=totalPages-1?'disabled':'')+'>Next →</button>';
+    h+='</div>';
+  }
   c.innerHTML=h;
+}
+
+function tableGoPage(p){
+  const totalPages=Math.ceil(results.length/TABLE_PAGE_SIZE);
+  tablePage=Math.max(0,Math.min(totalPages-1,p));
+  renderTable();
+  document.getElementById('tableContainer').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function updateTablePageInfo(){
+  const el=document.getElementById('tablePageInfo');
+  if(!el)return;
+  const totalPages=Math.ceil(results.length/TABLE_PAGE_SIZE);
+  el.textContent='Page '+(tablePage+1)+' of '+totalPages+' ('+results.length.toLocaleString()+' rows)';
+  // Update prev/next button states
+  const pagination=document.getElementById('tablePagination');
+  if(pagination){
+    const btns=pagination.querySelectorAll('button');
+    if(btns[0])btns[0].disabled=tablePage===0;
+    if(btns[1])btns[1].disabled=tablePage>=totalPages-1;
+    // If we're on the last page and new rows came in, re-render to show them
+    if(tablePage===totalPages-1&&results.length%TABLE_PAGE_SIZE===1)renderTable();
+  }else if(totalPages>1){renderTable();} // First time pagination appears
 }
 
 function buildTableRowHTML(r){
   const ok=r.status==='success';const dot=ok?'var(--green)':'var(--red)';const secs=currentSections;
-  let h='<tr><td title="'+esc(r.company)+'">'+esc(r.company)+'</td><td><span class="status-dot" style="background:'+dot+'"></span>'+esc(r.status)+'</td>';
+  let h='<tr><td style="color:var(--dim);font-size:11px;width:40px">'+(r.idx+1)+'</td><td title="'+esc(r.company)+'">'+esc(r.company)+'</td><td><span class="status-dot" style="background:'+dot+'"></span>'+esc(r.status)+'</td>';
   if(secs.length&&ok&&r.research?._parsed){
     secs.forEach(s=>{const val=r.research[s.key]||'';
       h+='<td><div class="cell-trunc" onclick="this.classList.toggle(\'open\')">'+mdH(val)+(val.length>150?'<div class="cell-fade"></div>':'')+'</div></td>';});
@@ -1327,9 +1438,17 @@ function buildTableRowHTML(r){
 }
 
 function addTableRow(r){
+  // Only add to DOM if we are on the last page (or the only page)
+  const totalPages=Math.ceil(results.length/TABLE_PAGE_SIZE);
+  const isLastPage=tablePage>=totalPages-1;
+  if(!isLastPage)return; // Row is on a future page; updateTablePageInfo will handle page count
   const tbody=document.querySelector('.sp-table tbody');
   if(!tbody){renderTable();return;}
-  tbody.insertAdjacentHTML('beforeend',buildTableRowHTML(r));
+  // Only render if this row belongs to the current page
+  const start=tablePage*TABLE_PAGE_SIZE;
+  if(results.length-1>=start&&results.length-1<start+TABLE_PAGE_SIZE){
+    tbody.insertAdjacentHTML('beforeend',buildTableRowHTML(r));
+  }
 }
 
 document.getElementById('authPass').addEventListener('keydown',e=>{if(e.key==='Enter')doAuth();});
