@@ -1480,40 +1480,67 @@ function renderAuditResult(d,container){
   function scoreClass(v){return(v==null)?'neu':v>=90?'good':v>=50?'warn':'bad';}
   function msClass(v){return(v==null)?'neu':v<1000?'good':v<3000?'warn':'bad';}
   function boolClass(v){return v===true?'good':v===false?'bad':'neu';}
+  // PageSpeed availability
+  const psOk=m.pageSpeedOk!==false&&(m.performance!=null||m.seo!=null);
+  const psUnavail=!psOk;
+  const psErrMsg=m.pageSpeedError||'PageSpeed data unavailable';
+
+  // Core metric cards — show "Unavailable" with amber styling if PageSpeed failed
+  const psVal=(val,label)=>psUnavail?'Unavailable':(val!=null?val+'/100':'N/A');
+  const psCls=(val)=>psUnavail?'warn':scoreClass(val);
+  const vitalVal=(val)=>psUnavail?'—':(val||'N/A');
 
   const cards=[
-    {label:'Performance',val:m.performance!=null?m.performance+'/100':'N/A',cls:scoreClass(m.performance)},
-    {label:'SEO Score',val:m.seo!=null?m.seo+'/100':'N/A',cls:scoreClass(m.seo)},
-    {label:'Response',val:m.responseMs!=null?m.responseMs+'ms':'N/A',cls:msClass(m.responseMs)},
-    {label:'FCP',val:m.fcp||'N/A',cls:'neu'},
-    {label:'LCP',val:m.lcp||'N/A',cls:'neu'},
+    {label:'Performance',val:psVal(m.performance),cls:psCls(m.performance)},
+    {label:'SEO Score',val:psVal(m.seo),cls:psCls(m.seo)},
+    {label:'Accessibility',val:psVal(m.accessibility),cls:psCls(m.accessibility)},
+    {label:'Best Practices',val:psVal(m.bestPractices),cls:psCls(m.bestPractices)},
+    {label:'Response Time',val:m.responseMs!=null?m.responseMs+'ms':'N/A',cls:msClass(m.responseMs)},
+    {label:'FCP',val:vitalVal(m.fcp),cls:psUnavail?'neu':'neu'},
+    {label:'LCP',val:vitalVal(m.lcp),cls:psUnavail?'neu':'neu'},
+    {label:'CLS',val:vitalVal(m.cls),cls:psUnavail?'neu':'neu'},
+    {label:'Speed Index',val:vitalVal(m.speedIndex),cls:'neu'},
     {label:'HTTPS',val:m.httpsWorks===true?'✓ Yes':m.httpsWorks===false?'✗ No':'N/A',cls:boolClass(m.httpsWorks)},
     {label:'Analytics',val:m.hasAnalytics===true?'✓ Found':m.hasAnalytics===false?'✗ None':'N/A',cls:boolClass(m.hasAnalytics)},
     {label:'Sitemap',val:m.hasSitemap===true?'✓ Found':m.hasSitemap===false?'✗ None':'N/A',cls:boolClass(m.hasSitemap)},
   ];
 
-  const issueHtml=(d.issues||[]).slice(0,6).map(i=>
-    '<div class="audit-issue '+esc(i.severity)+'">'+
+  const issueHtml=(d.issues||[]).slice(0,8).map(i=>
+    '<div class="audit-issue '+esc(i.severity)+'">'+ 
     '<div class="issue-title"><span class="audit-sev '+esc(i.severity)+'">'+esc(i.severity)+'</span>'+esc(i.title)+'</div>'+
     '<div class="issue-detail">'+esc(i.detail)+'</div>'+
     '</div>'
   ).join('');
 
+  // Opportunities section
+  const opps=m.opportunities||[];
+  const oppHtml=opps.length?
+    '<div style="margin-top:12px"><div style="font-size:10px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Top Performance Opportunities</div>'+
+    opps.map(o=>'<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">'+
+      (o.score!=null?'<span style="font-size:10px;color:'+(o.score<50?'var(--red)':o.score<80?'var(--amber)':'var(--green)')+'">['+o.score+'/100] </span>':'')+
+      esc(o.title)+(o.savings?'<span style="color:var(--dim)"> — saves ~'+esc(o.savings)+'</span>':'')+
+      '</div>').join('')+
+    '</div>':'';
+
   const elapsed=d.elapsedMs?Math.round(d.elapsedMs/100)/10+'s':'';
+  const psAttemptsNote=m.pageSpeedAttempts>1?' ('+m.pageSpeedAttempts+' attempts)':'';
   container.innerHTML=
     '<div class="audit-result">'+
     '<div style="font-size:11px;color:var(--dim);margin-bottom:8px">'+
     'Audited: <span style="color:var(--fg)">'+esc(d.finalUrl||d.url)+'</span>'+
     (elapsed?' · '+elapsed:'')+
     ' · '+(d.issues?d.issues.length:0)+' issue(s)'+
+    (psUnavail?' · <span style="color:var(--amber)">⚠ PageSpeed unavailable'+psAttemptsNote+'</span>':psAttemptsNote?'<span style="color:var(--dim)"> · PageSpeed'+psAttemptsNote+'</span>':'')+
     (d.errors&&d.errors.length?' · <span style="color:var(--amber)">'+d.errors.length+' check error(s)</span>':'')+
     '</div>'+
+    (psUnavail?'<div style="font-size:11px;color:var(--amber);background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:6px 10px;margin-bottom:10px">⚠ PageSpeed scores unavailable: '+esc(psErrMsg)+'. Other audit data (HTTP, SEO tags, security headers) is still shown below.</div>':'')+
     '<div class="audit-metrics">'+
     cards.map(c=>'<div class="audit-metric"><div class="met-lbl">'+esc(c.label)+'</div><div class="val '+c.cls+'">'+esc(c.val)+'</div></div>').join('')+
     '</div>'+
     (issueHtml?
-      '<div style="font-size:10px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Issues Found</div>'+issueHtml
+      '<div style="font-size:10px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;margin-top:12px">Issues Found</div>'+issueHtml
       :'<div style="font-size:12px;color:var(--green);padding:4px 0">✓ No major issues detected</div>')+
+    oppHtml+
     '</div>';
 }
 

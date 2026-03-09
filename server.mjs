@@ -340,7 +340,7 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
 }
 
 async function callAnthropic(prompt,prov,sys,web,apiKey,jobSignal){
-  const body={model:prov.model,max_tokens:4000,system:[{type:'text',text:sys,cache_control:{type:'ephemeral'}}],messages:[{role:'user',content:prompt}]};
+  const body={model:prov.model,max_tokens:8000,system:[{type:'text',text:sys,cache_control:{type:'ephemeral'}}],messages:[{role:'user',content:prompt}]};
   if(web)body.tools=[{type:'web_search_20250305',name:'web_search'}];
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
@@ -352,7 +352,9 @@ async function callAnthropic(prompt,prov,sys,web,apiKey,jobSignal){
 }
 async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const tk=prov.model.startsWith('gpt-5')?'max_completion_tokens':'max_tokens';
-  const body={model:prov.model,[tk]:4000,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
+  // GPT-5 can handle longer structured outputs; GPT-4o-mini is cheaper so keep at 6000
+  const maxTok=prov.model.startsWith('gpt-5')?8000:6000;
+  const body={model:prov.model,[tk]:maxTok,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
   // Native JSON mode when sections are defined (works with GPT-5, GPT-4o-mini, DeepSeek)
   if(sections&&sections.length>=2)body.response_format={type:'json_object'};
   if(prov.webTool==='openai'&&web)body.tools=[{type:'web_search_preview'}];
@@ -571,6 +573,9 @@ Return a single valid JSON object with these exact keys: ${keyList}
 - If data is genuinely unavailable after searching, write "No data found" for that key
 - Do NOT add keys beyond the ones listed above
 - Do NOT wrap in code fences or add text outside the JSON
+- Every value must be SPECIFIC and SUBSTANTIVE — include real names, dates, numbers, and sources
+- Generic or vague answers like "they focus on growth" are NOT acceptable
+- Minimum 20 words per section value; aim for 40-80 words for richer sections
 ${guidanceBlock}
 Here is an example of a correct response:
 ${sampleJson}
@@ -768,10 +773,11 @@ function autoGuess(headers,rows){const map={};
     if(looksLikeName&&avg>3&&avg<80&&avg>bestScore){bestScore=avg;bestH=h;}}
   if(bestH){map.company=bestH;assigned.add(bestH);}}}
   return map;}
-function buildPrompt(row,map,idx){
+function buildPrompt(row,map,idx,useWebSearch){
   const cl=v=>(v||'').replace(/^[\u00b7\u2022\s]+/,'').trim();
   const company=map.company?cl(row[map.company]):`Prospect ${idx+1}`;
-  let url=map.website?cl(row[map.website]):'';let email=map.email?cl(row[map.email]):'';
+  let url=map.website?cl(row[map.website]):'';
+  let email=map.email?cl(row[map.email]):'';
   if(!url&&email&&(email.startsWith('http')||email.includes('www.')||/\.(com|ca|net|org|io)/.test(email))){url=email;email='';}
   let pr=`Research this prospect:\n\n**Company:** ${company}`;
   if(url)pr+=`\n**Website:** ${url}`;
@@ -790,7 +796,12 @@ function buildPrompt(row,map,idx){
     if(!usedHeaders.has(header)&&value&&value.trim()&&value.trim().length>1)
       pr+=`\n**${header}:** ${cl(value)}`;
   }
-  pr+='\n\nUse web search to find the most current information.';
+  // Only add web search instruction when web search is actually enabled
+  if(useWebSearch!==false){
+    pr+='\n\nSearch the web for the most current information about this company. Check their website, LinkedIn, recent news, press releases, and job listings. Prioritize information from the last 6-12 months.';
+  } else {
+    pr+='\n\nUse your knowledge to research this company thoroughly. Be specific and cite any known facts about them.';
+  }
   return{company,prompt:pr};
 }
 
@@ -892,11 +903,15 @@ async function runJob(jobId){
             if(emptySecs.length>0){
               retries++;
               emit({type:'log',level:'warn',msg:`Low quality (${quality}%) for "${row.company}" — retrying with emphasis on: ${emptySecs.map(s=>s.label).join(', ')}`});
-              const retryP=rowPrompt+'\n\nIMPORTANT RETRY: Your previous response had issues:\n'+
-                (!structured._parsed?'- Response was not valid JSON. You MUST return a single JSON object.\n':'')+
-                (emptySecs.length?'- These sections were empty or generic: '+emptySecs.map(s=>s.label).join(', ')+'\n':'')+
-                'Return a valid JSON object with keys: '+jobSections.map(s=>'"'+s.key+'"').join(', ')+'\n'+
-                'Every section must contain specific, substantive information. If data is genuinely unavailable, write "No data found".';
+              // Include the failed attempt so the model can see exactly what went wrong
+              const prevAttempt=structured._raw?`\n\nYOUR PREVIOUS RESPONSE (which had issues):\n${structured._raw.slice(0,2000)}${structured._raw.length>2000?'\n[...truncated]':''}`:
+                (!structured._parsed?'\n\nYour previous response was not valid JSON.':'');
+              const retryP=rowPrompt+prevAttempt+
+                '\n\nIMPORTANT RETRY — fix these specific issues:\n'+
+                (!structured._parsed?'1. Your response was NOT valid JSON. Return ONLY a JSON object, nothing else.\n':'')+
+                (emptySecs.length?'2. These sections had no useful content: '+emptySecs.map(s=>s.label).join(', ')+'\n   Search more specifically for each of these — check the company website, LinkedIn, news, and job listings.\n':'')+
+                'Required JSON keys: '+jobSections.map(s=>'"'+s.key+'"').join(', ')+'\n'+
+                'Every value must be specific and substantive (minimum 20 words). Write "No data found" only if you genuinely cannot find anything after searching.';
               try{
                 const r2=await callLLM(retryP,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,jobSections);
                 tIn+=r2.inputTokens;tOut+=r2.outputTokens;tCR+=r2.cacheRead;tCW+=r2.cacheWrite;if(job.use_web_search)webCalls++;
@@ -1100,7 +1115,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     const sampleRows=rows.slice(0,4).map(r=>{const obj={};headers.forEach(h=>{obj[h]=(r[h]||'').trim().slice(0,80);});return obj;});
     // Use totalRows from client if provided (client knows the real row count from its own parse)
     const total=totalRows||rows.length;
-    json(res,{headers,colMap:cm,total,previews:rows.slice(0,3).map((r,i)=>buildPrompt(r,cm,i)),sampleRows});
+    json(res,{headers,colMap:cm,total,previews:rows.slice(0,3).map((r,i)=>buildPrompt(r,cm,i,true)),sampleRows});
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
@@ -1118,7 +1133,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     try{
       for(let start=0;start<rows.length;start+=CHUNK){
         const chunk=rows.slice(start,start+CHUNK);
-        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const{company,prompt}=buildPrompt(chunk[i],cm,start+i);S.iR.run(jobId,start+i,company,prompt);}})();
+        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const{company,prompt}=buildPrompt(chunk[i],cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt);}})();
         // Yield to event loop between chunks so the server stays responsive
         if(start+CHUNK<rows.length)await new Promise(r=>setImmediate(r));
       }

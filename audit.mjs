@@ -150,41 +150,86 @@ async function checkHTTP(url) {
 // ─── Check: PageSpeed Insights (free, no key) ────────────────────────────────
 async function checkPageSpeed(url) {
   const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&category=performance&category=seo&category=accessibility&category=best-practices${PAGESPEED_API_KEY ? '&key=' + PAGESPEED_API_KEY : ''}`;
-  let res;
-  try {
-    res = await fetch(psUrl, { signal: AbortSignal.timeout(TIMEOUT_PAGESPEED) });
-  } catch (e) {
-    return { ok: false, error: e.message };
+
+  // Retry up to 3 times with increasing timeouts (55s, 65s, 75s)
+  // PageSpeed API is slow for heavy sites and occasionally returns 500/503
+  const TIMEOUTS = [55000, 65000, 75000];
+  let lastError = '';
+  for (let attempt = 0; attempt < TIMEOUTS.length; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt)); // backoff: 3s, 6s
+    let res;
+    try {
+      res = await fetch(psUrl, { signal: AbortSignal.timeout(TIMEOUTS[attempt]) });
+    } catch (e) {
+      lastError = e.name === 'TimeoutError' ? `Timed out after ${TIMEOUTS[attempt]/1000}s` : e.message;
+      continue; // retry
+    }
+    // 429 = quota exceeded (no point retrying), 5xx = transient (retry)
+    if (res.status === 429) return { ok: false, error: 'PageSpeed API quota exceeded', skipped: true };
+    if (!res.ok) { lastError = `PageSpeed API HTTP ${res.status}`; continue; }
+
+    let data;
+    try { data = await res.json(); } catch { lastError = 'Invalid JSON from PageSpeed API'; continue; }
+
+    // Validate the response has actual lighthouse data
+    const lhr = data.lighthouseResult;
+    if (!lhr) { lastError = 'PageSpeed response missing lighthouseResult'; continue; }
+
+    const cats = lhr.categories || {};
+    const audits = lhr.audits || {};
+    const score = (cat) => (cat?.score !== null && cat?.score !== undefined) ? Math.round(cat.score * 100) : null;
+
+    // Parse display values — strip units for storage, keep full string for display
+    const parseDisplayVal = (v) => {
+      if (!v || typeof v !== 'string') return null;
+      return v.trim(); // e.g. "3.2 s", "0.12", "1,200 ms"
+    };
+
+    const metrics = {
+      performance: score(cats['performance']),
+      seo: score(cats['seo']),
+      accessibility: score(cats['accessibility']),
+      bestPractices: score(cats['best-practices']),
+      fcp: parseDisplayVal(audits['first-contentful-paint']?.displayValue),
+      lcp: parseDisplayVal(audits['largest-contentful-paint']?.displayValue),
+      cls: parseDisplayVal(audits['cumulative-layout-shift']?.displayValue),
+      tbt: parseDisplayVal(audits['total-blocking-time']?.displayValue),
+      speedIndex: parseDisplayVal(audits['speed-index']?.displayValue),
+      tti: parseDisplayVal(audits['interactive']?.displayValue),
+    };
+
+    // Opportunities: try overallSavingsMs first (v5 older), fall back to numericValue on the audit itself
+    // Also include failed audits with score < 1 that are not informational
+    const oppAudits = Object.values(audits).filter(a => {
+      if (!a.title) return false;
+      const isOpportunity = a.details?.type === 'opportunity';
+      const hasScore = a.score !== null && a.score !== undefined && a.score < 1;
+      const notInfo = a.scoreDisplayMode !== 'informative' && a.scoreDisplayMode !== 'notApplicable';
+      return (isOpportunity || (hasScore && notInfo)) && a.details?.type !== 'table';
+    });
+    const opportunities = oppAudits
+      .sort((a, b) => {
+        const savA = a.details?.overallSavingsMs || a.details?.overallSavingsBytes || 0;
+        const savB = b.details?.overallSavingsMs || b.details?.overallSavingsBytes || 0;
+        if (savA !== savB) return savB - savA;
+        return (a.score || 1) - (b.score || 1); // lower score = higher priority
+      })
+      .slice(0, 5)
+      .map(a => ({
+        title: a.title,
+        savings: a.details?.overallSavingsMs
+          ? Math.round(a.details.overallSavingsMs) + 'ms'
+          : a.details?.overallSavingsBytes
+            ? Math.round(a.details.overallSavingsBytes / 1024) + 'KB'
+            : null,
+        score: a.score !== null ? Math.round((a.score || 0) * 100) : null,
+      }));
+
+    return { ok: true, metrics, opportunities, attempts: attempt + 1 };
   }
-  if (!res.ok) return { ok: false, error: `PageSpeed API ${res.status}` };
-  let data;
-  try { data = await res.json(); } catch { return { ok: false, error: 'Invalid JSON from PageSpeed' }; }
 
-  const cats = data.lighthouseResult?.categories || {};
-  const audits = data.lighthouseResult?.audits || {};
-  const score = (cat) => (cat?.score !== null && cat?.score !== undefined) ? Math.round(cat.score * 100) : null;
-
-  const metrics = {
-    performance: score(cats['performance']),
-    seo: score(cats['seo']),
-    accessibility: score(cats['accessibility']),
-    bestPractices: score(cats['best-practices']),
-    fcp: audits['first-contentful-paint']?.displayValue || null,
-    lcp: audits['largest-contentful-paint']?.displayValue || null,
-    cls: audits['cumulative-layout-shift']?.displayValue || null,
-    tbt: audits['total-blocking-time']?.displayValue || null,
-  };
-
-  const opportunities = Object.values(audits)
-    .filter(a => a.details?.type === 'opportunity' && (a.details?.overallSavingsMs || 0) > 0)
-    .sort((a, b) => (b.details?.overallSavingsMs || 0) - (a.details?.overallSavingsMs || 0))
-    .slice(0, 3)
-    .map(a => ({
-      title: a.title,
-      savings: a.details?.overallSavingsMs ? Math.round(a.details.overallSavingsMs) + 'ms' : null,
-    }));
-
-  return { ok: true, metrics, opportunities };
+  // All retries exhausted
+  return { ok: false, error: lastError || 'PageSpeed API unavailable after 3 attempts', skipped: false };
 }
 
 // ─── Check: SSL + HTTP redirect ───────────────────────────────────────────────
@@ -378,19 +423,26 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
 function buildSummary(url, metrics, issues) {
   const lines = [`WEBSITE AUDIT DATA FOR: ${url}`, ''];
 
-  const scoreLines = [];
-  if (metrics.performance != null) scoreLines.push(`Performance: ${metrics.performance}/100`);
-  if (metrics.seo != null) scoreLines.push(`SEO: ${metrics.seo}/100`);
-  if (metrics.accessibility != null) scoreLines.push(`Accessibility: ${metrics.accessibility}/100`);
-  if (metrics.bestPractices != null) scoreLines.push(`Best Practices: ${metrics.bestPractices}/100`);
-  if (scoreLines.length) { lines.push('PAGESPEED SCORES (mobile):'); lines.push(...scoreLines); lines.push(''); }
+  if (!metrics.pageSpeedOk && metrics.pageSpeedError) {
+    lines.push(`PAGESPEED: Unavailable (${metrics.pageSpeedError})`);
+    lines.push('');
+  } else {
+    const scoreLines = [];
+    if (metrics.performance != null) scoreLines.push(`Performance: ${metrics.performance}/100`);
+    if (metrics.seo != null) scoreLines.push(`SEO: ${metrics.seo}/100`);
+    if (metrics.accessibility != null) scoreLines.push(`Accessibility: ${metrics.accessibility}/100`);
+    if (metrics.bestPractices != null) scoreLines.push(`Best Practices: ${metrics.bestPractices}/100`);
+    if (scoreLines.length) { lines.push('PAGESPEED SCORES (mobile):'); lines.push(...scoreLines); lines.push(''); }
 
-  const vitalLines = [];
-  if (metrics.fcp) vitalLines.push(`FCP: ${metrics.fcp}`);
-  if (metrics.lcp) vitalLines.push(`LCP: ${metrics.lcp}`);
-  if (metrics.cls) vitalLines.push(`CLS: ${metrics.cls}`);
-  if (metrics.tbt) vitalLines.push(`TBT: ${metrics.tbt}`);
-  if (vitalLines.length) { lines.push('CORE WEB VITALS:'); lines.push(...vitalLines); lines.push(''); }
+    const vitalLines = [];
+    if (metrics.fcp) vitalLines.push(`First Contentful Paint (FCP): ${metrics.fcp}`);
+    if (metrics.lcp) vitalLines.push(`Largest Contentful Paint (LCP): ${metrics.lcp}`);
+    if (metrics.cls) vitalLines.push(`Cumulative Layout Shift (CLS): ${metrics.cls}`);
+    if (metrics.tbt) vitalLines.push(`Total Blocking Time (TBT): ${metrics.tbt}`);
+    if (metrics.speedIndex) vitalLines.push(`Speed Index: ${metrics.speedIndex}`);
+    if (metrics.tti) vitalLines.push(`Time to Interactive (TTI): ${metrics.tti}`);
+    if (vitalLines.length) { lines.push('CORE WEB VITALS:'); lines.push(...vitalLines); lines.push(''); }
+  }
 
   const techLines = [];
   if (metrics.responseMs != null) techLines.push(`Server response time: ${metrics.responseMs}ms`);
@@ -488,7 +540,7 @@ export async function auditWebsite(inputUrl) {
     xContentType: httpData?.headers?.xContentType,
     xFrame: httpData?.headers?.xFrame,
     server: httpData?.headers?.server,
-    // PageSpeed
+    // PageSpeed — always present; null means unavailable, not zero
     performance: pageSpeed?.ok ? pageSpeed.metrics.performance : null,
     seo: pageSpeed?.ok ? pageSpeed.metrics.seo : null,
     accessibility: pageSpeed?.ok ? pageSpeed.metrics.accessibility : null,
@@ -497,7 +549,12 @@ export async function auditWebsite(inputUrl) {
     lcp: pageSpeed?.ok ? pageSpeed.metrics.lcp : null,
     cls: pageSpeed?.ok ? pageSpeed.metrics.cls : null,
     tbt: pageSpeed?.ok ? pageSpeed.metrics.tbt : null,
+    speedIndex: pageSpeed?.ok ? pageSpeed.metrics.speedIndex : null,
+    tti: pageSpeed?.ok ? pageSpeed.metrics.tti : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
+    pageSpeedOk: pageSpeed?.ok || false,
+    pageSpeedError: !pageSpeed?.ok ? (pageSpeed?.error || 'PageSpeed data unavailable') : null,
+    pageSpeedAttempts: pageSpeed?.attempts || 0,
   };
 
   const issues = generateIssues(httpData, pageSpeed, ssl, robots);
