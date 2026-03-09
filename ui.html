@@ -558,6 +558,13 @@ select.fi{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
               </div>
               <!-- Results table -->
               <div class="card" style="padding:0;overflow:hidden">
+                <!-- Pagination bar -->
+                <div id="bulk-pag" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bdr);flex-wrap:wrap">
+                  <button class="btn bs bsm" id="bulk-pag-prev" onclick="bulkGoPage(bulkPage-1)" disabled>&#8592; Prev</button>
+                  <span id="bulk-pag-info" style="font-size:12px;color:var(--muted);flex:1;text-align:center"></span>
+                  <button class="btn bs bsm" id="bulk-pag-next" onclick="bulkGoPage(bulkPage+1)" disabled>Next &#8594;</button>
+                  <button class="btn bsm" id="bulk-follow-btn" onclick="toggleBulkFollow()" title="Auto-follow the active row" style="margin-left:8px;background:var(--pr);color:#fff;border:none">&#128204; Following</button>
+                </div>
                 <div style="overflow-x:auto">
                   <table class="rt" id="bulk-tbl">
                     <thead><tr>
@@ -1362,6 +1369,65 @@ let bulkResults = [];
 let bulkRunning = false;
 let bulkShouldStop = false;
 
+// Pagination state
+const BULK_PAGE_SIZE = 50;
+let bulkPage = 0;        // 0-indexed current page
+let bulkFollowing = true; // auto-follow the active row
+let bulkActiveIdx = -1;  // index of the row currently being processed
+
+function bulkTotalPages() { return Math.max(1, Math.ceil(bulkResults.length / BULK_PAGE_SIZE)); }
+function bulkPageForIdx(idx) { return Math.floor(idx / BULK_PAGE_SIZE); }
+
+function bulkGoPage(p) {
+  const total = bulkTotalPages();
+  p = Math.max(0, Math.min(p, total - 1));
+  if (p === bulkPage && document.getElementById('bulk-tbody').children.length > 0) return;
+  bulkPage = p;
+  // Detach follow when user manually navigates
+  const activePageForCurrent = bulkActiveIdx >= 0 ? bulkPageForIdx(bulkActiveIdx) : -1;
+  if (bulkFollowing && p !== activePageForCurrent && bulkRunning) {
+    bulkFollowing = false;
+    updateBulkFollowBtn();
+  }
+  renderBulkPage();
+}
+
+function toggleBulkFollow() {
+  bulkFollowing = !bulkFollowing;
+  updateBulkFollowBtn();
+  if (bulkFollowing && bulkActiveIdx >= 0) {
+    bulkPage = bulkPageForIdx(bulkActiveIdx);
+    renderBulkPage();
+  }
+}
+
+function updateBulkFollowBtn() {
+  const btn = document.getElementById('bulk-follow-btn');
+  if (!btn) return;
+  if (bulkFollowing) {
+    btn.textContent = '\u{1F4CC} Following';
+    btn.style.background = 'var(--pr)';
+    btn.style.color = '#fff';
+  } else {
+    btn.textContent = '\u{1F441} Browse mode';
+    btn.style.background = 'var(--bg2)';
+    btn.style.color = 'var(--tx)';
+  }
+}
+
+function renderBulkPage() {
+  const start = bulkPage * BULK_PAGE_SIZE;
+  const end = Math.min(start + BULK_PAGE_SIZE, bulkResults.length);
+  const pageRows = bulkResults.slice(start, end);
+  document.getElementById('bulk-tbody').innerHTML = pageRows.map(r => bulkRowHtml(r)).join('');
+  // Update pagination controls
+  const total = bulkTotalPages();
+  document.getElementById('bulk-pag-info').textContent =
+    `Page ${bulkPage + 1} of ${total}  ·  rows ${start + 1}–${end} of ${bulkResults.length}`;
+  document.getElementById('bulk-pag-prev').disabled = bulkPage === 0;
+  document.getElementById('bulk-pag-next').disabled = bulkPage >= total - 1;
+}
+
 function onBulkFile(e) {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
@@ -1429,12 +1495,16 @@ async function startBulkAudit() {
   bulkResults = rows.map((r, i) => ({ idx: i, company: compCol ? r[compCol] : '', url: r[urlCol], status: 'pending', data: null, error: null }));
   bulkRunning = true;
   bulkShouldStop = false;
+  bulkPage = 0;
+  bulkFollowing = true;
+  bulkActiveIdx = -1;
+  updateBulkFollowBtn();
 
   document.getElementById('bulk-results-area').classList.remove('hide');
   document.getElementById('btn-bulk-run').textContent = 'Stop';
   document.getElementById('btn-bulk-run').onclick = stopBulkAudit;
   document.getElementById('bulk-export-btn').classList.add('hide');
-  renderBulkTable();
+  renderBulkPage();
 
   let done = 0;
   const total = bulkResults.length;
@@ -1446,7 +1516,21 @@ async function startBulkAudit() {
       if (bulkShouldStop) break;
       const row = bulkResults[idx++];
       row.status = 'running';
-      renderBulkRow(row);
+      bulkActiveIdx = row.idx;
+
+      // Auto-follow: jump to the page containing the active row
+      if (bulkFollowing) {
+        const targetPage = bulkPageForIdx(row.idx);
+        if (targetPage !== bulkPage) {
+          bulkPage = targetPage;
+          renderBulkPage();
+        } else {
+          renderBulkRowInPage(row);
+        }
+      } else {
+        renderBulkRowInPage(row);
+      }
+
       try {
         const data = await api('POST', '/api/audit-website', { url: row.url });
         row.status = 'done'; row.data = data;
@@ -1459,7 +1543,19 @@ async function startBulkAudit() {
       document.getElementById('bulk-prog-txt').textContent = `${done} / ${total} audited`;
       document.getElementById('bulk-prog-ct').textContent = `✓ ${bulkResults.filter(r=>r.status==='done').length}  ✗ ${bulkResults.filter(r=>r.status==='error').length}`;
       document.getElementById('bulk-prog-cur').textContent = `Running ${Math.min(BULK_CONCURRENCY, total - done)} in parallel...`;
-      renderBulkRow(row);
+
+      // Update the row in the current page view if it's visible
+      if (bulkFollowing) {
+        const targetPage = bulkPageForIdx(row.idx);
+        if (targetPage !== bulkPage) {
+          bulkPage = targetPage;
+          renderBulkPage();
+        } else {
+          renderBulkRowInPage(row);
+        }
+      } else {
+        renderBulkRowInPage(row);
+      }
     }
   }
 
@@ -1482,8 +1578,9 @@ function stopBulkAudit() {
 }
 
 function resetBulkAudit() {
-  if (bulkRunning) { alert('Stop the audit first'); return; }
+  if (bulkRunning) { toast('Stop the audit first', 'err'); return; }
   bulkResults = []; bulkCsvRows = []; bulkCsvHdrs = [];
+  bulkPage = 0; bulkFollowing = true; bulkActiveIdx = -1;
   document.getElementById('bulk-upload-area').classList.remove('hide');
   document.getElementById('bulk-map-area').classList.add('hide');
   document.getElementById('bulk-results-area').classList.add('hide');
@@ -1494,18 +1591,30 @@ function resetBulkAudit() {
   document.getElementById('btn-bulk-run').disabled = false;
 }
 
-function renderBulkTable() {
-  document.getElementById('bulk-tbody').innerHTML = bulkResults.map(r => bulkRowHtml(r)).join('');
+// Render only the current page's rows into the tbody
+function renderBulkPage() {
+  const start = bulkPage * BULK_PAGE_SIZE;
+  const end = Math.min(start + BULK_PAGE_SIZE, bulkResults.length);
+  const pageRows = bulkResults.slice(start, end);
+  document.getElementById('bulk-tbody').innerHTML = pageRows.map(r => bulkRowHtml(r)).join('');
+  // Update pagination controls
+  const total = bulkTotalPages();
+  document.getElementById('bulk-pag-info').textContent =
+    `Page ${bulkPage + 1} of ${total}  \u00b7  rows ${start + 1}\u2013${end} of ${bulkResults.length}`;
+  document.getElementById('bulk-pag-prev').disabled = bulkPage === 0;
+  document.getElementById('bulk-pag-next').disabled = bulkPage >= total - 1;
 }
 
-function renderBulkRow(row) {
+// Update a single row in-place only if it's on the current page
+function renderBulkRowInPage(row) {
+  const start = bulkPage * BULK_PAGE_SIZE;
+  const end = start + BULK_PAGE_SIZE;
+  if (row.idx < start || row.idx >= end) return; // not on current page
   const tbody = document.getElementById('bulk-tbody');
-  let tr = tbody.querySelector(`[data-bidx="${row.idx}"]`);
-  if (!tr) { tr = document.createElement('tr'); tr.dataset.bidx = row.idx; tbody.appendChild(tr); }
-  tr.outerHTML = bulkRowHtml(row);
-  // re-select since outerHTML replaces the node
-  const updated = tbody.querySelector(`[data-bidx="${row.idx}"]`);
-  if (updated) updated.outerHTML = bulkRowHtml(row);
+  const existing = tbody.querySelector(`[data-bidx="${row.idx}"]`);
+  if (existing) {
+    existing.outerHTML = bulkRowHtml(row);
+  }
 }
 
 function bulkRowHtml(row) {
@@ -1539,7 +1648,7 @@ function bulkRowHtml(row) {
 }
 
 function showBulkDetail(idx) {
-  const row = bulkResults[idx]; if (!row?.data) return;
+  const row = bulkResults.find(r => r.idx === idx); if (!row?.data) return;
   const tmp = document.createElement('div');
   renderAudit(row.data, tmp);
   document.getElementById('det-title').textContent = row.company || row.url;
