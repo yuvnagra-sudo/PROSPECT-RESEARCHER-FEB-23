@@ -593,6 +593,14 @@ export async function auditWebsite(inputUrl) {
   const topIssues = issues.slice(0, 3);
   const summary = buildSummary(url, metrics, issues);
 
+  // Expose desktop PageSpeed scores at top level for CSV export
+  const desktopScores = pageSpeed?.ok && pageSpeed.desktop ? {
+    performance: pageSpeed.desktop.performance,
+    seo: pageSpeed.desktop.seo,
+    accessibility: pageSpeed.desktop.accessibility,
+    bestPractices: pageSpeed.desktop.bestPractices,
+  } : null;
+
   return {
     url: inputUrl,
     finalUrl,
@@ -600,6 +608,7 @@ export async function auditWebsite(inputUrl) {
     issues,
     topIssues,
     metrics,
+    desktop: desktopScores,
     summary,
     errors,
   };

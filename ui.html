@@ -1550,36 +1550,84 @@ function showBulkDetail(idx) {
 function exportBulkCSV() {
   const rows = bulkResults.filter(r => r.status === 'done' || r.status === 'error');
   if (!rows.length) { toast('No results to export yet', 'err'); return; }
-  const headers = ['Company','URL','Status',
-    'Mobile Performance','Mobile SEO','Mobile Accessibility','Mobile Best Practices',
-    'Desktop Performance','Desktop SEO','Desktop Accessibility','Desktop Best Practices',
-    'Issues Total','Critical','High','Medium','Low',
-    'Response Ms','HTTPS Works','HTTP Redirects','Title','Meta Desc Length','H1 Count',
-    'Analytics','Sitemap','Top Issue Category','Top Issue'];
-  const esc2 = v => '"' + String(v??'').replace(/"/g,'""').replace(/[\r\n]+/g,' ') + '"';
+
+  // Find the max number of issues across all rows so we can create enough issue columns
+  const maxIssues = Math.max(0, ...rows.map(r => (r.data?.issues || []).length));
+
+  // Build dynamic issue column headers (up to maxIssues)
+  const issueHeaders = [];
+  for (let i = 1; i <= maxIssues; i++) {
+    issueHeaders.push(`Issue ${i} Severity`, `Issue ${i} Category`, `Issue ${i} Title`, `Issue ${i} Description`);
+  }
+
+  const headers = [
+    'Company', 'URL', 'Status',
+    // PageSpeed scores
+    'Mobile Performance', 'Mobile SEO', 'Mobile Accessibility', 'Mobile Best Practices',
+    'Desktop Performance', 'Desktop SEO', 'Desktop Accessibility', 'Desktop Best Practices',
+    // Core Web Vitals
+    'FCP (Mobile)', 'LCP (Mobile)', 'CLS (Mobile)', 'TBT (Mobile)', 'Speed Index (Mobile)', 'TTI (Mobile)',
+    // Issue counts
+    'Issues Total', 'Critical', 'High', 'Medium', 'Low',
+    // Technical
+    'Response Ms', 'HTTPS Works', 'HTTP Redirects',
+    'Title', 'Title Length', 'Meta Desc Length',
+    'H1 Count', 'Has Viewport', 'Has Canonical', 'Has JSON-LD',
+    'Has Analytics', 'Has Sitemap', 'Has Favicon',
+    'Page HTML Size (KB)', 'Mixed Content Count',
+    'HSTS Header', 'X-Frame-Options', 'X-Content-Type-Options',
+    // All issues in full detail
+    ...issueHeaders
+  ];
+
+  const esc2 = v => '"' + String(v ?? '').replace(/"/g, '""').replace(/[\r\n]+/g, ' ') + '"';
+
   const csvRows = rows.map(r => {
     const m = r.data?.metrics || {};
     const d = r.data?.desktop || {};
     const issues = r.data?.issues || [];
-    const sev = (s) => issues.filter(i=>i.severity===s).length;
-    const top = issues[0];
+    const sev = (s) => issues.filter(i => i.severity === s).length;
+
+    // Build issue columns — pad to maxIssues with empty strings
+    const issueCols = [];
+    for (let i = 0; i < maxIssues; i++) {
+      const issue = issues[i];
+      issueCols.push(
+        issue?.severity ?? '',
+        issue?.category ?? '',
+        issue?.title ?? '',
+        issue?.detail ?? ''
+      );
+    }
+
     return [
       r.company, r.url, r.status,
-      m.performance??'', m.seo??'', m.accessibility??'', m.bestPractices??'',
-      d.performance??'', d.seo??'', d.accessibility??'', d.bestPractices??'',
+      // Mobile PageSpeed
+      m.performance ?? '', m.seo ?? '', m.accessibility ?? '', m.bestPractices ?? '',
+      // Desktop PageSpeed
+      d.performance ?? '', d.seo ?? '', d.accessibility ?? '', d.bestPractices ?? '',
+      // Core Web Vitals (mobile)
+      m.fcp ?? '', m.lcp ?? '', m.cls ?? '', m.tbt ?? '', m.speedIndex ?? '', m.tti ?? '',
+      // Issue counts
       issues.length, sev('critical'), sev('high'), sev('medium'), sev('low'),
-      m.responseMs??'', m.httpsWorks??'', m.httpRedirects??'',
-      m.title??'', m.metaDescLength??'', m.h1Count??'',
-      m.hasAnalytics??'', m.hasSitemap??'',
-      top?.category??'', top?.title??''
+      // Technical
+      m.responseMs ?? '', m.httpsWorks ?? '', m.httpRedirects ?? '',
+      m.title ?? '', m.titleLength ?? '', m.metaDescLength ?? '',
+      m.h1Count ?? '', m.viewport ?? '', m.hasCanonical ?? '', m.hasJsonLD ?? '',
+      m.hasAnalytics ?? '', m.hasSitemap ?? '', m.hasFavicon ?? '',
+      m.docSizeKB ?? '', m.mixedContentCount ?? '',
+      m.hsts ? 'Yes' : 'No', m.xFrame ? 'Yes' : 'No', m.xContentType ? 'Yes' : 'No',
+      // All issues
+      ...issueCols
     ].map(esc2).join(',');
   });
-  const blob = new Blob(['\uFEFF' + [headers.map(h=>'"'+h+'"').join(','), ...csvRows].join('\r\n')], { type: 'text/csv;charset=utf-8' });
+
+  const blob = new Blob(['\uFEFF' + [headers.map(h => '"' + h + '"').join(','), ...csvRows].join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `website_audit_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
-  toast(`Exported ${rows.length} audit results`, 'ok');
+  toast(`Exported ${rows.length} audit results (${maxIssues} issue columns)`, 'ok');
 }
 
 // ── Website Audit (single) ────────────────────────────────────────────────────
