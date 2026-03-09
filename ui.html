@@ -518,7 +518,7 @@ function toast(msg,type='info',duration=3500){
 }
 
 let token=localStorage.getItem('pr_token')||'',currentUser=null,isSignup=true;
-let providers={},templates={},selProv='gemini',selTmpl='b2b-outreach';
+let providers={},templates={},selProv='gemini3flash',selTmpl='b2b-outreach';
 let csvText='',rowCount=0,jobId=null,es=null,results=[],runCost=0,runStart=0;
 let colMap={},csvHeaders=[],useWeb=true,customPrompt='',promptDirty=false,jobRunning=false;
 let sampleRows=[];
@@ -677,9 +677,18 @@ async function boot(){document.getElementById('authScreen').style.display='none'
 // ─── Selects ───
 function buildSelects(){
   const ts=document.getElementById('tmplSel');ts.innerHTML=Object.entries(templates).map(([id,t])=>'<option value="'+id+'"'+(id===selTmpl?' selected':'')+' title="'+esc(t.desc||t.name)+'">'+t.icon+' '+esc(t.name)+'</option>').join('');
-  const ps=document.getElementById('provSel');ps.innerHTML=Object.entries(providers).map(([id,p])=>'<option value="'+id+'"'+(id===selProv?' selected':'')+(p.hasKey?'':' disabled')+'>'+p.name+(p.hasKey?' ($'+p.inputCost+'/M in)':' (no key)')+'</option>').join('');
+  const ps=document.getElementById('provSel');ps.innerHTML=Object.entries(providers).map(([id,p])=>'<option value="'+id+'"'+(id===selProv?' selected':'')+(p.hasKey?'':' disabled')+'>'+(p.isDefault?'★ ':'')+p.name+(p.hasKey?' ($'+p.inputCost+'/M in)':' (no key)')+'</option>').join('');
   autoSel();}
-function autoSel(){if(providers[selProv]?.hasKey)return;const f=Object.entries(providers).find(([,v])=>v.hasKey);if(f){selProv=f[0];document.getElementById('provSel').value=selProv;}}
+function autoSel(){
+  // If current selection has a key, keep it
+  if(providers[selProv]?.hasKey)return;
+  // Prefer the default provider (Gemini 3 Flash) if it has a key
+  const def=Object.entries(providers).find(([,v])=>v.isDefault&&v.hasKey);
+  if(def){selProv=def[0];document.getElementById('provSel').value=selProv;return;}
+  // Otherwise pick the first available provider with a key
+  const f=Object.entries(providers).find(([,v])=>v.hasKey);
+  if(f){selProv=f[0];document.getElementById('provSel').value=selProv;}
+}
 function pickTmpl(id){
   if(promptDirty&&!confirm('You have unsaved prompt changes. Switch template and lose edits?'))return;
   selTmpl=id;

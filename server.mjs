@@ -75,6 +75,11 @@ function isAdmin(uid){const u=db.prepare('SELECT is_admin FROM users WHERE id=?'
 
 // ─── Providers ───
 const PROVDEFS={
+  // Gemini 3 Flash — primary recommended provider
+  // Model ID: gemini-3-flash-preview | Context: 1M in / 64k out | Pricing: $0.50/$3.00 per 1M tokens
+  // Supports: structured JSON output + Google Search grounding simultaneously (Gemini 3 feature)
+  gemini3flash:{name:'Gemini 3 Flash',model:'gemini-3-flash-preview',inputCost:0.50,outputCost:3.00,format:'gemini-native',webSearch:true,webCostPerCall:0.035,envName:'GEMINI_API_KEY',isDefault:true},
+  // Gemini 2.5 Flash — fallback / cheaper option
   gemini:{name:'Gemini 2.5 Flash',model:'gemini-2.5-flash',inputCost:0.15,outputCost:0.60,format:'gemini-native',webSearch:true,webCostPerCall:0.035,envName:'GEMINI_API_KEY'},
   claude:{name:'Claude Sonnet 4',model:'claude-sonnet-4-20250514',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:3,outputCost:15,format:'anthropic',webSearch:true,webCostPerCall:0.015,cacheReadCost:0.30,cacheWriteCost:3.75,envName:'ANTHROPIC_API_KEY'},
   haiku:{name:'Claude Haiku 4.5',model:'claude-haiku-4-5-20251001',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:1,outputCost:5,format:'anthropic',webSearch:true,webCostPerCall:0.005,cacheReadCost:0.10,cacheWriteCost:1.25,envName:'ANTHROPIC_API_KEY'},
@@ -82,7 +87,7 @@ const PROVDEFS={
   openai:{name:'GPT-4o Mini',model:'gpt-4o-mini',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.15,outputCost:0.60,format:'openai',webSearch:false,webCostPerCall:0,envName:'OPENAI_API_KEY'},
   deepseek:{name:'DeepSeek V3',model:'deepseek-chat',apiUrl:'https://api.deepseek.com/v1/chat/completions',inputCost:0.56,outputCost:1.68,format:'openai',webSearch:false,webCostPerCall:0,envName:'DEEPSEEK_API_KEY'},
 };
-function provSt(uid){const a={};const uk=S.getUserKeys.all(uid).map(r=>r.key_name);for(const[id,p]of Object.entries(PROVDEFS))a[id]={name:p.name,hasKey:uk.includes(p.envName),inputCost:p.inputCost,outputCost:p.outputCost,webSearch:p.webSearch,webCostPerCall:p.webCostPerCall||0};return a;}
+function provSt(uid){const a={};const uk=S.getUserKeys.all(uid).map(r=>r.key_name);for(const[id,p]of Object.entries(PROVDEFS))a[id]={name:p.name,hasKey:uk.includes(p.envName),inputCost:p.inputCost,outputCost:p.outputCost,webSearch:p.webSearch,webCostPerCall:p.webCostPerCall||0,isDefault:!!p.isDefault};return a;}
 
 // ─── Templates ───
 const TEMPLATES={
@@ -288,27 +293,64 @@ function rlHit(p,retryMs){const r=gRL(p);r.okRun=0;r.hits++;r.delay=retryMs&&ret
 function rlOk(p){const r=gRL(p);r.okRun++;if(r.okRun>=5&&r.delay>r.min){r.delay=Math.max(r.delay*0.8,r.min);r.okRun=0;}}
 
 // ─── LLM Callers ───
+
+// Detect if a model is Gemini 3 series (supports structured output + web search simultaneously)
+function isGemini3(model){return model&&(model.startsWith('gemini-3')||model.startsWith('gemini-3.'));}
+
 async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${prov.model}:generateContent?key=${apiKey}`;
+  const gemini3=isGemini3(prov.model);
+
   const body={
     systemInstruction:{parts:[{text:sys}]},
     contents:[{parts:[{text:prompt}]}],
     generationConfig:{
-      maxOutputTokens:16000,        // raised — 4000 was too low when thinking tokens consume budget
-      thinkingConfig:{thinkingBudget:0}  // disable thinking: faster + no hidden token consumption
+      maxOutputTokens:32000,  // Gemini 3 Flash supports up to 64k output; 32k is safe headroom
     }
   };
-  // Native JSON mode when NOT using web search and sections are defined
-  // Gemini 2.5 Flash cannot combine responseMimeType with google_search tools
-  if(!web&&sections&&sections.length>=2){
-    const props={};sections.forEach(s=>{props[s.key]={type:'STRING',description:s.label};});
-    body.generationConfig.responseMimeType='application/json';
-    body.generationConfig.responseSchema={type:'OBJECT',properties:props,required:sections.map(s=>s.key)};
+
+  // Gemini 3 Flash: use thinking_level=low for research tasks (faster, still high quality)
+  // Gemini 2.5: use thinkingBudget=0 to disable thinking (no thinking support in 2.5 Flash)
+  if(gemini3){
+    body.generationConfig.thinkingConfig={thinkingLevel:'low'};
+  } else {
+    body.generationConfig.thinkingConfig={thinkingBudget:0};
   }
-  if(web)body.tools=[{google_search:{}}];
-  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
+
+  // Structured JSON output:
+  // Gemini 3: CAN combine responseMimeType + responseSchema WITH google_search tools (new in Gemini 3)
+  // Gemini 2.5: CANNOT combine responseMimeType with google_search (mutually exclusive)
+  if(sections&&sections.length>=2){
+    const props={};sections.forEach(s=>{
+      props[s.key]={type:'STRING',description:getSectionHint(s.key)||s.label};
+    });
+    if(gemini3||!web){
+      // Gemini 3: always use native JSON schema (works with and without web search)
+      // Gemini 2.5: only use when web search is off
+      body.generationConfig.responseMimeType='application/json';
+      body.generationConfig.responseSchema={
+        type:'OBJECT',
+        properties:props,
+        required:sections.map(s=>s.key),
+        propertyOrdering:sections.map(s=>s.key)  // preserve column order
+      };
+    }
+  }
+
+  // Google Search grounding
+  if(web){
+    if(gemini3){
+      // Gemini 3: use google_search tool (compatible with structured output)
+      body.tools=[{google_search:{}}];
+    } else {
+      // Gemini 2.5: use google_search_retrieval (older API)
+      body.tools=[{google_search:{}}];
+    }
+  }
+
+  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),90000);  // 90s for Gemini 3 (thinking adds latency)
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
-  let res;try{res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
+  let res;try{res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 90s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
   if(res.status===429){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}
     if(m.includes('quota')||m.includes('limit: 0')||m.includes('RESOURCE_EXHAUSTED'))throw{type:'api_error',message:'Gemini quota exhausted'};
     const rm=m.match(/retry in ([\d.]+)s/i);throw{type:'rate_limit',wait:rm?Math.ceil(parseFloat(rm[1]))*1000:30000};}
@@ -320,15 +362,16 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const parts=candidate?.content?.parts||[];
   const u=data.usageMetadata||{};
 
-  // Collect ALL text parts (ignore executableCode, toolUse, etc.) and join before stripping citations.
-  // Never select a single "clean" part — the first citation-free chunk is usually just the
-  // pages-checked header, which would silently discard the entire rest of the response.
-  const allTexts=parts.filter(p=>typeof p.text==='string'&&p.text.trim()).map(p=>p.text);
+  // Collect ALL text parts (ignore thought parts, executableCode, toolUse, etc.)
+  // Filter out thought parts (Gemini 3 includes thinking as a separate part with thought:true)
+  const allTexts=parts
+    .filter(p=>typeof p.text==='string'&&p.text.trim()&&!p.thought)
+    .map(p=>p.text);
   const research=allTexts.join('\n').replace(/\s*\[cite:\s*[\d,\s]+\]/g,'').trim();
 
   // If Gemini stopped because it hit the token limit, treat as retriable error
   if(finishReason==='MAX_TOKENS'){
-    throw{type:'api_error',message:`Gemini hit MAX_TOKENS limit (output was ${u.candidatesTokenCount} tokens) — retrying with fresh request.`};
+    throw{type:'api_error',message:`Gemini hit MAX_TOKENS limit (output was ${u.candidatesTokenCount} tokens) — retrying.`};
   }
 
   // Empty response with no output tokens — retry
