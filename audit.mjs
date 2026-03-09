@@ -147,89 +147,116 @@ async function checkHTTP(url) {
   };
 }
 
-// ─── Check: PageSpeed Insights (free, no key) ────────────────────────────────
-async function checkPageSpeed(url) {
-  const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&category=performance&category=seo&category=accessibility&category=best-practices${PAGESPEED_API_KEY ? '&key=' + PAGESPEED_API_KEY : ''}`;
+// ─── Check: PageSpeed Insights — mobile + desktop in parallel ────────────────
+// With an API key: 400 req/100s quota — safe to run 5 concurrent audits
+// Without a key:  25 req/100s quota — use concurrency=2 max
+const PAGESPEED_BACKOFF_MS = 15000; // pause on 429 before retrying
 
-  // Retry up to 3 times with increasing timeouts (55s, 65s, 75s)
-  // PageSpeed API is slow for heavy sites and occasionally returns 500/503
+async function fetchPageSpeedStrategy(url, strategy) {
+  const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance&category=seo&category=accessibility&category=best-practices${PAGESPEED_API_KEY ? '&key=' + PAGESPEED_API_KEY : ''}`;
   const TIMEOUTS = [55000, 65000, 75000];
   let lastError = '';
   for (let attempt = 0; attempt < TIMEOUTS.length; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt)); // backoff: 3s, 6s
+    if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
     let res;
     try {
       res = await fetch(psUrl, { signal: AbortSignal.timeout(TIMEOUTS[attempt]) });
     } catch (e) {
       lastError = e.name === 'TimeoutError' ? `Timed out after ${TIMEOUTS[attempt]/1000}s` : e.message;
-      continue; // retry
+      continue;
     }
-    // 429 = quota exceeded (no point retrying), 5xx = transient (retry)
-    if (res.status === 429) return { ok: false, error: 'PageSpeed API quota exceeded', skipped: true };
+    if (res.status === 429) {
+      // Rate limited — back off and retry once
+      if (attempt < TIMEOUTS.length - 1) {
+        await new Promise(r => setTimeout(r, PAGESPEED_BACKOFF_MS));
+        continue;
+      }
+      return { ok: false, error: 'PageSpeed API rate limited (429)', skipped: true };
+    }
     if (!res.ok) { lastError = `PageSpeed API HTTP ${res.status}`; continue; }
-
     let data;
     try { data = await res.json(); } catch { lastError = 'Invalid JSON from PageSpeed API'; continue; }
-
-    // Validate the response has actual lighthouse data
     const lhr = data.lighthouseResult;
     if (!lhr) { lastError = 'PageSpeed response missing lighthouseResult'; continue; }
+    return { ok: true, lhr, attempts: attempt + 1 };
+  }
+  return { ok: false, error: lastError || `PageSpeed ${strategy} unavailable after 3 attempts`, skipped: false };
+}
 
-    const cats = lhr.categories || {};
-    const audits = lhr.audits || {};
-    const score = (cat) => (cat?.score !== null && cat?.score !== undefined) ? Math.round(cat.score * 100) : null;
+function parseLHR(lhr) {
+  const cats = lhr.categories || {};
+  const audits = lhr.audits || {};
+  const score = (cat) => (cat?.score !== null && cat?.score !== undefined) ? Math.round(cat.score * 100) : null;
+  const parseDisplayVal = (v) => (v && typeof v === 'string') ? v.trim() : null;
+  const oppAudits = Object.values(audits).filter(a => {
+    if (!a.title) return false;
+    const isOpportunity = a.details?.type === 'opportunity';
+    const hasScore = a.score !== null && a.score !== undefined && a.score < 1;
+    const notInfo = a.scoreDisplayMode !== 'informative' && a.scoreDisplayMode !== 'notApplicable';
+    return (isOpportunity || (hasScore && notInfo)) && a.details?.type !== 'table';
+  });
+  const opportunities = oppAudits
+    .sort((a, b) => {
+      const savA = a.details?.overallSavingsMs || a.details?.overallSavingsBytes || 0;
+      const savB = b.details?.overallSavingsMs || b.details?.overallSavingsBytes || 0;
+      if (savA !== savB) return savB - savA;
+      return (a.score || 1) - (b.score || 1);
+    })
+    .slice(0, 5)
+    .map(a => ({
+      title: a.title,
+      savings: a.details?.overallSavingsMs
+        ? Math.round(a.details.overallSavingsMs) + 'ms'
+        : a.details?.overallSavingsBytes
+          ? Math.round(a.details.overallSavingsBytes / 1024) + 'KB'
+          : null,
+      score: a.score !== null ? Math.round((a.score || 0) * 100) : null,
+    }));
+  return {
+    performance: score(cats['performance']),
+    seo: score(cats['seo']),
+    accessibility: score(cats['accessibility']),
+    bestPractices: score(cats['best-practices']),
+    fcp: parseDisplayVal(audits['first-contentful-paint']?.displayValue),
+    lcp: parseDisplayVal(audits['largest-contentful-paint']?.displayValue),
+    cls: parseDisplayVal(audits['cumulative-layout-shift']?.displayValue),
+    tbt: parseDisplayVal(audits['total-blocking-time']?.displayValue),
+    speedIndex: parseDisplayVal(audits['speed-index']?.displayValue),
+    tti: parseDisplayVal(audits['interactive']?.displayValue),
+    opportunities,
+  };
+}
 
-    // Parse display values — strip units for storage, keep full string for display
-    const parseDisplayVal = (v) => {
-      if (!v || typeof v !== 'string') return null;
-      return v.trim(); // e.g. "3.2 s", "0.12", "1,200 ms"
-    };
+async function checkPageSpeed(url) {
+  // Fire mobile + desktop simultaneously — both finish in the same time window
+  // With API key: 400 req/100s, so 2 calls per audit is completely safe even at 5 concurrency
+  const [mobileRes, desktopRes] = await Promise.all([
+    fetchPageSpeedStrategy(url, 'mobile'),
+    fetchPageSpeedStrategy(url, 'desktop'),
+  ]);
 
-    const metrics = {
-      performance: score(cats['performance']),
-      seo: score(cats['seo']),
-      accessibility: score(cats['accessibility']),
-      bestPractices: score(cats['best-practices']),
-      fcp: parseDisplayVal(audits['first-contentful-paint']?.displayValue),
-      lcp: parseDisplayVal(audits['largest-contentful-paint']?.displayValue),
-      cls: parseDisplayVal(audits['cumulative-layout-shift']?.displayValue),
-      tbt: parseDisplayVal(audits['total-blocking-time']?.displayValue),
-      speedIndex: parseDisplayVal(audits['speed-index']?.displayValue),
-      tti: parseDisplayVal(audits['interactive']?.displayValue),
-    };
+  const mobileOk = mobileRes.ok;
+  const desktopOk = desktopRes.ok;
 
-    // Opportunities: try overallSavingsMs first (v5 older), fall back to numericValue on the audit itself
-    // Also include failed audits with score < 1 that are not informational
-    const oppAudits = Object.values(audits).filter(a => {
-      if (!a.title) return false;
-      const isOpportunity = a.details?.type === 'opportunity';
-      const hasScore = a.score !== null && a.score !== undefined && a.score < 1;
-      const notInfo = a.scoreDisplayMode !== 'informative' && a.scoreDisplayMode !== 'notApplicable';
-      return (isOpportunity || (hasScore && notInfo)) && a.details?.type !== 'table';
-    });
-    const opportunities = oppAudits
-      .sort((a, b) => {
-        const savA = a.details?.overallSavingsMs || a.details?.overallSavingsBytes || 0;
-        const savB = b.details?.overallSavingsMs || b.details?.overallSavingsBytes || 0;
-        if (savA !== savB) return savB - savA;
-        return (a.score || 1) - (b.score || 1); // lower score = higher priority
-      })
-      .slice(0, 5)
-      .map(a => ({
-        title: a.title,
-        savings: a.details?.overallSavingsMs
-          ? Math.round(a.details.overallSavingsMs) + 'ms'
-          : a.details?.overallSavingsBytes
-            ? Math.round(a.details.overallSavingsBytes / 1024) + 'KB'
-            : null,
-        score: a.score !== null ? Math.round((a.score || 0) * 100) : null,
-      }));
-
-    return { ok: true, metrics, opportunities, attempts: attempt + 1 };
+  if (!mobileOk && !desktopOk) {
+    return { ok: false, error: mobileRes.error || desktopRes.error, skipped: mobileRes.skipped || desktopRes.skipped };
   }
 
-  // All retries exhausted
-  return { ok: false, error: lastError || 'PageSpeed API unavailable after 3 attempts', skipped: false };
+  const mobile = mobileOk ? parseLHR(mobileRes.lhr) : null;
+  const desktop = desktopOk ? parseLHR(desktopRes.lhr) : null;
+
+  // Primary metrics from mobile (Google's ranking signal), desktop as bonus
+  const metrics = mobile || desktop;
+  const attempts = Math.max(mobileRes.attempts || 1, desktopRes.attempts || 1);
+
+  return {
+    ok: true,
+    metrics,
+    mobile,
+    desktop,
+    opportunities: metrics?.opportunities || [],
+    attempts,
+  };
 }
 
 // ─── Check: SSL + HTTP redirect ───────────────────────────────────────────────

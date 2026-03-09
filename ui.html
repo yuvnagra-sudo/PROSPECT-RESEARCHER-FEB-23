@@ -562,7 +562,9 @@ select.fi{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
                   <table class="rt" id="bulk-tbl">
                     <thead><tr>
                       <th>#</th><th>Company</th><th>URL</th><th>Status</th>
-                      <th>Perf</th><th>SEO</th><th>Accessibility</th>
+                      <th title="Mobile PageSpeed Performance">Mob Perf</th>
+                      <th title="Desktop PageSpeed Performance">Dsk Perf</th>
+                      <th>SEO</th><th>Access.</th>
                       <th>Issues</th><th>Critical</th><th>Response</th><th>HTTPS</th><th></th>
                     </tr></thead>
                     <tbody id="bulk-tbody"></tbody>
@@ -1411,13 +1413,18 @@ function parseBulkCSV(raw) {
   document.getElementById('bulk-map-area').classList.remove('hide');
 }
 
+// Concurrency pool: run N audits simultaneously
+// With API key: 5 concurrent is safe (400 req/100s quota, 2 PS calls per audit = 10 calls/audit-wave)
+// Without API key: reduce to 2 to stay under 25 req/100s
+const BULK_CONCURRENCY = 5;
+
 async function startBulkAudit() {
   const urlCol = document.getElementById('bulk-col-url').value;
   const compCol = document.getElementById('bulk-col-company').value;
-  if (!urlCol) { alert('Select the URL column'); return; }
+  if (!urlCol) { toast('Select the URL column', 'err'); return; }
 
   const rows = bulkCsvRows.filter(r => (r[urlCol]||'').trim());
-  if (!rows.length) { alert('No valid URLs found in that column'); return; }
+  if (!rows.length) { toast('No valid URLs found in that column', 'err'); return; }
 
   bulkResults = rows.map((r, i) => ({ idx: i, company: compCol ? r[compCol] : '', url: r[urlCol], status: 'pending', data: null, error: null }));
   bulkRunning = true;
@@ -1430,30 +1437,42 @@ async function startBulkAudit() {
   renderBulkTable();
 
   let done = 0;
-  for (const row of bulkResults) {
-    if (bulkShouldStop) break;
-    row.status = 'running';
-    renderBulkRow(row);
-    document.getElementById('bulk-prog-cur').textContent = `Auditing: ${row.company || row.url}`;
-    try {
-      const data = await api('POST', '/api/audit-website', { url: row.url });
-      row.status = 'done'; row.data = data;
-    } catch(e) {
-      row.status = 'error'; row.error = e.message;
+  const total = bulkResults.length;
+
+  // Concurrency pool: process up to BULK_CONCURRENCY rows simultaneously
+  let idx = 0;
+  async function runWorker() {
+    while (idx < bulkResults.length) {
+      if (bulkShouldStop) break;
+      const row = bulkResults[idx++];
+      row.status = 'running';
+      renderBulkRow(row);
+      try {
+        const data = await api('POST', '/api/audit-website', { url: row.url });
+        row.status = 'done'; row.data = data;
+      } catch(e) {
+        row.status = 'error'; row.error = e.message;
+      }
+      done++;
+      const pct = Math.round(done / total * 100);
+      document.getElementById('bulk-prog-bar').style.width = pct + '%';
+      document.getElementById('bulk-prog-txt').textContent = `${done} / ${total} audited`;
+      document.getElementById('bulk-prog-ct').textContent = `✓ ${bulkResults.filter(r=>r.status==='done').length}  ✗ ${bulkResults.filter(r=>r.status==='error').length}`;
+      document.getElementById('bulk-prog-cur').textContent = `Running ${Math.min(BULK_CONCURRENCY, total - done)} in parallel...`;
+      renderBulkRow(row);
     }
-    done++;
-    const pct = Math.round(done / bulkResults.length * 100);
-    document.getElementById('bulk-prog-bar').style.width = pct + '%';
-    document.getElementById('bulk-prog-txt').textContent = `${done} / ${bulkResults.length} audited`;
-    document.getElementById('bulk-prog-ct').textContent = `✓ ${bulkResults.filter(r=>r.status==='done').length}  ✗ ${bulkResults.filter(r=>r.status==='error').length}`;
-    renderBulkRow(row);
   }
+
+  // Launch N workers simultaneously
+  const workers = Array.from({ length: Math.min(BULK_CONCURRENCY, total) }, runWorker);
+  await Promise.all(workers);
 
   bulkRunning = false;
   document.getElementById('bulk-prog-cur').textContent = bulkShouldStop ? 'Stopped.' : 'All done.';
   document.getElementById('btn-bulk-run').textContent = 'Start Bulk Audit';
   document.getElementById('btn-bulk-run').onclick = startBulkAudit;
   document.getElementById('bulk-export-btn').classList.remove('hide');
+  toast(bulkShouldStop ? `Stopped at ${done}/${total}` : `Bulk audit complete — ${bulkResults.filter(r=>r.status==='done').length} done, ${bulkResults.filter(r=>r.status==='error').length} errors`, bulkShouldStop ? 'info' : 'ok', 6000);
 }
 
 function stopBulkAudit() {
@@ -1491,6 +1510,7 @@ function renderBulkRow(row) {
 
 function bulkRowHtml(row) {
   const m = row.data?.metrics || {};
+  const d = row.data?.desktop || {}; // desktop PageSpeed scores
   const issues = row.data?.issues || [];
   const crit = issues.filter(i=>i.severity==='critical').length;
   const sc = v => v !== null && v !== undefined ? `<span style="font-weight:700;color:${v>=90?'var(--ok)':v>=50?'var(--warn)':'var(--err)'}">${v}</span>` : '<span style="color:var(--muted)">—</span>';
@@ -1504,11 +1524,12 @@ function bulkRowHtml(row) {
   return `<tr data-bidx="${row.idx}">
     <td style="color:var(--muted)">${row.idx+1}</td>
     <td class="co">${x(row.company || '—')}</td>
-    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">${x(row.url)}</td>
+    <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">${x(row.url)}</td>
     <td>${statusBadge}</td>
-    <td>${sc(m.performance)}</td>
-    <td>${sc(m.seo)}</td>
-    <td>${sc(m.accessibility)}</td>
+    <td title="Mobile performance">${sc(m.performance)}</td>
+    <td title="Desktop performance">${sc(d.performance)}</td>
+    <td title="SEO score">${sc(m.seo)}</td>
+    <td title="Accessibility">${sc(m.accessibility)}</td>
     <td>${row.status==='done'?issues.length:''}</td>
     <td>${row.status==='done'&&crit?`<span style="color:var(--err);font-weight:700">${crit}</span>`:(row.status==='done'?'0':'')}</td>
     <td style="font-size:11px;color:var(--muted)">${m.responseMs?m.responseMs+'ms':''}</td>
@@ -1528,21 +1549,28 @@ function showBulkDetail(idx) {
 
 function exportBulkCSV() {
   const rows = bulkResults.filter(r => r.status === 'done' || r.status === 'error');
-  if (!rows.length) { alert('No results to export yet'); return; }
-  const headers = ['Company','URL','Status','Performance','SEO','Accessibility','Best Practices','Issues Total','Critical','High','Medium','Low','Response Ms','HTTPS Works','HTTP Redirects','Title','Meta Desc Length','H1 Count','Analytics','Sitemap','Platform','Top Issue Category','Top Issue'];
+  if (!rows.length) { toast('No results to export yet', 'err'); return; }
+  const headers = ['Company','URL','Status',
+    'Mobile Performance','Mobile SEO','Mobile Accessibility','Mobile Best Practices',
+    'Desktop Performance','Desktop SEO','Desktop Accessibility','Desktop Best Practices',
+    'Issues Total','Critical','High','Medium','Low',
+    'Response Ms','HTTPS Works','HTTP Redirects','Title','Meta Desc Length','H1 Count',
+    'Analytics','Sitemap','Top Issue Category','Top Issue'];
   const esc2 = v => '"' + String(v??'').replace(/"/g,'""').replace(/[\r\n]+/g,' ') + '"';
   const csvRows = rows.map(r => {
     const m = r.data?.metrics || {};
+    const d = r.data?.desktop || {};
     const issues = r.data?.issues || [];
     const sev = (s) => issues.filter(i=>i.severity===s).length;
     const top = issues[0];
     return [
       r.company, r.url, r.status,
       m.performance??'', m.seo??'', m.accessibility??'', m.bestPractices??'',
+      d.performance??'', d.seo??'', d.accessibility??'', d.bestPractices??'',
       issues.length, sev('critical'), sev('high'), sev('medium'), sev('low'),
       m.responseMs??'', m.httpsWorks??'', m.httpRedirects??'',
       m.title??'', m.metaDescLength??'', m.h1Count??'',
-      m.hasAnalytics??'', m.hasSitemap??'', m.platform??'',
+      m.hasAnalytics??'', m.hasSitemap??'',
       top?.category??'', top?.title??''
     ].map(esc2).join(',');
   });
@@ -1551,6 +1579,7 @@ function exportBulkCSV() {
   a.href = URL.createObjectURL(blob);
   a.download = `website_audit_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
+  toast(`Exported ${rows.length} audit results`, 'ok');
 }
 
 // ── Website Audit (single) ────────────────────────────────────────────────────
@@ -1618,13 +1647,24 @@ function renderAudit(data, container) {
         </div>
       </div>
 
-      <!-- PageSpeed Scores -->
+      <!-- PageSpeed Scores: mobile + desktop -->
       ${m.performance !== undefined || m.seo !== undefined ? `
-      <div class="score-grid">
-        ${scoreBox(m.performance, 'Performance')}
-        ${scoreBox(m.seo, 'SEO')}
-        ${scoreBox(m.accessibility, 'Accessibility')}
-        ${scoreBox(m.bestPractices, 'Best Practices')}
+      <div style="margin-bottom:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Mobile PageSpeed</div>
+        <div class="score-grid">
+          ${scoreBox(m.performance, 'Performance')}
+          ${scoreBox(m.seo, 'SEO')}
+          ${scoreBox(m.accessibility, 'Accessibility')}
+          ${scoreBox(m.bestPractices, 'Best Practices')}
+        </div>
+        ${data.desktop ? `
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 6px">Desktop PageSpeed</div>
+        <div class="score-grid">
+          ${scoreBox(data.desktop.performance, 'Performance')}
+          ${scoreBox(data.desktop.seo, 'SEO')}
+          ${scoreBox(data.desktop.accessibility, 'Accessibility')}
+          ${scoreBox(data.desktop.bestPractices, 'Best Practices')}
+        </div>` : ''}
       </div>` : ''}
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
