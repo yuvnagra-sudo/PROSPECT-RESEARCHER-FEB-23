@@ -1312,29 +1312,70 @@ Return ONLY valid JSON (no markdown, no code fences):
   if(req.method==='POST'&&p==='/api/audit-website'){const b=await readB(req);try{
     const{url}=JSON.parse(b);
     if(!url||typeof url!=='string'||!url.trim())return json(res,{error:'url required'},400);
-    const psKey=userKey(uid,'PAGESPEED_API_KEY');
-    const result=await auditWebsite(url.trim(),psKey||undefined);
-    // Save to jobs table so it appears in Jobs history
+    // Create job record immediately so result survives browser close
     const jobName='Audit: '+(url.trim().replace(/^https?:\/\//,'').split('/')[0]).slice(0,60);
     const jr=S.iJ.run(uid,jobName,'pagespeed','website-audit',url.trim(),0,'{}',1,null);
     const jid=Number(jr.lastInsertRowid);
     S.iR.run(jid,0,url.trim(),'Website audit');
-    S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,0);
-    S.uJ.run(1,0,'complete',0,0,0,0,0,(result.elapsedMs||0)/1000,jid);
-    json(res,{...result,jobId:jid});
+    S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
+    // Respond immediately — audit runs in background
+    json(res,{jobId:jid,status:'running'});
+    const psKey=userKey(uid,'PAGESPEED_API_KEY');
+    auditWebsite(url.trim(),psKey||undefined).then(result=>{
+      S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,0);
+      S.uJ.run(1,0,'complete',0,0,0,0,0,(result.elapsedMs||0)/1000,jid);
+    }).catch(err=>{
+      S.uR.run('error',null,err.message||'Audit failed',0,0,0,0,jid,0);
+      S.uJ.run(0,1,'error',0,0,0,0,0,0,jid);
+    });
   }catch(e){json(res,{error:e.message||'Audit failed'},500);}return;}
 
   if(req.method==='GET'&&p.match(/^\/api\/audit-row\/\d+$/)){
     const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||job.user_id!==uid||job.provider!=='pagespeed')return json(res,{error:'Not found'},404);
+    if(job.status==='running')return json(res,{status:'running'});
+    if(job.status==='error')return json(res,{status:'error',error:'Audit failed'},500);
     const row=db.prepare('SELECT research FROM rows WHERE job_id=? AND idx=0').get(jid);
-    if(!row?.research)return json(res,{error:'No audit data'},404);
-    try{json(res,JSON.parse(row.research));}catch{json(res,{error:'Invalid audit data'},500);}
+    if(!row?.research)return json(res,{status:'error',error:'No audit data'},404);
+    try{json(res,{status:'complete',...JSON.parse(row.research)});}catch{json(res,{error:'Invalid audit data'},500);}
     return;}
 
   if(req.method==='GET'&&p==='/api/jobs'){json(res,S.lJ.all(uid).map(j=>({...j,templateName:TEMPLATES[j.template_id]?.name||'Custom',templateIcon:TEMPLATES[j.template_id]?.icon||'\u270F\uFE0F',providerName:j.provider==='pagespeed'?'Website Audit':(PROVDEFS[j.provider]?.name||j.provider),isAudit:j.provider==='pagespeed'})));return;}
 
   if(req.method==='DELETE'&&p.match(/^\/api\/jobs\/\d+$/)){const jid=parseInt(p.split('/').pop());S.dR.run(jid);S.dJ.run(jid,uid);json(res,{ok:true});return;}
+
+  // ── Bulk Audit (one job for all URLs) ──────────────────────────────────────
+  if(req.method==='POST'&&p==='/api/bulk-audit'){const b=await readB(req);try{
+    const{urls,jobName}=JSON.parse(b);
+    if(!Array.isArray(urls)||!urls.length)return json(res,{error:'urls array required'},400);
+    const name=jobName||(urls.length+' sites bulk audit');
+    const jr=S.iJ.run(uid,name,'pagespeed','website-audit','',0,'{}',urls.length,null);
+    const jid=Number(jr.lastInsertRowid);
+    S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
+    for(let i=0;i<urls.length;i++){const u=urls[i];S.iR.run(jid,i,u.url||String(u),u.company||u.url||String(u));}
+    json(res,{jobId:jid,status:'running'});
+    const psKey=userKey(uid,'PAGESPEED_API_KEY');const CONC=psKey?5:2;
+    (async()=>{
+      let ok=0,fail=0,idx=0;
+      const worker=async()=>{
+        while(idx<urls.length){
+          const i=idx++;const u=urls[i];const url=u.url||String(u);
+          try{const result=await auditWebsite(url,psKey||undefined);S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,i);ok++;}
+          catch(e){S.uR.run('error',null,e.message||'Audit failed',0,0,0,0,jid,i);fail++;}
+          S.uJ.run(ok,fail,'running',0,0,0,0,0,0,jid);
+        }
+      };
+      await Promise.all(Array.from({length:Math.min(CONC,urls.length)},worker));
+      S.uJ.run(ok,fail,fail===urls.length?'error':'complete',0,0,0,0,0,0,jid);
+    })().catch(e=>console.error('bulk audit error',e.message));
+  }catch(e){json(res,{error:e.message||'Bulk audit failed'},500);}return;}
+
+  if(req.method==='GET'&&p.match(/^\/api\/bulk-audit-rows\/\d+$/)){
+    const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
+    if(!job||job.user_id!==uid||job.provider!=='pagespeed')return json(res,{error:'Not found'},404);
+    const rows=db.prepare('SELECT idx,company,status,research,error FROM rows WHERE job_id=? ORDER BY idx').all(jid);
+    json(res,{job:{id:job.id,name:job.name,status:job.status,succeeded:job.succeeded,failed:job.failed,total_rows:job.total_rows},rows:rows.map(r=>({idx:r.idx,company:r.company,status:r.status,data:r.research?JSON.parse(r.research):null,error:r.error}))});
+    return;}
 
   res.writeHead(404);res.end('Not found');
   }catch(topErr){

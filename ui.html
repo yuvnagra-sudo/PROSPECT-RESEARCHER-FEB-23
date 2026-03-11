@@ -1,2146 +1,1292 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
+<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Prospect Researcher</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#1e293b;background:#f1f5f9}
-button{cursor:pointer;font-family:inherit;font-size:inherit}
-input,textarea,select{font-family:inherit;font-size:inherit}
-:root{
-  --primary:#6366f1;--primary-d:#4f46e5;--primary-l:#e0e7ff;
-  --ok:#10b981;--ok-l:#d1fae5;
-  --warn:#f59e0b;--warn-l:#fef3c7;
-  --err:#ef4444;--err-l:#fee2e2;
-  --sidebar:#0f172a;--side-t:#94a3b8;
-  --surface:#fff;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;
-  --r:8px;--rl:12px;
-  --sh:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
-  --shm:0 4px 6px rgba(0,0,0,.07),0 2px 4px rgba(0,0,0,.04);
-  --shl:0 10px 15px rgba(0,0,0,.1),0 4px 6px rgba(0,0,0,.05);
-}
-/* Layout */
-#auth{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;background:linear-gradient(135deg,#667eea,#764ba2)}
-#app{display:none;height:100vh;overflow:hidden}
-#app.on{display:flex;flex-direction:column}
-.layout{display:flex;flex:1;overflow:hidden}
-/* Sidebar */
-.sb{width:214px;background:var(--sidebar);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
-.sb-logo{padding:18px 16px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,.06)}
-.sb-logo-t{color:#fff;font-weight:700;font-size:13px;line-height:1.2}
-.sb-logo-s{color:var(--side-t);font-size:11px}
-.sb-nav{padding:8px;flex:1}
-.ni{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:6px;color:var(--side-t);cursor:pointer;transition:all .15s;font-size:13px;font-weight:500;border:none;background:none;width:100%;text-align:left}
-.ni:hover{background:rgba(255,255,255,.06);color:#fff}
-.ni.on{background:rgba(99,102,241,.2);color:#a5b4fc}
-.ni svg{width:15px;height:15px;flex-shrink:0;opacity:.7}
-.ni.on svg{opacity:1}
-.sb-foot{padding:10px 8px;border-top:1px solid rgba(255,255,255,.06)}
-.u-info{display:flex;align-items:center;gap:10px;padding:8px 12px}
-.u-av{width:30px;height:30px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:12px;flex-shrink:0}
-.u-nm{color:#fff;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.u-em{color:var(--side-t);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.b-out{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;color:var(--side-t);cursor:pointer;font-size:12px;border:none;background:none;width:100%;margin-top:2px}
-.b-out:hover{background:rgba(239,68,68,.15);color:#f87171}
-/* Content */
-.content{flex:1;overflow-y:auto;display:flex;flex-direction:column}
-.page{display:none;flex:1;flex-direction:column}
-.page.on{display:flex}
-.ph{padding:22px 26px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-shrink:0}
-.pt{font-size:21px;font-weight:700;color:var(--text)}
-.ps{color:var(--muted);font-size:13px;margin-top:2px}
-.pb{padding:18px 26px 26px;flex:1;overflow-y:auto}
-/* Auth */
-.ac{background:#fff;border-radius:var(--rl);padding:38px;width:100%;max-width:410px;box-shadow:var(--shl)}
-.a-ico{width:46px;height:46px;background:var(--primary);border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
-.a-title{font-size:21px;font-weight:700;text-align:center}
-.a-sub{color:var(--muted);font-size:13px;text-align:center;margin-top:3px;margin-bottom:22px}
-.a-tabs{display:flex;background:#f1f5f9;border-radius:8px;padding:3px;margin-bottom:20px}
-.a-tab{flex:1;padding:7px;text-align:center;border-radius:6px;font-weight:500;font-size:13px;cursor:pointer;color:var(--muted);border:none;background:none}
-.a-tab.on{background:#fff;color:var(--primary);box-shadow:var(--sh)}
-/* Forms */
-.fg{margin-bottom:14px}
-.fl{display:block;font-size:13px;font-weight:500;color:var(--text);margin-bottom:5px}
-.fi{width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:var(--r);font-size:13px;color:var(--text);outline:none;background:#fff;transition:border .15s}
-.fi:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(99,102,241,.1)}
-.fi::placeholder{color:#cbd5e1}
-textarea.fi{resize:vertical;min-height:90px}
-.fh{color:var(--muted);font-size:12px;margin-top:3px}
-select.fi{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
-/* Buttons */
-.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--r);font-size:13px;font-weight:500;border:1px solid transparent;cursor:pointer;transition:all .15s;white-space:nowrap}
-.btn:disabled{opacity:.5;cursor:default}
-.bp{background:var(--primary);color:#fff;border-color:var(--primary)}
-.bp:not(:disabled):hover{background:var(--primary-d)}
-.bs{background:#fff;color:var(--text);border-color:var(--border)}
-.bs:not(:disabled):hover{background:#f8fafc}
-.bd{background:#fff;color:var(--err);border-color:#fecaca}
-.bd:not(:disabled):hover{background:var(--err-l)}
-.bg{background:transparent;color:var(--muted);border-color:transparent;padding:5px 9px}
-.bg:not(:disabled):hover{background:#f1f5f9;color:var(--text)}
-.bsm{padding:5px 9px;font-size:12px}
-.bfull{width:100%;justify-content:center}
-/* Cards */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px;box-shadow:var(--sh)}
-.ct{font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px}
-/* Templates */
-.tg{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
-.tc{background:var(--surface);border:2px solid var(--border);border-radius:var(--rl);padding:16px;cursor:pointer;transition:all .15s}
-.tc:hover{border-color:#c7d2fe;box-shadow:var(--shm)}
-.tc.on{border-color:var(--primary);background:#fafaff}
-.t-icon{font-size:26px;margin-bottom:8px}
-.t-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px}
-.t-desc{font-size:11px;color:var(--muted);line-height:1.4}
-/* Upload */
-.uz{border:2px dashed var(--border);border-radius:var(--rl);padding:36px 20px;text-align:center;cursor:pointer;transition:all .15s;background:#fafafa}
-.uz:hover,.uz.over{border-color:var(--primary);background:var(--primary-l)}
-.uz-title{font-size:14px;font-weight:500;margin-bottom:3px}
-.uz-sub{font-size:12px;color:var(--muted)}
-/* Col mapping */
-.cm-row{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)}
-.cm-row:last-child{border-bottom:none}
-.cm-lbl{font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:.04em}
-/* Progress */
-.pb-wrap{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden}
-.pb-bar{height:100%;background:linear-gradient(90deg,var(--primary),#818cf8);border-radius:3px;transition:width .3s}
-/* Results table */
-.rt{width:100%;border-collapse:collapse;font-size:12px}
-.rt th{padding:9px 11px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border);background:#f8fafc;white-space:nowrap;position:sticky;top:0;z-index:1}
-.rt td{padding:9px 11px;border-bottom:1px solid var(--border);vertical-align:top}
-.rt tr:hover td{background:#fafafa}
-.rt .co{font-weight:600;color:var(--text);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
-.rt .rc{max-width:260px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;color:var(--muted);line-height:1.4;font-size:11px}
-/* Badges */
-.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:500;white-space:nowrap}
-.b-pend{background:#f1f5f9;color:#64748b}
-.b-run{background:#dbeafe;color:#1d4ed8}
-.b-succ{background:var(--ok-l);color:#059669}
-.b-err{background:var(--err-l);color:#dc2626}
-.b-comp{background:var(--ok-l);color:#059669}
-.b-paus{background:var(--warn-l);color:#d97706}
-.b-canc{background:#f1f5f9;color:#64748b}
-/* Stats */
-.srow{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
-.sc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px}
-.sv{font-size:20px;font-weight:700;color:var(--text)}
-.sl{font-size:11px;color:var(--muted);margin-top:2px;font-weight:500}
-/* Modal */
-.mo{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
-.mo.hide{display:none}
-.md{background:#fff;border-radius:var(--rl);width:100%;max-width:660px;max-height:90vh;display:flex;flex-direction:column;box-shadow:var(--shl)}
-.md-h{padding:18px 22px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
-.md-t{font-size:15px;font-weight:600}
-.md-x{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;border-radius:4px;display:flex}
-.md-x:hover{background:#f1f5f9}
-.md-b{padding:18px 22px;overflow-y:auto;flex:1}
-.md-f{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-shrink:0}
-/* Sections */
-.sec-item{background:#f8fafc;border-radius:var(--r);padding:12px 14px;border:1px solid var(--border);margin-bottom:10px}
-.sec-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
-.sec-val{font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap}
-/* Log */
-.log{background:#0f172a;border-radius:var(--r);padding:10px 12px;font-family:monospace;font-size:11px;max-height:130px;overflow-y:auto;color:#94a3b8}
-.log-l{padding:1px 0;line-height:1.4}
-.log-l.warn{color:#fbbf24}.log-l.info{color:#60a5fa}.log-l.error{color:#f87171}
-/* Stepper */
-.stepper{display:flex;align-items:center;margin-bottom:26px}
-.step{display:flex;align-items:center;gap:7px}
-.sn{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0}
-.sn.done{background:var(--ok);color:#fff}
-.sn.act{background:var(--primary);color:#fff}
-.sn.pend{background:#e2e8f0;color:var(--muted)}
-.slbl{font-size:12px;font-weight:500;color:var(--muted)}
-.slbl.act{color:var(--primary)}.slbl.done{color:var(--ok)}
-.sdiv{flex:1;height:2px;background:#e2e8f0}
-.sdiv.done{background:var(--ok)}
-/* Toggle */
-.tgl{width:34px;height:19px;background:#e2e8f0;border-radius:10px;position:relative;border:none;cursor:pointer;flex-shrink:0}
-.tgl::after{content:'';width:15px;height:15px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
-.tgl.on{background:var(--primary)}.tgl.on::after{transform:translateX(15px)}
-/* Provider cards */
-.pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
-.pc{border:2px solid var(--border);border-radius:var(--r);padding:12px;cursor:pointer;transition:all .15s;background:#fff}
-.pc:hover{border-color:#c7d2fe}.pc.on{border-color:var(--primary);background:#fafaff}
-.pc.nk{opacity:.5;cursor:default}
-.pn{font-size:13px;font-weight:600;margin-bottom:2px}
-.pr{font-size:11px;color:var(--muted)}
-.pk{font-size:10px;padding:1px 6px;border-radius:10px;display:inline-block;margin-top:3px}
-.pk.ok{background:var(--ok-l);color:#059669}.pk.no{background:var(--err-l);color:#dc2626}
-/* Table */
-.tbl{width:100%;border-collapse:collapse;font-size:13px}
-.tbl th{padding:8px 11px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);background:#f8fafc}
-.tbl td{padding:9px 11px;border-bottom:1px solid var(--border)}
-.tbl tr:hover td{background:#fafafa}
-/* Alert */
-.alert{padding:10px 14px;border-radius:var(--r);font-size:13px;margin-bottom:12px}
-.ae{background:var(--err-l);color:#991b1b;border:1px solid #fecaca}
-.ai{background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe}
-.aw{background:var(--warn-l);color:#92400e;border:1px solid #fde68a}
-/* Spinner */
-.spin{width:16px;height:16px;border:2px solid rgba(99,102,241,.2);border-top-color:var(--primary);border-radius:50%;animation:sp .6s linear infinite;flex-shrink:0}
-.spin-lg{width:30px;height:30px;border-width:3px}
-@keyframes sp{to{transform:rotate(360deg)}}
-.lc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:48px;color:var(--muted)}
-/* Utils */
-.divider{height:1px;background:var(--border);margin:16px 0}
-.flex{display:flex;align-items:center;gap:10px}
-.fb{display:flex;align-items:center;justify-content:space-between}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#0f172a;background:#f8fafc}
+button{cursor:pointer;font-family:inherit}input,textarea,select{font-family:inherit;font-size:inherit}
 .hide{display:none!important}
-.mono{font-family:monospace}
-.sm{font-size:12px}
-.mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}.mt20{margin-top:20px}
-.qbar{display:inline-block;height:4px;background:var(--border);border-radius:2px;width:50px;vertical-align:middle;margin-left:5px;overflow:hidden}
-.qfill{height:100%;border-radius:2px}
-.qfill.hi{background:var(--ok)}.qfill.md{background:var(--warn)}.qfill.lo{background:var(--err)}
-.empty{text-align:center;padding:44px 24px;color:var(--muted)}
-.empty-ico{font-size:36px;margin-bottom:10px}
-.empty-t{font-size:15px;font-weight:600;color:var(--text);margin-bottom:5px}
 
-/* ── Audit styles ── */
-.score-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-.score-box{background:#fff;border:1px solid var(--border);border-radius:var(--rl);padding:16px;text-align:center;box-shadow:var(--sh)}
-.score-num{font-size:32px;font-weight:800;line-height:1}
-.score-num.hi{color:var(--ok)}.score-num.md{color:var(--warn)}.score-num.lo{color:var(--err)}.score-num.na{color:var(--muted)}
-.score-lbl{font-size:11px;color:var(--muted);margin-top:5px;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
-.issue-list{display:flex;flex-direction:column;gap:8px}
-.issue-card{border-radius:var(--r);padding:12px 14px;border-left:4px solid;background:#fff;border:1px solid var(--border);border-left-width:4px}
-.issue-card.critical{border-left-color:#dc2626;background:#fff5f5}
-.issue-card.high{border-left-color:var(--err);background:#fff8f8}
-.issue-card.medium{border-left-color:var(--warn);background:#fffbf0}
-.issue-card.low{border-left-color:#60a5fa;background:#f8fbff}
-.issue-title{font-size:13px;font-weight:600;color:var(--text)}
-.issue-cat{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:3px}
-.issue-detail{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5}
-.sev-badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-right:6px}
-.sev-critical{background:#fee2e2;color:#dc2626}
-.sev-high{background:#ffedd5;color:#c2410c}
-.sev-medium{background:var(--warn-l);color:#b45309}
-.sev-low{background:#dbeafe;color:#1d4ed8}
-.metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.metric-row{display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:#f8fafc;border-radius:6px;font-size:12px}
-.metric-key{color:var(--muted);font-weight:500}
-.metric-val{font-weight:600;color:var(--text)}
-.metric-val.good{color:var(--ok)}.metric-val.bad{color:var(--err)}.metric-val.warn{color:var(--warn)}
+/* ── Auth ── */
+#auth{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:20px}
+.ac{background:#fff;border-radius:14px;padding:38px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.a-logo{text-align:center;margin-bottom:24px}
+.a-logo h1{font-size:20px;font-weight:700;margin-top:10px}
+.a-logo p{font-size:12px;color:#64748b;margin-top:3px}
+.a-tabs{display:flex;background:#f1f5f9;border-radius:8px;padding:3px;margin-bottom:18px;gap:3px}
+.a-tab{flex:1;padding:7px;border:none;background:none;border-radius:6px;font-size:13px;font-weight:500;color:#64748b;transition:all .15s}
+.a-tab.on{background:#fff;color:#0f172a;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.a-err{color:#ef4444;font-size:12px;margin-top:6px;min-height:18px}
+.fi-g{margin-bottom:14px}
+.fi-l{font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px}
+.fi{width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s}
+.fi:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}
+textarea.fi{resize:vertical;line-height:1.5}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:7px;font-size:13px;font-weight:500;border:none;cursor:pointer;transition:all .15s;white-space:nowrap}
+.bp{background:#6366f1;color:#fff}.bp:hover:not(:disabled){background:#4f46e5}
+.bp:disabled{background:#a5b4fc;cursor:not-allowed}
+.bs{background:#fff;color:#374151;border:1.5px solid #e2e8f0}.bs:hover{background:#f8fafc}
+.bd{background:#fef2f2;color:#dc2626;border:1.5px solid #fecaca}.bd:hover{background:#fee2e2}
+.bg{background:none;color:#64748b;border:none}.bg:hover{color:#0f172a;background:#f1f5f9}
+.sm{padding:5px 10px;font-size:12px}
+.btn-full{width:100%;justify-content:center;padding:10px}
 
-/* ── Column Preview styles ── */
-.col-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500;background:var(--primary-l);color:var(--primary-d);border:1px solid #c7d2fe;margin:3px}
-.col-prev-wrap{border:1px solid var(--border);border-radius:var(--r);padding:14px;background:#f8fafc;min-height:48px}
+/* ── App Layout ── */
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 
-/* ── Prompt builder styles ── */
-.builder-sec{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--r);background:#fff;margin-bottom:6px}
-.builder-sec-num{width:22px;height:22px;border-radius:50%;background:var(--primary-l);color:var(--primary-d);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.builder-sec-label{flex:1;font-size:13px;font-weight:500}
-.builder-sec-key{color:var(--muted);font-size:11px;font-family:monospace}
-.builder-sec-del{background:none;border:none;color:#cbd5e1;cursor:pointer;padding:2px;border-radius:3px;display:flex;flex-shrink:0}
-.builder-sec-del:hover{color:var(--err);background:var(--err-l)}
-/* Pagination */
-.pg-ctrl{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--border);background:#f8fafc;font-size:12px;color:var(--muted)}
-/* Provider recommended badge */
-.pc{position:relative}
-.p-rec{position:absolute;top:6px;right:6px;font-size:11px;color:var(--warn);font-weight:700}
-/* Toast */
-#toast-container{position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
-.toast{padding:10px 16px;border-radius:var(--r);font-size:13px;font-weight:500;color:#fff;box-shadow:var(--shl);pointer-events:auto;animation:toast-in .2s ease;max-width:340px}
-.toast.ok{background:#059669}.toast.err{background:#dc2626}.toast.info{background:#1d4ed8}
-@keyframes toast-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-/* Mobile */
-@media(max-width:640px){
-  .sb{width:180px}
-  .score-grid{grid-template-columns:repeat(2,1fr)}
-  .stepper{overflow-x:auto;padding-bottom:4px}
-}
+/* ── Top Nav ── */
+#topnav{height:52px;background:#fff;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;padding:0 16px;gap:8px;flex-shrink:0;z-index:50}
+.nav-brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;color:#0f172a;margin-right:8px;flex-shrink:0}
+.nav-brand span{color:#6366f1}
+.nav-tabs{display:flex;gap:2px;flex:1}
+.nt{background:none;border:none;cursor:pointer;padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;color:#64748b;transition:all .15s}
+.nt:hover{background:#f1f5f9;color:#0f172a}
+.nt.on{background:#eff6ff;color:#6366f1;font-weight:600}
+.nav-right{display:flex;align-items:center;gap:8px;flex-shrink:0;font-size:12px;color:#64748b}
+
+/* ── Main + Panes ── */
+#main{flex:1;overflow:hidden;position:relative}
+.pane{position:absolute;inset:0;overflow-y:auto;display:flex;flex-direction:column}
+.pane.hide{display:none!important}
+.pane-pad{padding:24px;max-width:900px}
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.ph h2{font-size:18px;font-weight:700}
+
+/* ── Upload Zone ── */
+#upload-zone{flex:1;display:flex;align-items:center;justify-content:center;padding:40px}
+#upload-zone.drag{background:#eff6ff}
+.uz-box{text-align:center;padding:60px 40px;border:2px dashed #cbd5e1;border-radius:16px;background:#fff;max-width:520px;width:100%;cursor:pointer;transition:all .2s}
+.uz-box:hover,.uz-box.drag{border-color:#6366f1;background:#fafafe}
+.uz-emoji{font-size:48px;margin-bottom:16px}
+.uz-box h2{font-size:20px;font-weight:700;margin-bottom:8px}
+.uz-box p{font-size:13px;color:#64748b;margin-bottom:24px;line-height:1.6}
+.uz-hint{font-size:11px;color:#94a3b8;margin-top:12px}
+
+/* ── Sheet View ── */
+#sheet-view{display:flex;flex-direction:column;flex:1;overflow:hidden}
+
+/* ── Sheet Toolbar ── */
+#sheet-toolbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0;flex-wrap:wrap}
+.tb-left{display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap}
+.tb-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.rc-badge{font-size:12px;font-weight:600;color:#64748b;background:#f1f5f9;border-radius:20px;padding:3px 10px;white-space:nowrap}
+#prov-sel{font-size:12px;padding:5px 8px;border:1.5px solid #e2e8f0;border-radius:6px;background:#fff;color:#0f172a;max-width:160px}
+.ws-label{display:flex;align-items:center;gap:5px;font-size:12px;color:#64748b;cursor:pointer;white-space:nowrap}
+.ws-label input{cursor:pointer}
+#cost-badge{font-size:11px;color:#64748b;background:#f1f5f9;border-radius:4px;padding:3px 8px;white-space:nowrap}
+.prog-wrap{display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b}
+.prog-bar{width:100px;height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden}
+.prog-fill{height:100%;background:#6366f1;transition:width .3s;border-radius:3px}
+#no-company-banner{background:#fefce8;border:1px solid #fde68a;border-radius:6px;padding:6px 12px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:8px}
+#no-company-banner select{padding:3px 6px;font-size:12px;border:1px solid #fde68a;border-radius:4px;background:#fff}
+
+/* ── Spreadsheet Table ── */
+#table-scroll{flex:1;overflow:auto}
+#main-tbl{border-collapse:collapse;min-width:100%;width:max-content}
+#main-tbl th,#main-tbl td{padding:7px 12px;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+#main-tbl th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;background:#f8fafc;position:sticky;top:0;z-index:3;border-bottom:2px solid #e2e8f0}
+.th-rn{width:40px;min-width:40px;text-align:right;color:#94a3b8!important;font-size:10px!important}
+.th-in{background:#f8fafc!important;min-width:110px}
+.th-en{background:#eff6ff!important;cursor:pointer;min-width:160px;max-width:260px;color:#3b82f6!important}
+.th-en:hover{background:#dbeafe!important}
+.th-en-inner{display:flex;align-items:center;gap:5px}
+.th-en-edit{font-size:10px;opacity:0;transition:opacity .1s}
+.th-en:hover .th-en-edit{opacity:1}
+.th-add{background:#f8fafc!important;width:48px;text-align:center;cursor:pointer;color:#94a3b8;font-size:18px;font-weight:300}
+.th-add:hover{color:#6366f1;background:#eff6ff!important}
+.td-rn{color:#94a3b8;font-size:11px;text-align:right;user-select:none;min-width:40px}
+.td-in{font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.td-en{font-size:12px;color:#0f172a;max-width:260px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.td-en:hover{background:#fafafe}
+.td-empty{color:#cbd5e1}
+.td-err-cell{color:#ef4444;font-size:11px}
+@keyframes spin-c{to{transform:rotate(360deg)}}
+.spin-cell{display:inline-block;width:11px;height:11px;border:2px solid #e2e8f0;border-top-color:#6366f1;border-radius:50%;animation:spin-c .6s linear infinite;vertical-align:middle}
+
+/* ── Column Drawer ── */
+#drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:200}
+#col-drawer{position:fixed;top:0;right:0;height:100vh;width:340px;background:#fff;border-left:1px solid #e2e8f0;z-index:201;display:flex;flex-direction:column;box-shadow:-6px 0 20px rgba(0,0,0,.08)}
+.drw-hd{padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between}
+.drw-hd span{font-size:14px;font-weight:600}
+.drw-bd{flex:1;padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.drw-ft{padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:8px}
+.drw-key{font-size:11px;color:#94a3b8;font-family:monospace;margin-top:3px}
+
+/* ── Jobs ── */
+.jobs-tbl{width:100%;border-collapse:collapse}
+.jobs-tbl th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;text-align:left;padding:8px 12px;border-bottom:2px solid #e2e8f0}
+.jobs-tbl td{padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;vertical-align:middle}
+.jobs-tbl tr:hover td{background:#f8fafc}
+.td-name{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.td-actions{display:flex;gap:6px;white-space:nowrap}
+
+/* ── Results Pane ── */
+#res-toolbar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+#res-toolbar .job-name{font-weight:600;font-size:14px;flex:1}
+#res-tbl-wrap{flex:1;overflow:auto}
+#res-tbl{border-collapse:collapse;min-width:100%;width:max-content}
+#res-tbl th,#res-tbl td{padding:7px 12px;border-bottom:1px solid #f1f5f9;white-space:nowrap;font-size:13px}
+#res-tbl th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;background:#f8fafc;position:sticky;top:0;z-index:2;border-bottom:2px solid #e2e8f0}
+.td-company{font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.td-research{max-width:220px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:#374151}
+.td-research:hover{background:#fafafe}
+
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.b-run,.b-running{background:#eff6ff;color:#3b82f6}
+.b-done,.b-complete{background:#f0fdf4;color:#16a34a}
+.b-err,.b-error{background:#fef2f2;color:#dc2626}
+.b-pend,.b-pending{background:#f1f5f9;color:#64748b}
+.b-canc,.b-cancelled{background:#fdf4ff;color:#9333ea}
+.b-paus,.b-paused{background:#fff7ed;color:#c2410c}
+.b-audit{background:#fefce8;color:#ca8a04}
+.b-succ{background:#f0fdf4;color:#16a34a}
+
+/* ── Audit ── */
+.audit-tabs{display:flex;gap:4px;border-bottom:2px solid #e2e8f0;margin-bottom:20px}
+.at{background:none;border:none;cursor:pointer;padding:8px 16px;font-size:13px;font-weight:500;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px}
+.at.on{color:#6366f1;border-bottom-color:#6366f1}
+.audit-url-row{display:flex;gap:8px;margin-bottom:16px}
+.audit-url-row .fi{flex:1}
+/* score grid */
+.score-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:16px}
+.score-box{text-align:center;padding:14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0}
+.score-num{font-size:26px;font-weight:700}.score-lbl{font-size:11px;color:#64748b;margin-top:4px}
+.hi{color:#16a34a}.md{color:#ca8a04}.lo{color:#dc2626}.na{color:#94a3b8}
+/* issue cards */
+.issue-list{display:flex;flex-direction:column;gap:6px}
+.issue-card{padding:10px 14px;border-radius:8px;border-left:3px solid;font-size:12px}
+.issue-card.critical{border-color:#dc2626;background:#fef2f2}
+.issue-card.high{border-color:#f97316;background:#fff7ed}
+.issue-card.medium{border-color:#eab308;background:#fefce8}
+.issue-card.low{border-color:#94a3b8;background:#f8fafc}
+.issue-cat{margin-bottom:2px}.issue-title{font-weight:600;color:#0f172a;margin-bottom:2px}.issue-detail{color:#64748b;line-height:1.4}
+.sev-badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;margin-right:3px}
+.sev-critical{background:#fecaca;color:#dc2626}.sev-high{background:#fed7aa;color:#c2410c}
+.sev-medium{background:#fef08a;color:#a16207}.sev-low{background:#e2e8f0;color:#475569}
+/* metrics */
+.metric-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px;border-bottom:1px solid #f8fafc}
+.metric-key{color:#64748b}.metric-val{font-weight:500}
+.metric-val.good{color:#16a34a}.metric-val.bad{color:#dc2626}.metric-val.warn{color:#ca8a04}
+/* card */
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:12px}
+.ct{font-size:13px;font-weight:700;color:#0f172a}.fb{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+/* ── Bulk audit ── */
+.bulk-uz{border:2px dashed #cbd5e1;border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:16px}
+.bulk-uz:hover{border-color:#6366f1;background:#fafafe}
+.bulk-prog{margin:12px 0}
+.bulk-prog-bar{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin:8px 0}
+.bulk-prog-fill{height:100%;background:#6366f1;transition:width .3s;border-radius:3px}
+.bulk-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.bulk-tbl th{font-size:11px;font-weight:600;text-transform:uppercase;color:#64748b;padding:6px 10px;border-bottom:2px solid #e2e8f0;text-align:left}
+.bulk-tbl td{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+
+/* ── Settings ── */
+.key-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:10px}
+.key-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.key-info h4{font-size:13px;font-weight:600}
+.key-info p{font-size:11px;color:#64748b;margin-top:2px}
+.key-input-row{display:flex;gap:8px;margin-top:12px}
+.key-input-row .fi{flex:1;font-family:monospace;font-size:12px}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:16px}
+.stat-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px}
+.stat-v{font-size:22px;font-weight:700}.stat-l{font-size:12px;color:#64748b;margin-top:3px}
+
+/* ── Modals ── */
+.modal-wrap{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
+.modal{background:#fff;border-radius:14px;width:100%;max-width:560px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.2)}
+.modal-lg{max-width:720px}
+.modal-hd{padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.modal-hd span{font-size:15px;font-weight:700}
+.modal-bd{padding:20px;overflow-y:auto;flex:1}
+.modal-ft{padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px;flex-shrink:0}
+.tmpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.tc{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:14px;cursor:pointer;transition:all .15s}
+.tc:hover{border-color:#6366f1;background:#eff6ff}
+.tc-icon{font-size:22px;margin-bottom:6px}.tc-name{font-size:13px;font-weight:600;margin-bottom:3px}.tc-desc{font-size:11px;color:#64748b;line-height:1.4}
+/* detail modal */
+.det-sec{margin-bottom:14px}
+.det-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:4px}
+.det-val{font-size:13px;color:#0f172a;line-height:1.6;white-space:pre-wrap}
+.quality-bar{height:4px;border-radius:2px;background:#e2e8f0;margin-top:4px;overflow:hidden}
+.quality-fill{height:100%;border-radius:2px;transition:width .3s}
+
+/* ── Admin ── */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;text-align:left;padding:8px 12px;border-bottom:2px solid #e2e8f0}
+.tbl td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.tbl tr:hover td{background:#f8fafc}
+
+/* ── Utilities ── */
+.lc{display:flex;align-items:center;justify-content:center;gap:10px;padding:40px;color:#64748b;font-size:13px}
+@keyframes rot{to{transform:rotate(360deg)}}
+.spin{width:18px;height:18px;border:2px solid #e2e8f0;border-top-color:#6366f1;border-radius:50%;animation:rot .7s linear infinite}
+.spin-lg{width:32px;height:32px;border-width:3px}
+.alert{padding:11px 14px;border-radius:8px;font-size:13px;margin-bottom:10px}
+.ao{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0}.ae{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}.aw{background:#fefce8;color:#92400e;border:1px solid #fde68a}
+.mt12{margin-top:12px}.mono{font-family:monospace}.flex{display:flex}
+.empty-state{text-align:center;padding:60px 20px;color:#94a3b8}
+.empty-state h3{font-size:16px;font-weight:600;color:#64748b;margin-bottom:6px}
+#toast-container{position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast{padding:10px 16px;border-radius:8px;font-size:13px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.15);min-width:200px;max-width:350px}
+.toast.ok{background:#16a34a}.toast.err{background:#dc2626}.toast.info{background:#6366f1}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.toast{animation:fadein .2s ease}
+.divider{height:1px;background:#f1f5f9;margin:10px 0}
+.srow{display:grid;gap:10px}.sc{background:#f8fafc;border-radius:8px;padding:12px}.sv{font-size:20px;font-weight:700}.sl{font-size:11px;color:#64748b;margin-top:3px}
 </style>
-</head>
-<body>
+</head><body>
 
-<!-- TOAST CONTAINER -->
-<div id="toast-container"></div>
-
-<!-- AUTH -->
+<!-- ── Auth ── -->
 <div id="auth">
   <div class="ac">
-    <div class="a-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div>
-    <div class="a-title">Prospect Researcher</div>
-    <div class="a-sub">AI-powered B2B research at scale</div>
-    <div class="a-tabs">
-      <button class="a-tab on" onclick="setAuthMode('login')">Sign In</button>
-      <button class="a-tab" onclick="setAuthMode('signup')">Sign Up</button>
+    <div class="a-logo">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect width="40" height="40" rx="10" fill="#6366f1"/><circle cx="20" cy="16" r="5" fill="white"/><path d="M10 32c0-5.523 4.477-10 10-10s10 4.477 10 10" stroke="white" stroke-width="2.5" stroke-linecap="round" fill="none"/></svg>
+      <h1>Prospect Researcher</h1>
+      <p>AI-powered B2B research</p>
     </div>
-    <div id="auth-err" class="alert ae hide"></div>
-    <form onsubmit="doAuth(event)">
-      <div class="fg hide" id="f-name"><label class="fl">Name</label><input class="fi" type="text" id="a-name" placeholder="Your name" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('a-email').focus()}"></div>
-      <div class="fg"><label class="fl">Email</label><input class="fi" type="email" id="a-email" placeholder="you@company.com" required onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('a-pass').focus()}"></div>
-      <div class="fg"><label class="fl">Password</label><input class="fi" type="password" id="a-pass" placeholder="••••••••" required minlength="6"></div>
-      <button type="submit" class="btn bp bfull" style="padding:10px" id="a-btn">Sign In</button>
-    </form>
+    <div class="a-tabs">
+      <button class="a-tab on" onclick="showATab('login',this)">Sign In</button>
+      <button class="a-tab" onclick="showATab('signup',this)">Create Account</button>
+    </div>
+    <div id="auth-login">
+      <div class="fi-g"><label class="fi-l">Email</label><input class="fi" id="l-email" type="email" placeholder="you@company.com" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div class="fi-g"><label class="fi-l">Password</label><input class="fi" id="l-pass" type="password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div id="l-err" class="a-err"></div>
+      <button class="btn bp btn-full" id="btn-login" onclick="doLogin()">Sign In</button>
+    </div>
+    <div id="auth-signup" class="hide">
+      <div class="fi-g"><label class="fi-l">Name</label><input class="fi" id="s-name" type="text" placeholder="Your name"></div>
+      <div class="fi-g"><label class="fi-l">Email</label><input class="fi" id="s-email" type="email" placeholder="you@company.com"></div>
+      <div class="fi-g"><label class="fi-l">Password</label><input class="fi" id="s-pass" type="password"></div>
+      <div id="s-err" class="a-err"></div>
+      <button class="btn bp btn-full" id="btn-signup" onclick="doSignup()">Create Account</button>
+    </div>
   </div>
 </div>
 
-<!-- APP -->
-<div id="app">
-  <div class="layout">
-    <aside class="sb">
-      <div class="sb-logo">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <div><div class="sb-logo-t">Prospect Researcher</div><div class="sb-logo-s">v7</div></div>
-      </div>
-      <nav class="sb-nav">
-        <button class="ni on" onclick="nav('jobs')" id="ni-jobs">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>Jobs
-        </button>
-        <button class="ni" onclick="nav('new')" id="ni-new">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>New Job
-        </button>
-        <button class="ni hide" onclick="nav('res')" id="ni-res">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Results
-          <span id="live-dot" class="badge b-run hide" style="margin-left:4px;font-size:10px">Live</span>
-        </button>
-        <button class="ni" onclick="nav('aud')" id="ni-aud">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Website Audit
-        </button>
-        <button class="ni" onclick="nav('set')" id="ni-set">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>Settings
-        </button>
-        <button class="ni hide" onclick="nav('adm')" id="ni-adm">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Admin
-        </button>
-      </nav>
-      <div class="sb-foot">
-        <div class="u-info"><div class="u-av" id="u-av">?</div><div style="overflow:hidden;min-width:0"><div class="u-nm" id="u-nm">...</div><div class="u-em" id="u-em"></div></div></div>
-        <button class="b-out" onclick="logout()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Logout</button>
-      </div>
-    </aside>
+<!-- ── App ── -->
+<div id="app" class="hide">
+  <!-- Top Nav -->
+  <header id="topnav">
+    <div class="nav-brand">🔍 <span>Prospect</span> AI</div>
+    <nav class="nav-tabs">
+      <button class="nt on" data-p="table" onclick="nav('table')">Table</button>
+      <button class="nt" data-p="jobs" onclick="nav('jobs')">Jobs</button>
+      <button class="nt" data-p="results" onclick="nav('results')" id="nav-results" style="display:none">Results</button>
+      <button class="nt" data-p="audit" onclick="nav('audit')">Audit</button>
+      <button class="nt" data-p="settings" onclick="nav('settings')">Settings</button>
+      <button class="nt hide" data-p="admin" id="nav-admin" onclick="nav('admin')">Admin</button>
+    </nav>
+    <div class="nav-right">
+      <span id="user-name"></span>
+      <button class="btn bg sm" onclick="logout()">Sign out</button>
+    </div>
+  </header>
 
-    <main class="content">
+  <div id="main">
 
-      <!-- JOBS PAGE -->
-      <div class="page on" id="pg-jobs">
-        <div class="ph"><div><div class="pt">Research Jobs</div><div class="ps">Your research history</div></div>
-          <button class="btn bp" onclick="nav('new')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>New Job</button>
+    <!-- ── Table Pane ── -->
+    <div class="pane" id="pane-table">
+      <!-- Upload zone -->
+      <div id="upload-zone">
+        <div class="uz-box" id="uz-box" onclick="document.getElementById('fi').click()">
+          <div class="uz-emoji">📊</div>
+          <h2>Upload your prospect list</h2>
+          <p>Drop a CSV or Excel file here to get started.<br>Then add AI research columns and click Run.</p>
+          <button class="btn bp" onclick="event.stopPropagation();document.getElementById('fi').click()">Choose File</button>
+          <div class="uz-hint">Supports CSV, TSV, Excel (.xlsx / .xls) — any column structure</div>
         </div>
-        <div class="pb"><div id="jobs-list"></div></div>
+        <input type="file" id="fi" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none" onchange="onFile(event)">
       </div>
 
-      <!-- NEW JOB PAGE -->
-      <div class="page" id="pg-new">
-        <div class="ph"><div><div class="pt">New Research Job</div><div class="ps">Upload prospects and run AI research</div></div></div>
-        <div class="pb">
-          <div class="stepper" id="stepper">
-            <div class="step"><div class="sn act" id="sn1">1</div><div class="slbl act" id="sl1">Template</div></div>
-            <div class="sdiv" id="sd1"></div>
-            <div class="step"><div class="sn pend" id="sn2">2</div><div class="slbl" id="sl2">Upload CSV</div></div>
-            <div class="sdiv" id="sd2"></div>
-            <div class="step"><div class="sn pend" id="sn3">3</div><div class="slbl" id="sl3">Columns</div></div>
-            <div class="sdiv" id="sd3"></div>
-            <div class="step"><div class="sn pend" id="sn4">4</div><div class="slbl" id="sl4">Configure &amp; Run</div></div>
-          </div>
-
-          <!-- Step 1: Template -->
-          <div id="ws1">
-            <div class="tg" id="tmpl-grid"></div>
-            <div class="flex mt20" style="justify-content:flex-end">
-              <button class="btn bp" onclick="goStep(2)" id="btn-next1" disabled>Next: Upload CSV →</button>
+      <!-- Sheet View (hidden until CSV loaded) -->
+      <div id="sheet-view" class="hide">
+        <!-- Toolbar -->
+        <div id="sheet-toolbar">
+          <div class="tb-left">
+            <span class="rc-badge" id="row-count">0 rows</span>
+            <button class="btn bs sm" onclick="resetSheet()">× Reset</button>
+            <button class="btn bs sm" onclick="openTmplModal()">📋 Template</button>
+            <button class="btn bs sm" onclick="openAIModal()">✨ AI Columns</button>
+            <div id="no-company-banner" class="hide">
+              ⚠️ Company column:
+              <select id="company-sel" onchange="colMap.company=this.value;updateCostEst()"></select>
             </div>
           </div>
-
-          <!-- Step 2: CSV Upload -->
-          <div id="ws2" class="hide">
-            <div class="uz" id="uz" onclick="document.getElementById('fi').click()">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5" style="margin:0 auto 10px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              <div class="uz-title">Drop file here or click to browse</div>
-              <div class="uz-sub">Supports CSV, TSV, Excel (.xlsx, .xls)</div>
-              <input type="file" id="fi" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none" onchange="onFile(event)">
+          <div class="tb-right">
+            <div id="run-progress" class="prog-wrap hide">
+              <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+              <span id="prog-txt">0 / 0</span>
             </div>
-            <div id="csv-prev" class="hide mt16"></div>
-            <div class="flex mt20" style="justify-content:space-between">
-              <button class="btn bs" onclick="goStep(1)">← Back</button>
-              <button class="btn bp" onclick="goStep(3)" id="btn-next2" disabled>Next: Map Columns →</button>
-            </div>
-          </div>
-
-          <!-- Step 3: Column Mapping -->
-          <div id="ws3" class="hide">
-            <div class="card">
-              <div class="ct">Map CSV Columns</div>
-              <div class="mt8" style="color:var(--muted);font-size:13px">We auto-detected these mappings — adjust as needed. <strong>Company</strong> is required.</div>
-              <div class="divider"></div>
-              <div id="cm-grid"></div>
-            </div>
-            <div class="flex mt20" style="justify-content:space-between">
-              <button class="btn bs" onclick="goStep(2)">← Back</button>
-              <button class="btn bp" onclick="goStep(4)">Next: Configure →</button>
-            </div>
-          </div>
-
-          <!-- Step 4: Configure & Run -->
-          <div id="ws4" class="hide">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-              <div class="card">
-                <div class="ct">AI Provider</div>
-                <div class="pg mt12" id="prov-grid"></div>
-              </div>
-              <div class="card">
-                <div class="ct">Options</div>
-                <div class="mt12">
-                  <label style="display:flex;align-items:center;gap:9px;cursor:pointer">
-                    <button class="tgl on" id="web-tgl" type="button" onclick="toggleWeb()"></button>
-                    <span style="font-size:13px">Web Search <span style="color:var(--muted);font-size:12px">(recommended)</span></span>
-                  </label>
-                  <div style="font-size:12px;color:var(--muted);margin-top:5px;margin-left:43px">Real-time web search for current data</div>
-                </div>
-                <div class="divider"></div>
-                <div><label class="fl">Job name <span style="color:var(--muted);font-size:12px">(optional)</span></label><input class="fi" type="text" id="job-nm" placeholder="Q1 Outreach Batch"></div>
-              </div>
-            </div>
-
-            <!-- Prompt Section -->
-            <div class="card mt16">
-              <div class="fb">
-                <div class="ct">Research Prompt</div>
-                <div class="flex" style="gap:6px">
-                  <button class="btn bg bsm" onclick="openBuilder()">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Prompt Builder
-                  </button>
-                  <button class="btn bg bsm" onclick="previewPrompt()">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Preview
-                  </button>
-                </div>
-              </div>
-              <textarea class="fi mt12" id="sys-prompt" rows="9" style="font-size:12px;font-family:monospace" oninput="scheduleColPreview()"></textarea>
-            </div>
-
-            <!-- Output Columns Preview -->
-            <div class="card mt14">
-              <div class="fb">
-                <div>
-                  <div class="ct">Output Columns Preview</div>
-                  <div style="font-size:12px;color:var(--muted);margin-top:2px">Columns that will appear in your results &amp; CSV export</div>
-                </div>
-                <button class="btn bg bsm" onclick="refreshColPreview()" id="btn-col-refresh">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Refresh
-                </button>
-              </div>
-              <div class="col-prev-wrap mt12" id="col-prev-wrap">
-                <span style="font-size:12px;color:var(--muted)">Click Refresh to detect output columns from your prompt</span>
-              </div>
-              <div id="col-prev-warn" class="hide mt8"></div>
-            </div>
-
-            <div class="flex mt20" style="justify-content:space-between;align-items:center">
-              <button class="btn bs" onclick="goStep(3)">← Back</button>
-              <div class="flex" style="gap:12px;align-items:center">
-                <span id="run-est" style="font-size:12px;color:var(--muted)"></span>
-                <button class="btn bp" style="padding:9px 18px" onclick="startJob()" id="btn-run">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Run Research
-                </button>
-              </div>
-            </div>
+            <select id="prov-sel" onchange="updateCostEst()"></select>
+            <label class="ws-label"><input type="checkbox" id="ws-chk" onchange="updateCostEst()"> Web</label>
+            <span id="cost-badge"></span>
+            <button id="btn-run" class="btn bp sm" onclick="runResearch()">▶ Run</button>
           </div>
         </div>
-      </div>
 
-      <!-- RESULTS PAGE -->
-      <div class="page" id="pg-res">
-        <div class="ph">
-          <div><div class="pt" id="res-title">Results</div><div class="ps" id="res-sub"></div></div>
-          <div class="flex" style="gap:7px">
-            <button class="btn bs bsm" onclick="nav('new')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>New Job</button>
-            <button class="btn bs bsm hide" onclick="doCancel()" id="btn-cancel"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18"/></svg>Stop</button>
-            <button class="btn bs bsm hide" onclick="doResume()" id="btn-resume">Resume</button>
-            <button class="btn bs bsm hide" onclick="doExport()" id="btn-export"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>
-          </div>
+        <!-- Table -->
+        <div id="table-scroll">
+          <table id="main-tbl">
+            <thead><tr id="tbl-head"></tr></thead>
+            <tbody id="tbl-body"></tbody>
+          </table>
         </div>
-        <div class="pb" style="padding-top:14px;display:flex;flex-direction:column;gap:10px">
-          <div class="card" style="padding:14px">
-            <div class="fb"><span id="prog-txt" style="font-size:12px;color:var(--muted)">Starting...</span><span id="prog-ct" style="font-size:12px;color:var(--muted)"></span></div>
-            <div class="pb-wrap mt8"><div class="pb-bar" id="prog-bar" style="width:0%"></div></div>
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:5px"><span id="prog-cur"></span><span id="prog-cost"></span></div>
+      </div>
+    </div>
+
+    <!-- ── Jobs Pane ── -->
+    <div class="pane hide" id="pane-jobs" style="padding:24px">
+      <div class="ph"><h2>Research Jobs</h2><button class="btn bs sm" onclick="loadJobs()">↺ Refresh</button></div>
+      <div id="jobs-list"><div class="lc"><div class="spin"></div>Loading…</div></div>
+    </div>
+
+    <!-- ── Results Pane ── -->
+    <div class="pane hide" id="pane-results" style="display:flex;flex-direction:column">
+      <div id="res-toolbar">
+        <button class="btn bg sm" onclick="nav('jobs')">← Jobs</button>
+        <span class="job-name" id="res-job-name"></span>
+        <span id="res-status-badge"></span>
+        <span style="flex:1"></span>
+        <div id="res-progress" class="prog-wrap hide">
+          <div class="prog-bar"><div class="prog-fill" id="res-prog-fill" style="width:0%"></div></div>
+          <span id="res-prog-txt"></span>
+        </div>
+        <button class="btn bs sm" onclick="exportResJob()">⬇ Export CSV</button>
+      </div>
+      <div id="res-tbl-wrap">
+        <table id="res-tbl"><thead><tr id="res-head"></tr></thead><tbody id="res-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- ── Audit Pane ── -->
+    <div class="pane hide" id="pane-audit" style="padding:24px">
+      <div class="ph" style="margin-bottom:0"><h2>Website Audit</h2></div>
+      <p style="font-size:13px;color:#64748b;margin-bottom:16px">Run PageSpeed, SEO, SSL, and technical checks on any website.</p>
+      <div class="audit-tabs">
+        <button class="at on" onclick="showAuditTab('single',this)">Single URL</button>
+        <button class="at" onclick="showAuditTab('bulk',this)">Bulk CSV</button>
+      </div>
+      <!-- Single -->
+      <div id="audit-single">
+        <div class="audit-url-row">
+          <input class="fi" type="url" id="aud-url" placeholder="https://example.com" onkeydown="if(event.key==='Enter')runAudit()">
+          <button class="btn bp" id="btn-aud" onclick="runAudit()">Run Audit</button>
+        </div>
+        <div id="aud-result"></div>
+      </div>
+      <!-- Bulk -->
+      <div id="audit-bulk" class="hide">
+        <div class="bulk-uz" id="bulk-uz" onclick="document.getElementById('bulk-fi').click()">
+          <div style="font-size:32px;margin-bottom:10px">📋</div>
+          <p style="font-size:14px;font-weight:600;margin-bottom:4px">Drop CSV/Excel here</p>
+          <p style="font-size:12px;color:#64748b">Needs a URL column • CSV, TSV, Excel (.xlsx, .xls)</p>
+          <input type="file" id="bulk-fi" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none" onchange="onBulkFile(event)">
+        </div>
+        <div id="bulk-config" class="hide">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+            <div><label class="fi-l">URL Column</label><select class="fi" id="bulk-col-url"></select></div>
+            <div><label class="fi-l">Company Name Column (optional)</label><select class="fi" id="bulk-col-company"></select></div>
           </div>
-          <div id="log-wrap" class="log hide"></div>
-          <div class="srow hide" id="done-stats">
-            <div class="sc"><div class="sv" id="st-ok">0</div><div class="sl">Succeeded</div></div>
-            <div class="sc"><div class="sv" id="st-fail">0</div><div class="sl">Failed</div></div>
-            <div class="sc"><div class="sv" id="st-cost">$0</div><div class="sl">Total Cost</div></div>
-            <div class="sc"><div class="sv" id="st-time">0s</div><div class="sl">Elapsed</div></div>
-            <div class="sc"><div class="sv" id="st-tok">0</div><div class="sl">Tokens</div></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+            <button class="btn bp" id="btn-bulk-run" onclick="startBulkAudit()">▶ Start Bulk Audit</button>
+            <button class="btn bs sm" onclick="resetBulkAudit()">Reset</button>
+            <span id="bulk-info" style="font-size:12px;color:#64748b"></span>
           </div>
-          <div class="card" style="padding:0;overflow:hidden;flex:1">
-            <div style="overflow:auto;max-height:calc(100vh - 340px)">
-              <table class="rt" id="res-tbl">
-                <thead><tr id="res-head"></tr></thead>
-                <tbody id="res-body"></tbody>
+          <div id="bulk-progress" class="bulk-prog hide">
+            <div style="font-size:12px;color:#64748b;display:flex;justify-content:space-between">
+              <span id="bulk-prog-txt">Running…</span><span id="bulk-prog-ct"></span>
+            </div>
+            <div class="bulk-prog-bar"><div class="bulk-prog-fill" id="bulk-prog-fill" style="width:0%"></div></div>
+          </div>
+          <div id="bulk-results-area" class="hide">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <span style="font-size:13px;font-weight:600" id="bulk-done-msg"></span>
+              <button class="btn bs sm" onclick="exportBulkCSV()">⬇ Export CSV</button>
+            </div>
+            <div style="overflow-x:auto">
+              <table class="bulk-tbl" id="bulk-tbl">
+                <thead><tr id="bulk-thead"></tr></thead>
+                <tbody id="bulk-tbody"></tbody>
               </table>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- AUDIT PAGE -->
-      <div class="page" id="pg-aud">
-        <div class="ph"><div><div class="pt">Website Audit</div><div class="ps">Check websites for SEO, performance, security and UX issues</div></div>
-          <div id="bulk-export-btn" class="hide">
-            <button class="btn bs bsm" onclick="exportBulkCSV()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>
-          </div>
-        </div>
-        <div class="pb">
-          <!-- Mode tabs -->
-          <div style="display:flex;background:#f1f5f9;border-radius:8px;padding:3px;max-width:340px;margin-bottom:18px">
-            <button class="a-tab on" id="aud-tab-single" onclick="setAudMode('single')" style="flex:1">Single URL</button>
-            <button class="a-tab" id="aud-tab-bulk" onclick="setAudMode('bulk')" style="flex:1">Bulk CSV Upload</button>
-          </div>
-
-          <!-- Single mode -->
-          <div id="aud-single">
-            <div class="card" style="max-width:700px">
-              <div class="ct">Audit a Website</div>
-              <div style="color:var(--muted);font-size:13px;margin-top:3px">Runs HTTP, PageSpeed, SSL and SEO checks — takes 30-60 seconds</div>
-              <div class="divider"></div>
-              <div style="display:flex;gap:10px">
-                <input class="fi" type="url" id="aud-url" placeholder="https://example.com" style="flex:1" onkeydown="if(event.key==='Enter')runAudit()">
-                <button class="btn bp" onclick="runAudit()" id="btn-aud" style="flex-shrink:0">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Run Audit
-                </button>
-              </div>
-            </div>
-            <div id="aud-result" class="mt16"></div>
-          </div>
-
-          <!-- Bulk mode -->
-          <div id="aud-bulk" class="hide">
-            <div class="card" style="max-width:700px">
-              <div class="ct">Bulk Audit from CSV</div>
-              <div style="color:var(--muted);font-size:13px;margin-top:3px">Upload a CSV with website URLs — audits run sequentially, ~30-60s each</div>
-              <div class="divider"></div>
-
-              <!-- Upload -->
-              <div id="bulk-upload-area">
-                <div class="uz" id="bulk-uz" onclick="document.getElementById('bulk-fi').click()">
-                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5" style="margin:0 auto 8px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  <div class="uz-title">Drop file here or click to browse</div>
-                  <div class="uz-sub">Needs a URL column · CSV, TSV, Excel (.xlsx, .xls)</div>
-                  <input type="file" id="bulk-fi" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none" onchange="onBulkFile(event)">
-                </div>
-              </div>
-
-              <!-- Column mapping (shown after upload) -->
-              <div id="bulk-map-area" class="hide mt16">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-                  <div>
-                    <label class="fl">Website URL column <span style="color:var(--err)">*</span></label>
-                    <select class="fi" id="bulk-col-url" style="font-size:12px"></select>
-                  </div>
-                  <div>
-                    <label class="fl">Company name column <span style="color:var(--muted);font-weight:400">(optional)</span></label>
-                    <select class="fi" id="bulk-col-company" style="font-size:12px"></select>
-                  </div>
-                </div>
-                <div id="bulk-preview-info" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
-                <div style="display:flex;gap:10px;align-items:center">
-                  <button class="btn bp" onclick="startBulkAudit()" id="btn-bulk-run">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>Start Bulk Audit
-                  </button>
-                  <button class="btn bs" onclick="resetBulkAudit()">Reset</button>
-                  <span id="bulk-run-info" style="font-size:12px;color:var(--muted)"></span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Bulk progress & results -->
-            <div id="bulk-results-area" class="hide mt16">
-              <!-- Progress bar -->
-              <div class="card" style="padding:14px;margin-bottom:12px">
-                <div class="fb">
-                  <span id="bulk-prog-txt" style="font-size:12px;color:var(--muted)">Starting...</span>
-                  <span id="bulk-prog-ct" style="font-size:12px;color:var(--muted)"></span>
-                </div>
-                <div class="pb-wrap mt8"><div class="pb-bar" id="bulk-prog-bar" style="width:0%"></div></div>
-                <div style="font-size:11px;color:var(--muted);margin-top:4px" id="bulk-prog-cur"></div>
-              </div>
-              <!-- Results table -->
-              <div class="card" style="padding:0;overflow:hidden">
-                <!-- Pagination bar -->
-                <div id="bulk-pag" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bdr);flex-wrap:wrap">
-                  <button class="btn bs bsm" id="bulk-pag-prev" onclick="bulkGoPage(bulkPage-1)" disabled>&#8592; Prev</button>
-                  <span id="bulk-pag-info" style="font-size:12px;color:var(--muted);flex:1;text-align:center"></span>
-                  <button class="btn bs bsm" id="bulk-pag-next" onclick="bulkGoPage(bulkPage+1)" disabled>Next &#8594;</button>
-                  <button class="btn bsm" id="bulk-follow-btn" onclick="toggleBulkFollow()" title="Auto-follow the active row" style="margin-left:8px;background:var(--pr);color:#fff;border:none">&#128204; Following</button>
-                </div>
-                <div style="overflow-x:auto">
-                  <table class="rt" id="bulk-tbl">
-                    <thead><tr>
-                      <th>#</th><th>Company</th><th>URL</th><th>Status</th>
-                      <th title="Mobile PageSpeed Performance">Mob Perf</th>
-                      <th title="Desktop PageSpeed Performance">Dsk Perf</th>
-                      <th>SEO</th><th>Access.</th>
-                      <th>Issues</th><th>Critical</th><th>Response</th><th>HTTPS</th><th></th>
-                    </tr></thead>
-                    <tbody id="bulk-tbody"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      <!-- SETTINGS PAGE -->
-      <div class="page" id="pg-set">
-        <div class="ph"><div><div class="pt">Settings</div><div class="ps">Manage API keys and view usage</div></div></div>
-        <div class="pb">
-          <div class="card" style="max-width:580px">
-            <div class="ct">API Keys</div>
-            <div style="color:var(--muted);font-size:12px;margin-top:3px">Stored securely per-user on the server</div>
-            <div class="divider"></div>
-            <div id="keys-list"></div>
-          </div>
-          <div class="card mt16" style="max-width:580px">
-            <div class="ct">Usage Summary</div>
-            <div id="cost-sum" class="mt12"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ADMIN PAGE -->
-      <div class="page" id="pg-adm">
-        <div class="ph">
-          <div><div class="pt">Admin Panel</div><div class="ps">All users and jobs</div></div>
-          <div class="flex" style="gap:7px">
-            <button class="btn bs bsm" onclick="adminBackup()">Backup DB</button>
-            <button class="btn bs bsm" onclick="adminExport()">Export All</button>
-          </div>
-        </div>
-        <div class="pb">
-          <div class="card"><div class="ct">Users</div><div id="adm-users" class="mt12"></div></div>
-          <div class="card mt16"><div class="ct">Recent Jobs</div><div id="adm-jobs" class="mt12"></div></div>
-        </div>
-      </div>
-
-    </main>
-  </div>
-</div>
-
-<!-- Detail Modal -->
-<div class="mo hide" id="det-mo">
-  <div class="md">
-    <div class="md-h"><div class="md-t" id="det-title">Details</div><button class="md-x" onclick="closeDet()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-    <div class="md-b" id="det-body"></div>
-    <div class="md-f"><button class="btn bs" onclick="closeDet()">Close</button></div>
-  </div>
-</div>
-
-<!-- Prompt Preview Modal -->
-<div class="mo hide" id="prev-mo">
-  <div class="md" style="max-width:780px">
-    <div class="md-h"><div class="md-t">Prompt Preview</div><button class="md-x" onclick="document.getElementById('prev-mo').classList.add('hide')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-    <div class="md-b" id="prev-body"></div>
-  </div>
-</div>
-
-<!-- Prompt Builder Modal -->
-<div class="mo hide" id="builder-mo">
-  <div class="md" style="max-width:720px">
-    <div class="md-h">
-      <div class="md-t">Prompt Builder</div>
-      <button class="md-x" onclick="closeBuilder()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
     </div>
-    <div class="md-b">
-      <!-- Step A: Describe -->
-      <div id="bldr-step-a">
-        <div class="fl" style="margin-bottom:6px">Describe what you want to research about each company</div>
-        <textarea class="fi" id="bldr-desc" rows="4" placeholder="E.g. Find the CEO name, LinkedIn URL, company size, recent funding round, and top 2-3 pain points for each company on my list."></textarea>
-        <div style="font-size:12px;color:var(--muted);margin-top:6px">The AI will create a structured research prompt with output columns from your description.</div>
-        <div id="bldr-err" class="alert ae hide mt12"></div>
-        <div class="flex mt16" style="justify-content:flex-end">
-          <button class="btn bp" onclick="runBuilder()" id="btn-bldr-gen">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Generate with AI
-          </button>
-        </div>
-      </div>
-      <!-- Step B: Review & edit -->
-      <div id="bldr-step-b" class="hide">
-        <div class="fb" style="margin-bottom:12px">
-          <div class="fl" style="margin:0">Output Columns <span id="bldr-sec-count" style="color:var(--muted);font-weight:400;font-size:12px"></span></div>
-          <button class="btn bg bsm" onclick="bldrAddSection()">+ Add Column</button>
-        </div>
-        <div id="bldr-secs"></div>
-        <div class="divider"></div>
-        <div class="fl" style="margin-bottom:6px">Generated System Prompt</div>
-        <textarea class="fi" id="bldr-prompt" rows="8" style="font-size:12px;font-family:monospace"></textarea>
-        <div style="font-size:12px;color:var(--muted);margin-top:5px">You can edit this prompt directly. The output columns above tell the AI what structured data to return.</div>
+
+    <!-- ── Settings Pane ── -->
+    <div class="pane hide" id="pane-settings" style="padding:24px">
+      <div class="ph"><h2>Settings</h2></div>
+      <div style="max-width:700px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">API Keys</div>
+        <div id="keys-list"><div class="lc"><div class="spin"></div></div></div>
+        <div class="divider" style="margin:20px 0"></div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">Usage Summary</div>
+        <div id="cost-sum"></div>
       </div>
     </div>
-    <div class="md-f">
-      <button class="btn bs" onclick="closeBuilder()">Cancel</button>
-      <button class="btn bs hide" onclick="bldrBack()" id="btn-bldr-back">← Regenerate</button>
-      <button class="btn bp hide" onclick="applyBuilder()" id="btn-bldr-apply">Apply to Job</button>
+
+    <!-- ── Admin Pane ── -->
+    <div class="pane hide" id="pane-admin" style="padding:24px">
+      <div class="ph"><h2>Admin</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn bs sm" onclick="adminBackup()">⬇ DB Backup</button>
+          <button class="btn bs sm" onclick="adminExport()">⬇ Export All</button>
+        </div>
+      </div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px">Users</div>
+      <div id="adm-users" style="overflow-x:auto;margin-bottom:24px"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px">Recent Jobs</div>
+      <div id="adm-jobs" style="overflow-x:auto"></div>
+    </div>
+
+  </div><!-- #main -->
+</div><!-- #app -->
+
+<!-- ── Column Drawer ── -->
+<div id="drawer-bg" class="hide" onclick="closeDrawer()"></div>
+<div id="col-drawer" class="hide">
+  <div class="drw-hd">
+    <span>Edit Column</span>
+    <button class="btn bg sm" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="drw-bd">
+    <div>
+      <label class="fi-l">Column Name</label>
+      <input class="fi" id="drw-name" type="text" oninput="drwUpdateKey()">
+      <div class="drw-key" id="drw-key-preview"></div>
+    </div>
+    <div>
+      <label class="fi-l">Research Instruction <span style="font-size:11px;color:#94a3b8;font-weight:400">(what should AI find?)</span></label>
+      <textarea class="fi" id="drw-desc" rows="7" placeholder="e.g. Find the company's top 3 pain points and business challenges they face"></textarea>
+    </div>
+  </div>
+  <div class="drw-ft">
+    <button class="btn bd sm" onclick="deleteDrawerCol()">Delete Column</button>
+    <button class="btn bp" onclick="saveDrawerCol()">Save</button>
+  </div>
+</div>
+
+<!-- ── Templates Modal ── -->
+<div id="tmpl-modal" class="modal-wrap hide">
+  <div class="modal">
+    <div class="modal-hd"><span>Choose a Research Template</span><button class="btn bg sm" onclick="closeTmplModal()">✕</button></div>
+    <div class="modal-bd"><div class="tmpl-grid" id="tmpl-grid"></div></div>
+  </div>
+</div>
+
+<!-- ── AI Columns Modal ── -->
+<div id="ai-modal" class="modal-wrap hide">
+  <div class="modal">
+    <div class="modal-hd"><span>Generate Columns with AI</span><button class="btn bg sm" onclick="closeAIModal()">✕</button></div>
+    <div class="modal-bd">
+      <div class="fi-g">
+        <label class="fi-l">Describe what you want to research</label>
+        <textarea class="fi" id="ai-desc" rows="4" placeholder="e.g. I want to find each company's recent funding, key decision makers, main technology stack, and whether they're hiring engineers"></textarea>
+      </div>
+      <button class="btn bp" id="btn-gen" onclick="generateCols()">Generate Columns</button>
+      <div id="ai-preview" class="hide" style="margin-top:16px"></div>
+    </div>
+    <div class="modal-ft hide" id="ai-modal-ft">
+      <button class="btn bs sm" onclick="closeAIModal()">Cancel</button>
+      <button class="btn bp" onclick="applyAICols()">Add These Columns</button>
     </div>
   </div>
 </div>
+
+<!-- ── Row Detail Modal ── -->
+<div id="det-modal" class="modal-wrap hide" onclick="if(event.target===this)closeDetModal()">
+  <div class="modal modal-lg">
+    <div class="modal-hd"><span id="det-title">Row Details</span><button class="btn bg sm" onclick="closeDetModal()">✕</button></div>
+    <div class="modal-bd" id="det-body"></div>
+    <div class="modal-ft"><button class="btn bs" onclick="closeDetModal()">Close</button></div>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div id="toast-container"></div>
 
 <script>
-// ── State ────────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 let token = localStorage.getItem('pr_token') || '';
-let me = null;
-let authMode = 'login';
-let templates = {};
-let providers = {};
-let useWeb = true;
-// Wizard
-let selTmpl = null;
-let csvRaw = '';
-let csvHdrs = [];
-let csvRows = [];
-let colMap = {};
-let totalRows = 0;
-let explicitSecs = null;
-let selProv = null;
-// Results
-let curJobId = null;
-let curSections = [];
-let rowData = {};
-let sse = null;
-// Builder
-let bldrSections = [];
-// Col preview debounce
-let colPreviewTimer = null;
+let me = null, providers = {}, templates = {};
+// Spreadsheet
+let csvRows = [], csvHdrs = [], colMap = {};
+let enrichCols = []; // [{key,label,desc}]
+let rowResults = {}; // {rowIdx:{colKey:val}}
+let rowStatuses = {}; // {rowIdx:'pending'|'running'|'done'|'error'}
+let curJobId = null, sse = null, drawerIdx = -1;
+// Bulk audit
+let bulkRows = [], bulkHdrs = [], bulkJobId = null, bulkPollTimer = null, bulkResults = [];
+// AI modal
+let aiSuggestedCols = [];
+// Results pane
+let resJobId = null, resSections = [], resSse = null;
 
-const ENV_MAP = {
-  GEMINI_API_KEY:    { name: 'Gemini (Google)',              provIds: ['gemini3flash','gemini'] },
-  ANTHROPIC_API_KEY: { name: 'Anthropic (Claude)',           provIds: ['claude','haiku'] },
-  OPENAI_API_KEY:    { name: 'OpenAI (GPT)',                 provIds: ['gpt5','openai'] },
-  DEEPSEEK_API_KEY:  { name: 'DeepSeek',                     provIds: ['deepseek'] },
-  PAGESPEED_API_KEY: { name: 'Google PageSpeed (Audit)',     provIds: ['_pagespeed'] },
-};
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function x(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function $i(id){return document.getElementById(id)}
+function ago(iso){if(!iso)return'—';const d=Date.now()-new Date(iso+(iso.endsWith('Z')?'':' UTC')).getTime();const s=Math.floor(d/1000);if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
+function fmtCost(n){return'$'+(n||0).toFixed(4)}
+function toast(msg,type='info',ms=3500){const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;$i('toast-container').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transition='opacity .3s';setTimeout(()=>el.remove(),300)},ms)}
 
-// ── API ───────────────────────────────────────────────────────────────────────
-async function api(method, path, body) {
-  const opts = { method, headers: { 'content-type': 'application/json' } };
-  if (token) opts.headers['authorization'] = 'Bearer ' + token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  const r = await fetch(path, opts);
-  if (!r.ok) { const e = await r.json().catch(() => ({ error: 'Error' })); throw new Error(e.error || 'Request failed'); }
-  return r.json();
+async function api(method,path,body){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(token)opts.headers['Authorization']='Bearer '+token;
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(path,opts);
+  if(r.status===401){logout();return null;}
+  return r.json().catch(()=>({error:r.statusText}));
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-function setAuthMode(m) {
-  authMode = m;
-  document.querySelectorAll('.a-tab').forEach((t,i) => t.classList.toggle('on', (i===0&&m==='login')||(i===1&&m==='signup')));
-  document.getElementById('f-name').classList.toggle('hide', m === 'login');
-  document.getElementById('a-btn').textContent = m === 'login' ? 'Sign In' : 'Create Account';
-  document.getElementById('auth-err').classList.add('hide');
+function showATab(tab,el){
+  document.querySelectorAll('.a-tab').forEach(b=>b.classList.remove('on'));el.classList.add('on');
+  $i('auth-login').classList.toggle('hide',tab!=='login');
+  $i('auth-signup').classList.toggle('hide',tab!=='signup');
 }
-
-async function doAuth(e) {
-  e.preventDefault();
-  const errEl = document.getElementById('auth-err');
-  errEl.classList.add('hide');
-  const btn = document.getElementById('a-btn');
-  btn.disabled = true; btn.textContent = 'Please wait...';
-  try {
-    const path = authMode === 'login' ? '/api/login' : '/api/signup';
-    const body = { email: document.getElementById('a-email').value, password: document.getElementById('a-pass').value };
-    if (authMode === 'signup') body.name = document.getElementById('a-name').value;
-    const data = await api('POST', path, body);
-    token = data.token; localStorage.setItem('pr_token', token); me = data.user;
-    await boot();
-  } catch(err) {
-    errEl.textContent = err.message; errEl.classList.remove('hide');
-    btn.disabled = false; btn.textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
-  }
+async function doLogin(){
+  const email=$i('l-email').value.trim(),pass=$i('l-pass').value;
+  if(!email||!pass)return;
+  const btn=$i('btn-login');btn.disabled=true;btn.textContent='Signing in…';
+  $i('l-err').textContent='';
+  const d=await api('POST','/api/login',{email,password:pass});
+  btn.disabled=false;btn.textContent='Sign In';
+  if(!d||d.error){$i('l-err').textContent=d?.error||'Login failed';return;}
+  token=d.token;localStorage.setItem('pr_token',token);me=d.user;boot();
 }
-
-function logout() {
-  token = ''; localStorage.removeItem('pr_token'); me = null;
-  document.getElementById('auth').style.display = 'flex';
-  document.getElementById('app').classList.remove('on');
+async function doSignup(){
+  const name=$i('s-name').value.trim(),email=$i('s-email').value.trim(),pass=$i('s-pass').value;
+  if(!name||!email||!pass)return;
+  const btn=$i('btn-signup');btn.disabled=true;btn.textContent='Creating…';
+  $i('s-err').textContent='';
+  const d=await api('POST','/api/signup',{name,email,password:pass});
+  btn.disabled=false;btn.textContent='Create Account';
+  if(!d||d.error){$i('s-err').textContent=d?.error||'Sign up failed';return;}
+  token=d.token;localStorage.setItem('pr_token',token);me=d.user;boot();
 }
+function logout(){token='';localStorage.removeItem('pr_token');$i('auth').style.display='';$i('app').classList.add('hide');}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-async function boot() {
-  document.getElementById('auth').style.display = 'none';
-  document.getElementById('app').classList.add('on');
-  if (!me) me = await api('GET', '/api/me');
-  const initial = (me.name || me.email || '?').charAt(0).toUpperCase();
-  document.getElementById('u-av').textContent = initial;
-  document.getElementById('u-nm').textContent = me.name || me.email;
-  document.getElementById('u-em').textContent = me.email;
-  if (me.is_admin) document.getElementById('ni-adm').classList.remove('hide');
-  [templates, providers] = await Promise.all([api('GET', '/api/templates'), api('GET', '/api/providers')]);
-  renderTmpls();
-  nav('jobs');
+async function boot(){
+  $i('auth').style.display='none';$i('app').classList.remove('hide');
+  const [provData,tmplData]=await Promise.all([api('GET','/api/providers'),api('GET','/api/templates')]);
+  if(provData)providers=provData;
+  if(Array.isArray(tmplData))tmplData.forEach(t=>templates[t.id]=t);
+  if(me)$i('user-name').textContent=me.name||me.email;
+  if(me?.is_admin)$i('nav-admin').classList.remove('hide');
+  renderProvSelect();
+  nav('table');
+}
+async function init(){
+  if(!token){$i('app').classList.add('hide');return;}
+  const d=await api('GET','/api/me');
+  if(!d||d.error){logout();return;}
+  me=d;boot();
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-function nav(p) {
-  document.querySelectorAll('.page').forEach(el => el.classList.remove('on'));
-  document.querySelectorAll('.ni').forEach(el => el.classList.remove('on'));
-  document.getElementById('pg-' + p).classList.add('on');
-  const ni = document.getElementById('ni-' + p);
-  if (ni) ni.classList.add('on');
-  if (p === 'jobs') loadJobs();
-  if (p === 'set') loadSettings();
-  if (p === 'adm') loadAdmin();
-  if (p === 'new') resetWizard();
+function nav(pane){
+  document.querySelectorAll('.nt').forEach(b=>b.classList.toggle('on',b.dataset.p===pane));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.add('hide'));
+  const el=$i('pane-'+pane);if(el)el.classList.remove('hide');
+  if(pane==='jobs')loadJobs();
+  if(pane==='settings')loadSettings();
+  if(pane==='admin')loadAdmin();
 }
 
-// ── Jobs ─────────────────────────────────────────────────────────────────────
-async function loadJobs() {
-  const el = document.getElementById('jobs-list');
-  el.innerHTML = '<div class="lc"><div class="spin spin-lg"></div><div>Loading...</div></div>';
-  try {
-    const jobs = await api('GET', '/api/jobs');
-    if (!jobs.length) {
-      el.innerHTML = `<div class="empty"><div class="empty-ico">🔍</div><div class="empty-t">No jobs yet</div><div>Create your first research job</div><button class="btn bp mt12" onclick="nav('new')">New Job</button></div>`;
-      return;
-    }
-    el.innerHTML = `<div class="card" style="padding:0;overflow:hidden"><table class="tbl">
-      <thead><tr><th>Job</th><th>Template</th><th>Provider</th><th>Progress</th><th>Status</th><th>Cost</th><th>Created</th><th></th></tr></thead>
-      <tbody>${jobs.map(j => `<tr>
-        <td style="max-width:200px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600" title="${x(j.name)}">${x(j.name)}</div></td>
-        <td>${x(j.templateIcon||'')} ${x(j.templateName||'')}</td>
-        <td style="color:var(--muted)">${x(j.providerName||j.provider)}</td>
-        <td><span class="badge b-pend">${j.succeeded}/${j.total_rows}</span></td>
-        <td><span class="badge b-${j.status}">${j.status}</span></td>
-        <td class="mono sm">$${(j.cost||0).toFixed(4)}</td>
-        <td style="color:var(--muted)">${ago(j.created_at)}</td>
-        <td><div class="flex" style="gap:5px">
-          ${j.isAudit
-            ? `<button class="btn bg bsm" onclick="viewAuditJob(${j.id})" title="View Audit"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>`
-            : `<button class="btn bg bsm" onclick="viewJob(${j.id})" title="View"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
-          <button class="btn bg bsm" onclick="dlExport(${j.id})" title="Export"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>`}
-          <button class="btn bg bsm" onclick="delJob(${j.id})" title="Delete" style="color:var(--err)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-        </div></td>
-      </tr>`).join('')}</tbody></table></div>`;
-  } catch(err) {
-    el.innerHTML = `<div class="alert ae">${x(err.message)}</div>`;
-  }
+// ── Provider Select ───────────────────────────────────────────────────────────
+const PREF_ORDER=['gemini3flash','gemini','claude','haiku','gpt5','gpt5mini','gpt5nano','openai','deepseek'];
+function renderProvSelect(){
+  const sel=$i('prov-sel');
+  const avail=PREF_ORDER.filter(id=>providers[id]?.hasKey&&!providers[id]?.hidden);
+  // also include any with keys not in pref list
+  Object.keys(providers).forEach(id=>{if(!providers[id]?.hidden&&providers[id]?.hasKey&&!avail.includes(id))avail.push(id);});
+  sel.innerHTML=avail.map(id=>`<option value="${id}">${x(providers[id].name)}</option>`).join('');
+  if(!sel.value&&avail[0])sel.value=avail[0];
+  updateCostEst();
+}
+function updateCostEst(){
+  const pid=$i('prov-sel').value,p=providers[pid];
+  if(!p||!csvRows.length||!enrichCols.length){$i('cost-badge').textContent='';return;}
+  const useWeb=$i('ws-chk').checked;
+  const per=(p.inputCost*2000/1e6)+(p.outputCost*1500/1e6)+(useWeb?(p.webCostPerCall||0):0);
+  $i('cost-badge').textContent=`~${fmtCost(per*csvRows.length)}`;
 }
 
-async function delJob(id) {
-  if (!confirm('Delete this job?')) return;
-  await api('DELETE', '/api/jobs/' + id);
-  loadJobs();
+// ── File Upload ───────────────────────────────────────────────────────────────
+function setupDrop(){
+  const zone=$i('upload-zone'),box=$i('uz-box');
+  zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('drag');});
+  zone.addEventListener('dragleave',()=>zone.classList.remove('drag'));
+  zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)readFile(f);});
 }
-
-function dlExport(id) {
-  const a = document.createElement('a'); a.href = '/api/export/' + id + '?token=' + token; a.download = ''; a.click();
-}
-
-function viewJob(id) {
-  curJobId = id; rowData = {}; curSections = []; allRows = []; tblPage = 0; sseQueue = [];
-  document.getElementById('ni-res').classList.remove('hide');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  document.getElementById('res-title').textContent = 'Results';
-  document.getElementById('res-sub').textContent = '';
-  document.getElementById('done-stats').classList.add('hide');
-  document.getElementById('res-head').innerHTML = '';
-  document.getElementById('res-body').innerHTML = '<tr><td colspan="99" style="text-align:center;padding:28px"><div class="spin" style="margin:auto"></div></td></tr>';
-  document.getElementById('btn-cancel').classList.add('hide');
-  document.getElementById('btn-resume').classList.add('hide');
-  document.getElementById('btn-export').classList.remove('hide');
-  document.getElementById('log-wrap').classList.add('hide');
-  document.getElementById('log-wrap').innerHTML = '';
-  nav('res');
-  openSSE(id);
-}
-
-async function viewAuditJob(id) {
-  try {
-    const res = await fetch('/api/audit-row/' + id + '?token=' + token);
-    if (!res.ok) { toast('Could not load audit result', 'err'); return; }
-    const data = await res.json();
-    const tmp = document.createElement('div');
-    renderAudit(data, tmp);
-    document.getElementById('det-title').textContent = data.finalUrl || data.url || 'Audit Result';
-    document.getElementById('det-body').innerHTML = tmp.innerHTML;
-    document.getElementById('det-mo').classList.remove('hide');
-  } catch(e) { toast(e.message, 'err'); }
-}
-
-// ── SSE ───────────────────────────────────────────────────────────────────────
-function openSSE(id) {
-  if (sse) { sse.close(); sse = null; }
-  document.getElementById('live-dot').classList.remove('hide');
-  sse = new EventSource('/api/stream/' + id + '?token=' + token);
-  sse.onmessage = e => onMsg(JSON.parse(e.data));
-  sse.onerror = () => { document.getElementById('live-dot').classList.add('hide'); };
-}
-
-// Progress update throttle
-let progRafPending = false;
-let lastProgMsg = null;
-function scheduleProgUpdate(m) {
-  lastProgMsg = m;
-  if (!progRafPending) {
-    progRafPending = true;
-    requestAnimationFrame(() => {
-      progRafPending = false;
-      if (!lastProgMsg) return;
-      const pm = lastProgMsg;
-      const pct = pm.total > 0 ? Math.round((pm.succeeded + pm.failed) / pm.total * 100) : 0;
-      document.getElementById('prog-bar').style.width = pct + '%';
-      document.getElementById('prog-txt').textContent = `${pm.succeeded + pm.failed} / ${pm.total} processed`;
-      document.getElementById('prog-ct').textContent = `✓ ${pm.succeeded}  ✗ ${pm.failed}`;
-      document.getElementById('prog-cur').textContent = pm.current ? 'Processing: ' + pm.current : '';
-    });
-  }
-}
-
-function onMsg(m) {
-  if (m.type === 'meta') {
-    if (m.sections?.length) { curSections = m.sections; renderResHead(); }
-    return;
-  }
-  if (m.type === 'result') { queueSSEResult(m); return; }
-  if (m.type === 'progress') { scheduleProgUpdate(m); document.getElementById('btn-cancel').classList.remove('hide'); document.getElementById('btn-export').classList.remove('hide'); return; }
-  if (m.type === 'done') {
-    if (sse) { sse.close(); sse = null; }
-    document.getElementById('live-dot').classList.add('hide');
-    document.getElementById('btn-cancel').classList.add('hide');
-    if (m.status === 'paused') { document.getElementById('btn-resume').classList.remove('hide'); toast('Job paused — resume when ready', 'info'); }
-    else if (m.status === 'complete') toast(`Done — ${m.succeeded} succeeded, ${m.failed} failed`, 'ok');
-    else if (m.status === 'error') toast('Job ended with errors', 'err');
-    const ds = document.getElementById('done-stats'); ds.classList.remove('hide');
-    document.getElementById('st-ok').textContent = m.succeeded;
-    document.getElementById('st-fail').textContent = m.failed;
-    document.getElementById('st-cost').textContent = '$' + parseFloat(m.cost||0).toFixed(4);
-    document.getElementById('st-time').textContent = Math.round(parseFloat(m.elapsed||0)) + 's';
-    const tt = m.totalTokens || 0;
-    document.getElementById('st-tok').textContent = tt > 1000 ? (tt/1000).toFixed(1)+'k' : tt;
-    document.getElementById('prog-bar').style.width = '100%';
-    document.getElementById('prog-txt').textContent = `Done — ${m.succeeded} succeeded, ${m.failed} failed`;
-    return;
-  }
-  if (m.type === 'log') {
-    const lw = document.getElementById('log-wrap'); lw.classList.remove('hide');
-    const d = document.createElement('div'); d.className = 'log-l ' + (m.level||'');
-    d.textContent = `[${new Date().toLocaleTimeString()}] ${m.msg}`;
-    lw.appendChild(d); lw.scrollTop = lw.scrollHeight;
-    if (m.level === 'error') toast(m.msg.slice(0,80), 'err', 5000);
-    return;
-  }
-}
-
-function renderResHead() {
-  const cols = ['#', 'Company', 'Status', ...curSections.map(s => s.label), 'Quality', 'Tokens', 'Cost', ''];
-  document.getElementById('res-head').innerHTML = cols.map(c => `<th>${x(c)}</th>`).join('');
-}
-
-function renderResRowInto(tr, m) {
-  const r = m.research || {};
-  const secCells = curSections.length
-    ? curSections.map(s => { const v = r[s.key] || ''; return `<td class="rc" title="${x(v)}">${x(v.slice(0,180))}</td>`; }).join('')
-    : (r._raw ? `<td class="rc">${x(String(r._raw||'').slice(0,180))}</td>` : '<td></td>');
-  const q = m.quality || 0;
-  const qc = q >= 70 ? 'hi' : q >= 40 ? 'md' : 'lo';
-  const toks = (m.inputTokens||0) + (m.outputTokens||0);
-  const tokS = toks > 1000 ? (toks/1000).toFixed(1)+'k' : toks;
-  const retry = m.status === 'error' ? `<button class="btn bg bsm" onclick="retryRow(${m.idx})" title="Retry">↻</button>` : '';
-  tr.innerHTML = `
-    <td style="color:var(--muted)">${m.idx+1}</td>
-    <td class="co">${x(m.company)}</td>
-    <td><span class="badge b-${m.status}">${m.status==='error'?'✗ '+x((m.error||'').slice(0,40)):m.status}</span></td>
-    ${secCells}
-    <td>${q>0?`<span class="sm">${q}%</span><span class="qbar"><span class="qfill ${qc}" style="width:${q}%"></span></span>`:''}</td>
-    <td class="mono sm" style="color:var(--muted)">${tokS}</td>
-    <td class="mono sm" style="color:var(--muted)">${m.cost?'$'+m.cost.toFixed(4):''}</td>
-    <td><div class="flex" style="gap:4px">
-      <button class="btn bg bsm" onclick="showDet(${m.idx})"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      ${retry}
-    </div></td>`;
-  if (!document.getElementById('res-head').children.length) renderResHead();
-}
-
-function renderResRow(m) {
-  // Legacy single-row update (used by retryRow)
-  rowData[m.idx] = m;
-  if (!allRows.includes(m.idx)) allRows.push(m.idx);
-  renderPagedTable();
-}
-
-function showDet(idx) {
-  const row = rowData[idx]; if (!row) return;
-  document.getElementById('det-title').textContent = row.company;
-  const r = row.research || {};
-  let html = '';
-  if (row.status === 'error') {
-    html = `<div class="alert ae">${x(row.error||'Unknown error')}</div>`;
-  } else if (curSections.length && r._parsed) {
-    html = curSections.map(s => `<div class="sec-item"><div class="sec-lbl">${x(s.label)}</div><div class="sec-val">${x(r[s.key]||'—')}</div></div>`).join('');
-  } else {
-    const raw = r._raw || JSON.stringify(r, null, 2);
-    html = `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.6;color:var(--text)">${x(raw)}</pre>`;
-  }
-  document.getElementById('det-body').innerHTML = html;
-  document.getElementById('det-mo').classList.remove('hide');
-}
-function closeDet() { document.getElementById('det-mo').classList.add('hide'); }
-
-async function doCancel() { if (curJobId) await api('POST', '/api/cancel/' + curJobId).catch(()=>{}); }
-async function doResume() {
-  if (!curJobId) return;
-  await api('POST', '/api/resume/' + curJobId);
-  document.getElementById('btn-resume').classList.add('hide');
-  openSSE(curJobId);
-}
-function doExport() { if (curJobId) dlExport(curJobId); }
-
-async function retryRow(idx) {
-  if (!curJobId) return;
-  try {
-    const r = await api('POST', `/api/retry/${curJobId}/${idx}`);
-    rowData[idx] = { ...rowData[idx], ...r, idx };
-    renderResRow({ ...r, idx, company: rowData[idx]?.company || '' });
-    toast('Row queued for retry', 'info');
-  } catch(e) { toast(e.message, 'err'); }
-}
-
-// ── Wizard ────────────────────────────────────────────────────────────────────
-function resetWizard() {
-  selTmpl = null; csvRaw = ''; csvHdrs = []; csvRows = []; colMap = {}; totalRows = 0;
-  explicitSecs = null; useWeb = true; selProv = null;
-  goStepRaw(1);
-  renderTmpls();
-  document.getElementById('web-tgl').className = 'tgl on';
-  document.getElementById('sys-prompt').value = '';
-  document.getElementById('csv-prev').classList.add('hide');
-  document.getElementById('btn-next2').disabled = true;
-  document.getElementById('btn-next1').disabled = true;
-  document.getElementById('col-prev-wrap').innerHTML = '<span style="font-size:12px;color:var(--muted)">Click Refresh to detect output columns from your prompt</span>';
-  document.getElementById('col-prev-warn').classList.add('hide');
-  document.getElementById('fi').value = '';
-  api('GET', '/api/providers').then(p => { providers = p; renderProvs(); }).catch(()=>{});
-}
-
-function goStep(n) {
-  if (n === 3) buildColMapUI();
-  if (n === 4) { renderProvs(); scheduleColPreview(); }
-  goStepRaw(n);
-}
-
-function goStepRaw(n) {
-  [1,2,3,4].forEach(i => {
-    document.getElementById('ws'+i).classList.toggle('hide', i !== n);
-    const num = document.getElementById('sn'+i);
-    const lbl = document.getElementById('sl'+i);
-    if (i < n) { num.className='sn done'; num.innerHTML='✓'; lbl.className='slbl done'; }
-    else if (i === n) { num.className='sn act'; num.textContent=i; lbl.className='slbl act'; }
-    else { num.className='sn pend'; num.textContent=i; lbl.className='slbl'; }
-    if (i < 4) { const d = document.getElementById('sd'+i); if(d) d.className='sdiv'+(i<n?' done':''); }
-  });
-}
-
-// ── Templates ─────────────────────────────────────────────────────────────────
-function renderTmpls() {
-  document.getElementById('tmpl-grid').innerHTML = Object.entries(templates).map(([id, t]) =>
-    `<div class="tc ${selTmpl===id?'on':''}" onclick="selTemplate('${id}')">
-      <div class="t-icon">${t.icon}</div>
-      <div class="t-name">${x(t.name)}</div>
-      <div class="t-desc">${x(t.desc)}</div>
-    </div>`
-  ).join('');
-}
-
-function selTemplate(id) {
-  selTmpl = id;
-  explicitSecs = templates[id]?.sections?.length ? templates[id].sections : null;
-  document.getElementById('sys-prompt').value = templates[id]?.prompt || '';
-  document.getElementById('btn-next1').disabled = false;
-  renderTmpls();
-}
-
-// ── CSV ───────────────────────────────────────────────────────────────────────
-function initUpload() {
-  const uz = document.getElementById('uz');
-  uz.addEventListener('dragover', e => { e.preventDefault(); uz.classList.add('over'); });
-  uz.addEventListener('dragleave', () => uz.classList.remove('over'));
-  uz.addEventListener('drop', e => { e.preventDefault(); uz.classList.remove('over'); const f = e.dataTransfer.files[0]; if(f) readFile(f); });
-}
-
-function onFile(e) { const f = e.target.files[0]; if(f) { readFile(f); e.target.value = ''; } }
-
-function isExcel(f) { return /\.(xlsx|xls)$/i.test(f.name); }
-
-function readFile(f) {
-  if (isExcel(f)) {
-    const r = new FileReader();
-    r.onload = e => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const recs = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        if (recs.length < 2) { alert('Excel sheet needs at least 1 header + 1 data row'); return; }
-        csvHdrs = recs[0].map(h => String(h ?? '').trim());
-        csvRows = recs.slice(1)
-          .map(row => { const o = {}; csvHdrs.forEach((h, i) => o[h] = String(row[i] ?? '').trim()); return o; })
-          .filter(row => Object.values(row).some(v => v));
-        totalRows = csvRows.length;
-        csvRaw = XLSX.utils.sheet_to_csv(ws);
-        colMap = autoGuess();
-        showCSVPreview();
-      } catch(err) { alert('Could not read Excel file: ' + err.message); }
-    };
+function onFile(e){const f=e.target.files[0];if(f){readFile(f);e.target.value='';}}
+function isExcel(f){return/\.(xlsx|xls)$/i.test(f.name);}
+function readFile(f){
+  if(isExcel(f)){
+    const r=new FileReader();
+    r.onload=e=>{try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const recs=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      if(recs.length<2){alert('Excel needs at least 1 header + 1 data row');return;}
+      csvHdrs=recs[0].map(h=>String(h??'').trim());
+      csvRows=recs.slice(1).map(row=>{const o={};csvHdrs.forEach((h,i)=>o[h]=String(row[i]??'').trim());return o;}).filter(row=>Object.values(row).some(v=>v));
+      onDataLoaded();
+    }catch(err){alert('Could not read Excel: '+err.message);}};
     r.readAsArrayBuffer(f);
-  } else {
-    const r = new FileReader();
-    r.onload = e => { csvRaw = e.target.result; parseCSV(); };
-    r.readAsText(f, 'utf-8');
+  }else{
+    const r=new FileReader();
+    r.onload=e=>parseCSV(e.target.result);
+    r.readAsText(f,'utf-8');
   }
 }
-
-function showCSVPreview() {
-  document.getElementById('btn-next2').disabled = false;
-  const prev = document.getElementById('csv-prev'); prev.classList.remove('hide');
-  const show = csvHdrs.slice(0, 6);
-  prev.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:10px"><strong>${totalRows}</strong> rows · <strong>${csvHdrs.length}</strong> columns</div>
-    <div style="overflow-x:auto"><table class="tbl" style="font-size:12px">
-      <thead><tr>${show.map(h=>`<th>${x(h)}</th>`).join('')}${csvHdrs.length>6?`<th style="color:var(--muted)">+${csvHdrs.length-6} more</th>`:''}</tr></thead>
-      <tbody>${csvRows.slice(0,4).map(row=>`<tr>${show.map(h=>`<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x(row[h]||'')}</td>`).join('')}${csvHdrs.length>6?'<td></td>':''}</tr>`).join('')}</tbody>
-    </table></div>`;
+function parseCSV(raw){
+  let text=raw;if(text.charCodeAt(0)===0xfeff)text=text.slice(1);
+  text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const fl=text.split('\n')[0]||'';
+  const delim=(fl.match(/\t/g)||[]).length>(fl.match(/,/g)||[]).length?'\t':',';
+  const recs=[];let cur=[],fld='',inQ=false;
+  for(let i=0;i<text.length;i++){const c=text[i];
+    if(inQ){if(c==='"'){if(text[i+1]==='"'){fld+='"';i++;}else inQ=false;}else fld+=c;}
+    else{if(c==='"')inQ=true;else if(c===delim){cur.push(fld.trim());fld='';}else if(c==='\n'){cur.push(fld.trim());if(cur.length>1||cur[0]!=='')recs.push(cur);cur=[];fld='';}else fld+=c;}}
+  cur.push(fld.trim());if(cur.length>1||cur[0]!=='')recs.push(cur);
+  if(recs.length<2){alert('CSV needs at least 1 header + 1 data row');return;}
+  csvHdrs=recs[0].map(h=>h.replace(/^["']|["']$/g,'').trim());
+  csvRows=recs.slice(1).map(r=>{const o={};csvHdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim());return o;}).filter(r=>Object.values(r).some(v=>v));
+  onDataLoaded();
 }
-
-function parseCSV() {
-  let text = csvRaw;
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-  const fl = text.split('\n')[0] || '';
-  const delim = (fl.match(/\t/g)||[]).length > (fl.match(/,/g)||[]).length ? '\t' : ',';
-  const recs = []; let cur=[], fld='', inQ=false;
-  for (let i=0; i<text.length; i++) {
-    const c = text[i];
-    if (inQ) { if(c==='"'){if(text[i+1]==='"'){fld+='"';i++;}else inQ=false;}else fld+=c; }
-    else { if(c==='"')inQ=true; else if(c===delim){cur.push(fld.trim());fld='';} else if(c==='\n'){cur.push(fld.trim());if(cur.length>1||cur[0]!=='')recs.push(cur);cur=[];fld='';}else fld+=c; }
+function autoGuess(){
+  const map={};
+  const g={company:['company','company_name','business name','business','organization','name','firm','account'],website:['url','website','web','domain','site'],email:['email','email_address','e-mail'],contact:['contact','contact_name','person','first name'],title:['title','job_title','role','position'],phone:['phone','telephone','mobile'],industry:['industry','sector','vertical']};
+  for(const [role,terms] of Object.entries(g)){
+    let f=csvHdrs.find(h=>terms.some(t=>h.toLowerCase().trim()===t));
+    if(!f)f=csvHdrs.find(h=>terms.some(t=>h.toLowerCase().includes(t)));
+    map[role]=f||'';
   }
-  cur.push(fld.trim()); if(cur.length>1||cur[0]!=='')recs.push(cur);
-  if (recs.length < 2) { alert('CSV needs at least 1 header + 1 data row'); return; }
-  csvHdrs = recs[0].map(h => h.replace(/^["']|["']$/g,'').trim());
-  csvRows = recs.slice(1).map(r => { const o={}; csvHdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
-  totalRows = csvRows.length;
-  colMap = autoGuess();
-  showCSVPreview();
-}
-
-function autoGuess() {
-  const map = {};
-  const g = {company:['company','company_name','business name','business','organization','name','firm','account'],website:['url','website','web','domain','site'],email:['email','email_address','e-mail','mail'],contact:['contact','contact_name','person','full name','first name'],title:['title','job_title','role','position'],phone:['phone','telephone','mobile','cell'],address:['address','location','city'],industry:['industry','sector','vertical','category'],notes:['notes','additional_info','description','context','comments']};
-  for (const [role, terms] of Object.entries(g)) {
-    let f = csvHdrs.find(h => terms.some(t => h.toLowerCase().trim() === t));
-    if (!f) f = csvHdrs.find(h => terms.some(t => h.toLowerCase().includes(t)));
-    map[role] = f || '';
-  }
-  const sample = csvRows.slice(0,4); const used = new Set(Object.values(map).filter(Boolean));
-  for (const h of csvHdrs) {
-    if (used.has(h)) continue;
-    const vals = sample.map(r=>(r[h]||'').trim()).filter(Boolean);
-    if (!map.website && vals.some(v=>/^https?:\/\/|www\.|\.com|\.org|\.net|\.io/i.test(v))) { map.website=h; used.add(h); }
-    if (!map.email && vals.some(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))) { map.email=h; used.add(h); }
-  }
+  const sample=csvRows.slice(0,4);const used=new Set(Object.values(map).filter(Boolean));
+  for(const h of csvHdrs){if(used.has(h))continue;const vals=sample.map(r=>(r[h]||'').trim()).filter(Boolean);
+    if(!map.website&&vals.some(v=>/^https?:\/\/|www\.|\.com|\.io/i.test(v))){map.website=h;used.add(h);}
+    if(!map.email&&vals.some(v=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v))){map.email=h;used.add(h);}}
   return map;
 }
+function onDataLoaded(){
+  colMap=autoGuess();rowResults={};rowStatuses={};
+  // Show company selector if not detected
+  if(!colMap.company){
+    $i('no-company-banner').classList.remove('hide');
+    $i('company-sel').innerHTML=csvHdrs.map(h=>`<option value="${x(h)}">${x(h)}</option>`).join('');
+    colMap.company=csvHdrs[0]||'';
+    $i('company-sel').value=colMap.company;
+  }else{$i('no-company-banner').classList.add('hide');}
+  $i('upload-zone').classList.add('hide');
+  $i('sheet-view').classList.remove('hide');
+  $i('row-count').textContent=csvRows.length+' rows';
+  updateCostEst();
+  renderTable();
+}
+function resetSheet(){
+  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;
+  if(sse){sse.close();sse=null;}
+  $i('upload-zone').classList.remove('hide');$i('fi').value='';
+  $i('sheet-view').classList.add('hide');
+  $i('btn-run').disabled=false;$i('btn-run').textContent='▶ Run';
+  $i('run-progress').classList.add('hide');
+}
 
-function buildColMapUI() {
-  const roles = [{k:'company',l:'Company *'},{k:'website',l:'Website URL'},{k:'contact',l:'Contact Name'},{k:'title',l:'Job Title'},{k:'email',l:'Email'},{k:'phone',l:'Phone'},{k:'address',l:'Address/City'},{k:'industry',l:'Industry'},{k:'notes',l:'Notes'}];
-  const opts = '<option value="">— not mapped —</option>' + csvHdrs.map(h=>`<option value="${x(h)}">${x(h)}</option>`).join('');
-  document.getElementById('cm-grid').innerHTML = roles.map(r=>`
-    <div class="cm-row">
-      <div class="cm-lbl">${x(r.l)}</div>
-      <select class="fi" id="cm-${r.k}" onchange="colMap['${r.k}']=this.value" style="font-size:12px">${opts}</select>
+// ── Table Rendering ───────────────────────────────────────────────────────────
+function renderTable(){
+  const VISIBLE=150;// show first 150 rows for performance
+  // Head
+  const head=$i('tbl-head');
+  head.innerHTML=`<th class="th-rn">#</th>`+
+    csvHdrs.map(h=>`<th class="th-in">${x(h)}</th>`).join('')+
+    enrichCols.map((c,i)=>`<th class="th-en" onclick="openDrawer(${i})" title="Click to edit"><div class="th-en-inner">${x(c.label)}<span class="th-en-edit">✎</span></div></th>`).join('')+
+    `<th class="th-add" onclick="addBlankCol()" title="Add column">+</th>`;
+  // Body
+  const tbody=$i('tbl-body');tbody.innerHTML='';
+  const shown=Math.min(VISIBLE,csvRows.length);
+  for(let i=0;i<shown;i++){tbody.appendChild(buildRow(i));}
+  if(csvRows.length>VISIBLE){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="td-rn"></td><td colspan="${csvHdrs.length+enrichCols.length+1}" style="text-align:center;font-size:12px;color:#94a3b8;padding:12px">${csvRows.length-VISIBLE} more rows (all will be researched)</td>`;
+    tbody.appendChild(tr);
+  }
+}
+function buildRow(i){
+  const row=csvRows[i];
+  const tr=document.createElement('tr');
+  let html=`<td class="td-rn">${i+1}</td>`;
+  csvHdrs.forEach(h=>{html+=`<td class="td-in" title="${x(row[h]||'')}">${x((row[h]||'').slice(0,80))}</td>`;});
+  enrichCols.forEach(c=>{
+    const st=rowStatuses[i]?.[c.key];
+    const val=rowResults[i]?.[c.key];
+    if(st==='running')html+=`<td class="td-en td-empty" id="cell-${i}-${c.key}"><span class="spin-cell"></span></td>`;
+    else if(st==='done'&&val)html+=`<td class="td-en" id="cell-${i}-${c.key}" onclick="openDet(${i})" title="${x(String(val).slice(0,200))}">${x(String(val).slice(0,120))}${String(val).length>120?'…':''}</td>`;
+    else if(st==='error')html+=`<td class="td-en td-err-cell" id="cell-${i}-${c.key}" title="Error">Error</td>`;
+    else html+=`<td class="td-en td-empty" id="cell-${i}-${c.key}">—</td>`;
+  });
+  tr.innerHTML=html;
+  return tr;
+}
+function updateCell(idx,key,status,val){
+  if(!rowStatuses[idx])rowStatuses[idx]={};
+  rowStatuses[idx][key]=status;
+  if(!rowResults[idx])rowResults[idx]={};
+  if(val!=null)rowResults[idx][key]=val;
+  const el=$i(`cell-${idx}-${key}`);
+  if(!el)return;
+  if(status==='running'){el.innerHTML='<span class="spin-cell"></span>';el.className='td-en td-empty';}
+  else if(status==='done'&&val){el.innerHTML=x(String(val).slice(0,120))+(String(val).length>120?'…':'');el.className='td-en';el.title=x(String(val).slice(0,300));el.onclick=()=>openDet(idx);}
+  else if(status==='error'){el.innerHTML='Error';el.className='td-en td-err-cell';}
+}
+
+// ── Column Management ─────────────────────────────────────────────────────────
+function labelToKey(label){return label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40)||'col_'+(enrichCols.length+1);}
+function addBlankCol(){
+  enrichCols.push({key:'col_'+(enrichCols.length+1),label:'New Column',desc:''});
+  renderTable();updateCostEst();
+  openDrawer(enrichCols.length-1);
+}
+function openDrawer(idx){
+  drawerIdx=idx;
+  const c=enrichCols[idx];
+  $i('drw-name').value=c.label;
+  $i('drw-desc').value=c.desc||'';
+  $i('drw-key-preview').textContent='key: '+c.key;
+  $i('drawer-bg').classList.remove('hide');
+  $i('col-drawer').classList.remove('hide');
+  $i('drw-name').focus();$i('drw-name').select();
+}
+function drwUpdateKey(){
+  const key=labelToKey($i('drw-name').value);
+  $i('drw-key-preview').textContent='key: '+key;
+}
+function closeDrawer(){$i('drawer-bg').classList.add('hide');$i('col-drawer').classList.add('hide');drawerIdx=-1;}
+function saveDrawerCol(){
+  if(drawerIdx<0)return;
+  const label=$i('drw-name').value.trim()||'Column';
+  enrichCols[drawerIdx]={key:labelToKey(label),label,desc:$i('drw-desc').value.trim()};
+  closeDrawer();renderTable();updateCostEst();
+}
+function deleteDrawerCol(){
+  if(drawerIdx<0)return;
+  enrichCols.splice(drawerIdx,1);
+  closeDrawer();renderTable();updateCostEst();
+}
+
+// ── Template Modal ────────────────────────────────────────────────────────────
+function openTmplModal(){
+  const grid=$i('tmpl-grid');
+  grid.innerHTML=Object.entries(templates).filter(([id])=>id!=='website-audit').map(([id,t])=>`
+    <div class="tc" onclick="loadTemplate('${id}')">
+      <div class="tc-icon">${t.icon||'📋'}</div>
+      <div class="tc-name">${x(t.name)}</div>
+      <div class="tc-desc">${x(t.desc||'')}</div>
     </div>`).join('');
-  roles.forEach(r => { const s = document.getElementById('cm-'+r.k); if(s&&colMap[r.k]) s.value=colMap[r.k]; });
+  $i('tmpl-modal').classList.remove('hide');
+}
+function closeTmplModal(){$i('tmpl-modal').classList.add('hide');}
+function loadTemplate(id){
+  const t=templates[id];if(!t)return;
+  enrichCols=(t.sections||[]).map(s=>({key:s.key,label:s.label,desc:s.desc||getSectionHint(s.key)||''}));
+  closeTmplModal();renderTable();updateCostEst();
+  toast(`Loaded "${t.name}" — ${enrichCols.length} columns added`,'ok');
+}
+const SECTION_HINTS={company_snapshot:'What the company does, who they serve, size and stage',recent_triggers:'Recent news, funding, hiring, product launches, leadership changes',pain_points:'Top 3 business challenges and problems they face',personalization_hooks:'Specific details to personalize outreach — team, product, values',outreach_angle:'Best opening line and angle for cold email',linkedin_url:'LinkedIn company page URL',website_url:'Company website URL',tech_stack:'Key technologies, tools, and platforms they use',key_contacts:'Names and titles of key decision makers',competitive_landscape:'Main competitors and market position'};
+function getSectionHint(key){return SECTION_HINTS[key]||'';}
+
+// ── AI Columns Modal ──────────────────────────────────────────────────────────
+function openAIModal(){$i('ai-modal').classList.remove('hide');$i('ai-desc').focus();}
+function closeAIModal(){$i('ai-modal').classList.add('hide');$i('ai-preview').classList.add('hide');$i('ai-modal-ft').classList.add('hide');aiSuggestedCols=[];}
+async function generateCols(){
+  const desc=$i('ai-desc').value.trim();
+  if(!desc){toast('Describe what you want to research','err');return;}
+  const btn=$i('btn-gen');btn.disabled=true;btn.textContent='Generating…';
+  const d=await api('POST','/api/generate-sections',{desc});
+  btn.disabled=false;btn.textContent='Generate Columns';
+  if(!d||d.error){toast(d?.error||'Generation failed','err');return;}
+  aiSuggestedCols=(d.sections||[]).map(s=>({key:s.key||labelToKey(s.label),label:s.label,desc:s.desc||s.description||''}));
+  $i('ai-preview').classList.remove('hide');
+  $i('ai-preview').innerHTML=`<div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:10px">${aiSuggestedCols.length} columns suggested:</div>`+
+    aiSuggestedCols.map((c,i)=>`<div style="padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px">
+      <div style="font-weight:600;font-size:13px">${x(c.label)}</div>
+      <div style="font-size:12px;color:#64748b;margin-top:3px">${x(c.desc||'—')}</div>
+    </div>`).join('');
+  $i('ai-modal-ft').classList.remove('hide');
+}
+function applyAICols(){
+  enrichCols=[...enrichCols,...aiSuggestedCols];
+  closeAIModal();renderTable();updateCostEst();
+  toast(`Added ${aiSuggestedCols.length} columns`,'ok');
 }
 
-// ── Providers ──────────────────────────────────────────────────────────────────────
-function renderProvs() {
-  const grid = document.getElementById('prov-grid');
-  let first = null;
-  // Prefer gemini3flash as default, then first available
-  const preferred = ['gemini3flash','gemini','claude','haiku','gpt5','openai','deepseek'];
-  grid.innerHTML = Object.entries(providers).map(([id, p]) => {
-    if (p.hasKey && !first) {
-      const prefIdx = preferred.indexOf(id);
-      if (!first || (prefIdx >= 0 && prefIdx < preferred.indexOf(first))) first = id;
+// ── Run Research ──────────────────────────────────────────────────────────────
+function buildSystemPrompt(){
+  if(!enrichCols.length)return'You are a B2B researcher. Research the prospect thoroughly.';
+  const secs=enrichCols.map((c,i)=>`${i+1}. **${c.label}**${c.desc?' — '+c.desc:''}`).join('\n');
+  return`You are a senior B2B researcher. For each company, research and provide:\n\n${secs}\n\nBe specific, accurate, and actionable.`;
+}
+async function runResearch(){
+  if(!csvRows.length){toast('Upload a CSV first','err');return;}
+  if(!enrichCols.length){toast('Add at least one research column','err');return;}
+  if(!colMap.company){toast('Select the company name column','err');return;}
+  const pid=$i('prov-sel').value;
+  if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
+  const btn=$i('btn-run');btn.disabled=true;btn.textContent='Running…';
+  $i('run-progress').classList.remove('hide');
+  $i('prog-fill').style.width='0%';$i('prog-txt').textContent='Starting…';
+  // Mark all enrichment cells as pending
+  csvRows.forEach((_,i)=>{rowStatuses[i]={};enrichCols.forEach(c=>{rowStatuses[i][c.key]='running';});});
+  renderTable();
+  const rows=csvRows.map(r=>({company:r[colMap.company]||'',website:r[colMap.website]||'',contact:r[colMap.contact]||'',title:r[colMap.title]||'',email:r[colMap.email]||'',phone:r[colMap.phone]||'',address:r[colMap.address]||'',industry:r[colMap.industry]||'',notes:r[colMap.notes]||''}));
+  const d=await api('POST','/api/research',{rows,colMap,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),provider:pid,useWebSearch:$i('ws-chk').checked,jobName:''});
+  if(!d||d.error){toast(d?.error||'Failed to start job','err');btn.disabled=false;btn.textContent='▶ Run';$i('run-progress').classList.add('hide');return;}
+  curJobId=d.jobId;
+  toast('Research started!','ok');
+  openSSE(d.jobId);
+}
+function openSSE(jobId){
+  if(sse)sse.close();
+  sse=new EventSource('/api/stream/'+jobId+'?token='+token);
+  sse.onmessage=e=>{try{onSSEMsg(JSON.parse(e.data));}catch{}};
+  sse.onerror=()=>{sse.close();sse=null;};
+}
+function onSSEMsg(m){
+  if(m.type==='result'){
+    const idx=m.idx;
+    if(m.status==='error'){
+      enrichCols.forEach(c=>updateCell(idx,c.key,'error',null));
+    }else{
+      const res=m.research||{};
+      enrichCols.forEach(c=>{
+        const val=res[c.key]!=null?res[c.key]:(res._raw||null);
+        updateCell(idx,c.key,val!=null?'done':'error',val);
+      });
     }
-    const isRec = id === 'gemini3flash';
-    return `<div class="pc ${!p.hasKey?'nk':''} ${selProv===id?'on':''}" onclick="${p.hasKey?`pickProv('${id}')`:''}"
-      title="${p.hasKey?'':'Add API key in Settings'}">
-      ${isRec ? '<span class="p-rec" title="Recommended">★</span>' : ''}
-      <div class="pn">${x(p.name)}</div>
-      <div class="pr">$${p.inputCost}/M in · $${p.outputCost}/M out</div>
-      <div class="pk ${p.hasKey?'ok':'no'}">${p.hasKey?'Ready':'No key'}</div>
-    </div>`;
-  }).join('');
-  if (!selProv && first) pickProv(first);
-  updateEst();
-}
-function pickProv(id) {
-  selProv = id;
-  document.querySelectorAll('.pc').forEach((c,i) => c.classList.toggle('on', Object.keys(providers)[i] === id));
-  updateEst();
+  }else if(m.type==='progress'){
+    const pct=m.pct||Math.round((m.done||0)/(m.total||1)*100);
+    $i('prog-fill').style.width=pct+'%';
+    $i('prog-txt').textContent=(m.done||0)+' / '+(m.total||csvRows.length);
+  }else if(m.type==='done'){
+    if(sse){sse.close();sse=null;}
+    $i('btn-run').disabled=false;$i('btn-run').textContent='▶ Run';
+    $i('run-progress').classList.add('hide');
+    const ok=m.succeeded||0,fail=m.failed||0;
+    toast(`Done! ${ok} succeeded${fail?' · '+fail+' failed':''}${m.cost?' · '+fmtCost(m.cost):''}`,'ok',5000);
+  }
 }
 
-function toggleWeb() {
-  useWeb = !useWeb;
-  document.getElementById('web-tgl').className = 'tgl' + (useWeb?' on':'');
-  updateEst();
+// ── Row Detail Modal ──────────────────────────────────────────────────────────
+function openDet(idx){
+  const row=csvRows[idx];const res=rowResults[idx]||{};
+  $i('det-title').textContent=(row[colMap.company]||'Row '+(idx+1));
+  let html='';
+  // Input data
+  html+=`<div class="det-sec"><div class="det-lbl">Input Data</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">`;
+  csvHdrs.forEach(h=>{if(row[h])html+=`<div><span style="color:#94a3b8">${x(h)}: </span><span>${x(row[h])}</span></div>`;});
+  html+=`</div></div>`;
+  // Research results
+  enrichCols.forEach(c=>{
+    const val=res[c.key];
+    html+=`<div class="det-sec"><div class="det-lbl">${x(c.label)}</div><div class="det-val">${val?x(String(val)):'<span style="color:#94a3b8">—</span>'}</div></div>`;
+  });
+  $i('det-body').innerHTML=html;
+  $i('det-modal').classList.remove('hide');
 }
+function closeDetModal(){$i('det-modal').classList.add('hide');}
 
-function updateEst() {
-  const el = document.getElementById('run-est');
-  if (!selProv || !totalRows) { el.textContent=''; return; }
-  const p = providers[selProv]; if (!p) return;
-  const perRow = (p.inputCost*2000/1e6) + (p.outputCost*1500/1e6) + (useWeb&&p.webSearch?(p.webCostPerCall||0):0);
-  el.textContent = `~$${(perRow*totalRows).toFixed(2)} estimated · ${totalRows} rows`;
+// ── Jobs ──────────────────────────────────────────────────────────────────────
+async function loadJobs(){
+  $i('jobs-list').innerHTML='<div class="lc"><div class="spin"></div>Loading…</div>';
+  const jobs=await api('GET','/api/jobs');
+  if(!jobs||jobs.error){$i('jobs-list').innerHTML=`<div class="alert ae">${x(jobs?.error||'Failed')}</div>`;return;}
+  if(!jobs.length){$i('jobs-list').innerHTML='<div class="empty-state"><h3>No jobs yet</h3><p>Upload a CSV in the Table tab and click Run to get started.</p></div>';return;}
+  $i('jobs-list').innerHTML=`<table class="jobs-tbl">
+    <thead><tr><th>Name</th><th>Provider</th><th>Status</th><th>Rows</th><th>Cost</th><th>Created</th><th>Actions</th></tr></thead>
+    <tbody>${jobs.map(j=>`<tr>
+      <td class="td-name" title="${x(j.name)}">${x(j.name)}${j.isAudit?` <span class="badge b-audit">Audit</span>`:''}</td>
+      <td style="font-size:12px;color:#64748b">${x(j.providerName||j.provider)}</td>
+      <td><span class="badge b-${j.status}">${j.status}</span></td>
+      <td style="font-size:12px">${j.succeeded||0}/${j.total_rows||0}</td>
+      <td style="font-size:12px;font-family:monospace">${fmtCost(j.cost)}</td>
+      <td style="font-size:12px;color:#64748b">${ago(j.created_at)}</td>
+      <td class="td-actions">
+        ${j.isAudit?`<button class="btn bs sm" onclick="viewAuditJob(${j.id},'${x(j.name)}')">View</button>`:`<button class="btn bs sm" onclick="viewJob(${j.id},'${x(j.name)}')">View</button><button class="btn bs sm" onclick="exportJob(${j.id})">Export</button>`}
+        <button class="btn bd sm" onclick="deleteJob(${j.id},this)">Delete</button>
+      </td>
+    </tr>`).join('')}</tbody>
+  </table>`;
 }
-
-// ── Column Preview ────────────────────────────────────────────────────────────
-function scheduleColPreview() {
-  clearTimeout(colPreviewTimer);
-  colPreviewTimer = setTimeout(refreshColPreview, 1200);
+async function deleteJob(id,btn){
+  if(!confirm('Delete this job and all its results?'))return;
+  btn.disabled=true;
+  await api('DELETE','/api/jobs/'+id);
+  loadJobs();
 }
+function exportJob(id){const a=document.createElement('a');a.href='/api/export/'+id+'?token='+token;a.download='';a.click();}
 
-async function refreshColPreview() {
-  const wrap = document.getElementById('col-prev-wrap');
-  const warn = document.getElementById('col-prev-warn');
-  const prompt = document.getElementById('sys-prompt').value.trim();
-  warn.classList.add('hide');
+// ── Results Pane ──────────────────────────────────────────────────────────────
+let resJobData=null;
+function viewJob(id,name){
+  resJobId=id;resJobData=null;resSections=[];
+  $i('res-job-name').textContent=name;
+  $i('res-status-badge').innerHTML='';
+  $i('res-head').innerHTML='';$i('res-body').innerHTML='<tr><td colspan="99"><div class="lc"><div class="spin"></div>Loading…</div></td></tr>';
+  $i('res-progress').classList.add('hide');
+  $i('nav-results').style.display='';
+  nav('results');
+  openResSse(id);
+}
+function openResSse(id){
+  if(resSse)resSse.close();
+  resSse=new EventSource('/api/stream/'+id+'?token='+token);
+  resSse.onmessage=e=>{try{onResSseMsg(JSON.parse(e.data));}catch{}};
+  resSse.onerror=()=>{resSse.close();resSse=null;};
+}
+function onResSseMsg(m){
+  if(m.type==='meta'){
+    resSections=m.sections||[];
+    $i('res-head').innerHTML='<th>#</th><th>Company</th>'+resSections.map(s=>`<th>${x(s.label||s.key)}</th>`).join('')+'<th>Quality</th><th>Actions</th>';
+    $i('res-body').innerHTML='';
+  }else if(m.type==='result'){
+    const tr=document.createElement('tr');
+    const res=m.research||{};
+    const q=m.quality||0;
+    const qColor=q>=70?'#16a34a':q>=40?'#ca8a04':'#dc2626';
+    tr.innerHTML=`<td style="color:#94a3b8;font-size:11px">${m.idx+1}</td>
+      <td class="td-company">${x(m.company||'')}</td>`+
+      resSections.map(s=>{const v=res[s.key];return`<td class="td-research" onclick="openResDetModal(this,'${x(s.label||s.key)}','${x(v?String(v).replace(/'/g,"\\'"):'')}')" title="${x(v?String(v).slice(0,200):'')}">${v?x(String(v).slice(0,100))+(String(v).length>100?'…':''):'<span style="color:#cbd5e1">—</span>'}</td>`;}).join('')+
+      `<td style="font-size:11px;color:${qColor}">${q}%</td>
+      <td><button class="btn bg sm" onclick="retryResRow(${resJobId},${m.idx},this)">↺</button></td>`;
+    $i('res-body').appendChild(tr);
+  }else if(m.type==='progress'){
+    $i('res-progress').classList.remove('hide');
+    $i('res-prog-fill').style.width=(m.pct||0)+'%';
+    $i('res-prog-txt').textContent=(m.done||0)+' / '+(m.total||'?');
+  }else if(m.type==='done'){
+    if(resSse){resSse.close();resSse=null;}
+    $i('res-progress').classList.add('hide');
+    $i('res-status-badge').innerHTML=`<span class="badge b-${m.status}">${m.status}</span>`;
+    if(m.cost)$i('res-status-badge').innerHTML+=` <span style="font-size:12px;color:#64748b;margin-left:6px">${fmtCost(m.cost)}</span>`;
+  }
+}
+function openResDetModal(td,label,val){
+  $i('det-title').textContent=label;
+  $i('det-body').innerHTML=`<div class="det-val">${x(val||'—')}</div>`;
+  $i('det-modal').classList.remove('hide');
+}
+async function retryResRow(jobId,rowIdx,btn){
+  btn.disabled=true;btn.textContent='…';
+  await api('POST','/api/retry/'+jobId+'/'+rowIdx);
+  btn.disabled=false;btn.textContent='↺';
+  toast('Retrying row…','info');
+}
+function exportResJob(){if(resJobId)exportJob(resJobId);}
 
-  if (!prompt) {
-    wrap.innerHTML = '<span style="font-size:12px;color:var(--muted)">Enter a prompt above to see what output columns will be generated</span>';
+// ── Audit Job Viewer (from Jobs tab) ──────────────────────────────────────────
+async function viewAuditJob(id,name){
+  const d=await api('GET','/api/bulk-audit-rows/'+id);
+  if(!d||d.error){
+    // Try single audit
+    const single=await api('GET','/api/audit-row/'+id);
+    if(!single||single.error){toast('Could not load audit','err');return;}
+    // Show in modal
+    $i('det-title').textContent=name;
+    const div=document.createElement('div');renderAudit(single,div);
+    $i('det-body').innerHTML='';$i('det-body').appendChild(div);
+    $i('det-modal').classList.remove('hide');
     return;
   }
-
-  wrap.innerHTML = '<div class="flex" style="gap:8px;padding:4px"><div class="spin"></div><span style="font-size:12px;color:var(--muted)">Detecting columns...</span></div>';
-
-  try {
-    // Use preview-prompt if we have CSV, otherwise just extract from prompt text
-    let sections = explicitSecs || [];
-
-    if (!sections.length && csvRaw) {
-      const r = await api('POST', '/api/preview-prompt', {
-        csv: csvRaw,
-        systemPrompt: prompt,
-        colMapOverride: colMap,
-        explicitSections: undefined
-      });
-      sections = r.sections || [];
-    } else if (!sections.length) {
-      // Client-side extraction fallback: parse numbered bold items
-      const matches = [...prompt.matchAll(/(?:^|\n)\s*\d+\.\s*\*\*(.+?)\*\*/gm)];
-      if (matches.length >= 2) {
-        sections = matches.map((m, i) => ({
-          key: m[1].toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40),
-          label: m[1].replace(/^(?:\d+\.\s*)?/, '').trim()
-        }));
-      }
-    }
-
-    if (sections.length) {
-      wrap.innerHTML = sections.map(s =>
-        `<span class="col-chip" title="${x(s.key)}">${x(s.label)}</span>`
-      ).join('');
-      // Update explicitSecs if not already set
-      if (!explicitSecs || !explicitSecs.length) {
-        explicitSecs = sections;
-      }
-      if (sections.length < 2) {
-        warn.innerHTML = '<div class="alert aw" style="margin:0">Only 1 column detected. Add more numbered sections to your prompt for structured output.</div>';
-        warn.classList.remove('hide');
-      }
-    } else {
-      wrap.innerHTML = '<span style="font-size:12px;color:var(--muted)">No structured columns detected. Use numbered sections in your prompt (e.g. <strong>1. **Company Snapshot**</strong>) for structured output.</span>';
-      warn.innerHTML = '<div class="alert aw" style="margin:0">Without structured sections, results will be returned as unstructured text.</div>';
-      warn.classList.remove('hide');
-    }
-  } catch(e) {
-    wrap.innerHTML = `<span style="font-size:12px;color:var(--err)">${x(e.message)}</span>`;
-  }
-}
-
-// ── Prompt Builder Modal ──────────────────────────────────────────────────────
-function openBuilder() {
-  bldrSections = [];
-  document.getElementById('bldr-desc').value = '';
-  document.getElementById('bldr-err').classList.add('hide');
-  document.getElementById('bldr-step-a').classList.remove('hide');
-  document.getElementById('bldr-step-b').classList.add('hide');
-  document.getElementById('btn-bldr-apply').classList.add('hide');
-  document.getElementById('btn-bldr-back').classList.add('hide');
-  document.getElementById('btn-bldr-gen').disabled = false;
-  document.getElementById('btn-bldr-gen').textContent = 'Generate with AI';
-  document.getElementById('builder-mo').classList.remove('hide');
-}
-
-function closeBuilder() { document.getElementById('builder-mo').classList.add('hide'); }
-
-function bldrBack() {
-  document.getElementById('bldr-step-a').classList.remove('hide');
-  document.getElementById('bldr-step-b').classList.add('hide');
-  document.getElementById('btn-bldr-apply').classList.add('hide');
-  document.getElementById('btn-bldr-back').classList.add('hide');
-}
-
-async function runBuilder() {
-  const desc = document.getElementById('bldr-desc').value.trim();
-  const errEl = document.getElementById('bldr-err');
-  errEl.classList.add('hide');
-  if (desc.length < 10) { errEl.textContent = 'Please describe what you want to research (at least 10 characters)'; errEl.classList.remove('hide'); return; }
-
-  const btn = document.getElementById('btn-bldr-gen');
-  btn.disabled = true; btn.textContent = 'Generating...';
-
-  try {
-    const r = await api('POST', '/api/generate-sections', { description: desc });
-    bldrSections = (r.sections || []).map(s => ({ ...s }));
-    document.getElementById('bldr-prompt').value = r.prompt || '';
-    renderBldrSections();
-    document.getElementById('bldr-step-a').classList.add('hide');
-    document.getElementById('bldr-step-b').classList.remove('hide');
-    document.getElementById('btn-bldr-apply').classList.remove('hide');
-    document.getElementById('btn-bldr-back').classList.remove('hide');
-  } catch(e) {
-    errEl.textContent = e.message; errEl.classList.remove('hide');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Generate with AI';
-  }
-}
-
-function bldrLabelToKey(label) {
-  return label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
-}
-
-function bldrUpdateLabel(i, val) {
-  bldrSections[i].label = val;
-  bldrSections[i].key = bldrLabelToKey(val);
-  const keyEl = document.getElementById('bldr-key-' + i);
-  if (keyEl) keyEl.textContent = bldrSections[i].key;
-}
-
-function bldrUpdateDesc(i, val) {
-  bldrSections[i].desc = val;
-}
-
-function renderBldrSections() {
-  document.getElementById('bldr-sec-count').textContent = `(${bldrSections.length} columns)`;
-  document.getElementById('bldr-secs').innerHTML = bldrSections.map((s, i) => `
-    <div class="builder-sec">
-      <div class="builder-sec-num">${i+1}</div>
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;gap:8px;align-items:center">
-          <input class="fi" value="${x(s.label)}" oninput="bldrUpdateLabel(${i},this.value)" style="font-size:12px;padding:4px 8px;flex:1" placeholder="Column name">
-          <span class="builder-sec-key mono" id="bldr-key-${i}">${x(s.key)}</span>
-        </div>
-        <input class="fi" value="${x(s.desc||'')}" oninput="bldrUpdateDesc(${i},this.value)" style="font-size:11px;padding:3px 8px;margin-top:4px;color:var(--muted)" placeholder="Instruction for AI (e.g. Find the CEO name and LinkedIn URL)">
+  // Bulk audit results
+  $i('det-title').textContent=name+' ('+d.rows.length+' sites)';
+  $i('det-body').innerHTML=d.rows.map(r=>`
+    <div style="margin-bottom:20px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+      <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-weight:600;font-size:13px">${x(r.company||r.idx+1)}</span>
+        <span class="badge b-${r.status==='success'?'done':'err'}">${r.status}</span>
       </div>
-      <button class="builder-sec-del" onclick="bldrRemoveSection(${i})">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
+      ${r.data?`<div style="padding:14px">${buildMiniAudit(r.data)}</div>`:`<div style="padding:14px;font-size:12px;color:#ef4444">${x(r.error||'No data')}</div>`}
     </div>`).join('');
+  $i('det-modal').classList.remove('hide');
+}
+function buildMiniAudit(data){
+  const m=data.metrics||{};
+  const sc=v=>v!=null?`<span class="${scoreClass(v)}" style="font-weight:700">${v}</span>`:'-';
+  return`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px;margin-bottom:10px">
+    <div style="text-align:center"><div>${sc(m.performance)}</div><div style="color:#94a3b8">Perf</div></div>
+    <div style="text-align:center"><div>${sc(m.seo)}</div><div style="color:#94a3b8">SEO</div></div>
+    <div style="text-align:center"><div>${sc(m.accessibility)}</div><div style="color:#94a3b8">Access</div></div>
+    <div style="text-align:center"><div>${sc(m.bestPractices)}</div><div style="color:#94a3b8">BP</div></div>
+  </div>
+  <div style="font-size:11px;color:#64748b">${(data.issues||[]).length} issues · ${(data.elapsedMs||0)/1000|0}s</div>`;
 }
 
-function bldrRemoveSection(i) {
-  bldrSections.splice(i, 1);
-  renderBldrSections();
+// ── Website Audit (Single) ─────────────────────────────────────────────────────
+function showAuditTab(tab,btn){
+  document.querySelectorAll('.at').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  $i('audit-single').classList.toggle('hide',tab!=='single');
+  $i('audit-bulk').classList.toggle('hide',tab!=='bulk');
+}
+async function runAudit(){
+  const urlVal=$i('aud-url').value.trim();
+  if(!urlVal){alert('Enter a URL to audit');return;}
+  const btn=$i('btn-aud');btn.disabled=true;btn.textContent='Auditing…';
+  let elapsed=0;const timer=setInterval(()=>{elapsed+=3;btn.textContent=`Auditing… ${elapsed}s`;},3000);
+  $i('aud-result').innerHTML='<div class="lc"><div class="spin spin-lg"></div><div>Audit running in background — results save to Jobs tab even if you close this page.</div></div>';
+  try{
+    const init=await api('POST','/api/audit-website',{url:urlVal});
+    if(!init||init.error)throw new Error(init?.error||'Failed to start audit');
+    const jobId=init.jobId;
+    while(true){
+      await new Promise(r=>setTimeout(r,3000));
+      const data=await api('GET','/api/audit-row/'+jobId);
+      if(!data||data.status==='running')continue;
+      if(data.status==='error')throw new Error(data.error||'Audit failed');
+      renderAudit(data,$i('aud-result'));break;
+    }
+  }catch(e){$i('aud-result').innerHTML=`<div class="alert ae">${x(e.message)}</div>`;}
+  finally{clearInterval(timer);btn.disabled=false;btn.textContent='Run Audit';}
 }
 
-function bldrAddSection() {
-  bldrSections.push({ key: 'column_' + (bldrSections.length + 1), label: 'New Column', desc: '' });
-  renderBldrSections();
-  // Focus the label input of the new row
-  const inputs = document.getElementById('bldr-secs').querySelectorAll('input.fi');
-  if (inputs.length >= 2) {
-    const last = inputs[inputs.length - 2]; // label input (before desc input)
-    last.focus(); last.select();
-  }
-}
-
-function applyBuilder() {
-  const prompt = document.getElementById('bldr-prompt').value;
-  document.getElementById('sys-prompt').value = prompt;
-  if (bldrSections.length) {
-    explicitSecs = bldrSections.map(s => ({ key: s.key, label: s.label, desc: s.desc || '' }));
-  }
-  closeBuilder();
-  refreshColPreview();
-}
-
-// ── Preview Prompt ────────────────────────────────────────────────────────────
-async function previewPrompt() {
-  if (!csvRaw) { alert('Upload a CSV file first (Step 2)'); return; }
-  try {
-    const r = await api('POST', '/api/preview-prompt', { csv:csvRaw, systemPrompt:document.getElementById('sys-prompt').value, colMapOverride:colMap, explicitSections:explicitSecs||undefined });
-    document.getElementById('prev-body').innerHTML = `
-      <div class="fg"><div class="fl">System Prompt (sent to AI)</div><pre style="background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;white-space:pre-wrap;max-height:220px">${x(r.systemPrompt||'')}</pre></div>
-      <div class="fg mt12"><div class="fl">User Message (first row example)</div><pre style="background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;white-space:pre-wrap">${x(r.userMessage||'')}</pre></div>
-      ${r.sections?.length?`<div class="fg mt12"><div class="fl">Output Columns (${r.sections.length})</div><div style="margin-top:6px">${r.sections.map(s=>`<span class="col-chip">${x(s.label)}</span>`).join('')}</div></div>`:''}`;
-    document.getElementById('prev-mo').classList.remove('hide');
-  } catch(e) { alert('Preview failed: ' + e.message); }
-}
-
-// ── Start Job ─────────────────────────────────────────────────────────────────
-async function startJob() {
-  if (!selProv) { alert('Select an AI provider'); return; }
-  if (!csvRaw) { alert('Upload a CSV file'); return; }
-  if (!colMap.company) { alert('Map the Company column in Step 3'); return; }
-  const btn = document.getElementById('btn-run');
-  btn.disabled = true; btn.textContent = 'Starting...';
-  try {
-    const r = await api('POST', '/api/research', {
-      csv: csvRaw, provider: selProv, useWebSearch: useWeb,
-      systemPrompt: document.getElementById('sys-prompt').value,
-      colMapOverride: colMap, templateId: selTmpl || 'custom',
-      explicitSections: explicitSecs?.length ? explicitSecs : undefined
-    });
-    curJobId = r.jobId; rowData = {}; curSections = [];
-    document.getElementById('ni-res').classList.remove('hide');
-    document.getElementById('res-title').textContent = `Research — ${r.total} prospects`;
-    document.getElementById('res-sub').textContent = 'Using ' + r.provider;
-    document.getElementById('done-stats').classList.add('hide');
-    document.getElementById('res-head').innerHTML = '';
-    document.getElementById('res-body').innerHTML = '<tr data-ld><td colspan="99" style="text-align:center;padding:24px;color:var(--muted)">Starting...</td></tr>';
-    document.getElementById('btn-cancel').classList.remove('hide');
-    document.getElementById('btn-resume').classList.add('hide');
-    document.getElementById('btn-export').classList.remove('hide');
-    document.getElementById('prog-bar').style.width = '0%';
-    document.getElementById('prog-txt').textContent = 'Queued...';
-    document.getElementById('log-wrap').classList.add('hide');
-    document.getElementById('log-wrap').innerHTML = '';
-    nav('res');
-    openSSE(curJobId);
-    toast(`Research started — ${r.total} rows queued`, 'ok');
-  } catch(e) { toast('Failed: ' + e.message, 'err'); }
-  finally { btn.disabled=false; btn.textContent='Run Research'; }
-}
-
-// ── Audit mode toggle ─────────────────────────────────────────────────────────
-function setAudMode(mode) {
-  document.getElementById('aud-single').classList.toggle('hide', mode !== 'single');
-  document.getElementById('aud-bulk').classList.toggle('hide', mode !== 'bulk');
-  document.getElementById('aud-tab-single').classList.toggle('on', mode === 'single');
-  document.getElementById('aud-tab-bulk').classList.toggle('on', mode !== 'single');
-  document.getElementById('bulk-export-btn').classList.toggle('hide', mode !== 'bulk' || !bulkResults.length);
-}
-
-// ── Bulk audit state ──────────────────────────────────────────────────────────
-let bulkCsvRows = [];
-let bulkCsvHdrs = [];
-let bulkResults = [];
-let bulkRunning = false;
-let bulkShouldStop = false;
-
-// Pagination state
-const BULK_PAGE_SIZE = 50;
-let bulkPage = 0;        // 0-indexed current page
-let bulkFollowing = true; // auto-follow the active row
-let bulkActiveIdx = -1;  // index of the row currently being processed
-
-function bulkTotalPages() { return Math.max(1, Math.ceil(bulkResults.length / BULK_PAGE_SIZE)); }
-function bulkPageForIdx(idx) { return Math.floor(idx / BULK_PAGE_SIZE); }
-
-function bulkGoPage(p) {
-  const total = bulkTotalPages();
-  p = Math.max(0, Math.min(p, total - 1));
-  if (p === bulkPage && document.getElementById('bulk-tbody').children.length > 0) return;
-  bulkPage = p;
-  // Detach follow when user manually navigates
-  const activePageForCurrent = bulkActiveIdx >= 0 ? bulkPageForIdx(bulkActiveIdx) : -1;
-  if (bulkFollowing && p !== activePageForCurrent && bulkRunning) {
-    bulkFollowing = false;
-    updateBulkFollowBtn();
-  }
-  renderBulkPage();
-}
-
-function toggleBulkFollow() {
-  bulkFollowing = !bulkFollowing;
-  updateBulkFollowBtn();
-  if (bulkFollowing && bulkActiveIdx >= 0) {
-    bulkPage = bulkPageForIdx(bulkActiveIdx);
-    renderBulkPage();
-  }
-}
-
-function updateBulkFollowBtn() {
-  const btn = document.getElementById('bulk-follow-btn');
-  if (!btn) return;
-  if (bulkFollowing) {
-    btn.textContent = '\u{1F4CC} Following';
-    btn.style.background = 'var(--pr)';
-    btn.style.color = '#fff';
-  } else {
-    btn.textContent = '\u{1F441} Browse mode';
-    btn.style.background = 'var(--bg2)';
-    btn.style.color = 'var(--tx)';
-  }
-}
-
-function renderBulkPage() {
-  const start = bulkPage * BULK_PAGE_SIZE;
-  const end = Math.min(start + BULK_PAGE_SIZE, bulkResults.length);
-  const pageRows = bulkResults.slice(start, end);
-  document.getElementById('bulk-tbody').innerHTML = pageRows.map(r => bulkRowHtml(r)).join('');
-  // Update pagination controls
-  const total = bulkTotalPages();
-  document.getElementById('bulk-pag-info').textContent =
-    `Page ${bulkPage + 1} of ${total}  ·  rows ${start + 1}–${end} of ${bulkResults.length}`;
-  document.getElementById('bulk-pag-prev').disabled = bulkPage === 0;
-  document.getElementById('bulk-pag-next').disabled = bulkPage >= total - 1;
-}
-
-function onBulkFile(e) {
-  const f = e.target.files[0]; if (!f) return;
-  e.target.value = '';
-  if (isExcel(f)) {
-    const r = new FileReader();
-    r.onload = ev => {
-      try {
-        const wb = XLSX.read(ev.target.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const recs = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        if (recs.length < 2) { alert('Excel sheet needs at least 1 header + 1 data row'); return; }
-        const hdrs = recs[0].map(h => String(h ?? '').trim());
-        const rows = recs.slice(1)
-          .map(row => { const o = {}; hdrs.forEach((h, i) => o[h] = String(row[i] ?? '').trim()); return o; })
-          .filter(row => Object.values(row).some(v => v));
-        parseBulkData(hdrs, rows);
-      } catch(err) { alert('Could not read Excel file: ' + err.message); }
-    };
+// ── Website Audit (Bulk) ──────────────────────────────────────────────────────
+function onBulkFile(e){
+  const f=e.target.files[0];if(!f)return;
+  e.target.value='';
+  if(isExcel(f)){
+    const r=new FileReader();
+    r.onload=ev=>{try{
+      const wb=XLSX.read(ev.target.result,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const recs=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      if(recs.length<2){alert('Excel needs header + data rows');return;}
+      const hdrs=recs[0].map(h=>String(h??'').trim());
+      const rows=recs.slice(1).map(row=>{const o={};hdrs.forEach((h,i)=>o[h]=String(row[i]??'').trim());return o;}).filter(r=>Object.values(r).some(v=>v));
+      setupBulkConfig(hdrs,rows);
+    }catch(err){alert('Could not read Excel: '+err.message);}};
     r.readAsArrayBuffer(f);
-  } else {
-    const r = new FileReader();
-    r.onload = ev => { parseBulkCSV(ev.target.result); };
-    r.readAsText(f, 'utf-8');
+  }else{
+    const r=new FileReader();
+    r.onload=ev=>parseBulkCSV(ev.target.result);
+    r.readAsText(f,'utf-8');
   }
 }
-
-function parseBulkCSV(raw) {
-  let text = raw;
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-  const fl = text.split('\n')[0] || '';
-  const delim = (fl.match(/\t/g)||[]).length > (fl.match(/,/g)||[]).length ? '\t' : ',';
-  const recs = []; let cur=[], fld='', inQ=false;
-  for (let i=0; i<text.length; i++) {
-    const c = text[i];
-    if (inQ) { if(c==='"'){if(text[i+1]==='"'){fld+='"';i++;}else inQ=false;}else fld+=c; }
-    else { if(c==='"')inQ=true; else if(c===delim){cur.push(fld.trim());fld='';} else if(c==='\n'){cur.push(fld.trim());if(cur.length>1||cur[0]!=='')recs.push(cur);cur=[];fld='';}else fld+=c; }
-  }
-  cur.push(fld.trim()); if(cur.length>1||cur[0]!=='')recs.push(cur);
-  if (recs.length < 2) { alert('CSV needs at least 1 header + 1 data row'); return; }
-  const hdrs = recs[0].map(h => h.replace(/^["']|["']$/g,'').trim());
-  const rows = recs.slice(1).map(r => { const o={}; hdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
-  parseBulkData(hdrs, rows);
+function parseBulkCSV(raw){
+  let text=raw;if(text.charCodeAt(0)===0xfeff)text=text.slice(1);
+  text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const fl=text.split('\n')[0]||'';
+  const delim=(fl.match(/\t/g)||[]).length>(fl.match(/,/g)||[]).length?'\t':',';
+  const recs=[];let cur=[],fld='',inQ=false;
+  for(let i=0;i<text.length;i++){const c=text[i];
+    if(inQ){if(c==='"'){if(text[i+1]==='"'){fld+='"';i++;}else inQ=false;}else fld+=c;}
+    else{if(c==='"')inQ=true;else if(c===delim){cur.push(fld.trim());fld='';}else if(c==='\n'){cur.push(fld.trim());if(cur.length>1||cur[0]!=='')recs.push(cur);cur=[];fld='';}else fld+=c;}}
+  cur.push(fld.trim());if(cur.length>1||cur[0]!=='')recs.push(cur);
+  if(recs.length<2){alert('CSV needs header + data rows');return;}
+  const hdrs=recs[0].map(h=>h.replace(/^["']|["']$/g,'').trim());
+  const rows=recs.slice(1).map(r=>{const o={};hdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim());return o;}).filter(r=>Object.values(r).some(v=>v));
+  setupBulkConfig(hdrs,rows);
 }
-
-function parseBulkData(hdrs, rows) {
-  bulkCsvHdrs = hdrs;
-  bulkCsvRows = rows;
-
-  // Auto-detect URL and company columns
-  const urlTerms = ['url','website','web','domain','site','link','webpage'];
-  const compTerms = ['company','company_name','business','organization','name','firm','account'];
-  const autoUrl = bulkCsvHdrs.find(h => urlTerms.some(t => h.toLowerCase().includes(t))) || '';
-  const autoComp = bulkCsvHdrs.find(h => compTerms.some(t => h.toLowerCase().includes(t))) || '';
-  // Also detect by value pattern
-  const sample = bulkCsvRows.slice(0,4);
-  let valUrl = autoUrl;
-  if (!valUrl) {
-    for (const h of bulkCsvHdrs) {
-      if (sample.some(r => /^https?:\/\/|www\.|\.com|\.net|\.io|\.org/i.test(r[h]||''))) { valUrl = h; break; }
-    }
-  }
-
-  const opts = '<option value="">— select —</option>' + bulkCsvHdrs.map(h => `<option value="${x(h)}">${x(h)}</option>`).join('');
-  const compOpts = '<option value="">— none —</option>' + bulkCsvHdrs.map(h => `<option value="${x(h)}">${x(h)}</option>`).join('');
-  document.getElementById('bulk-col-url').innerHTML = opts;
-  document.getElementById('bulk-col-company').innerHTML = compOpts;
-  if (valUrl) document.getElementById('bulk-col-url').value = valUrl;
-  if (autoComp) document.getElementById('bulk-col-company').value = autoComp;
-
-  document.getElementById('bulk-preview-info').textContent = `${bulkCsvRows.length} rows loaded · ${bulkCsvHdrs.length} columns`;
-  document.getElementById('bulk-run-info').textContent = `~${Math.ceil(bulkCsvRows.length * 45 / 60)} min estimated`;
-  document.getElementById('bulk-upload-area').classList.add('hide');
-  document.getElementById('bulk-map-area').classList.remove('hide');
+function setupBulkConfig(hdrs,rows){
+  bulkHdrs=hdrs;bulkRows=rows;
+  const urlTerms=['url','website','web','domain','site','link'];
+  const compTerms=['company','company_name','business','organization','name'];
+  const autoUrl=hdrs.find(h=>urlTerms.some(t=>h.toLowerCase().includes(t)))||'';
+  const autoComp=hdrs.find(h=>compTerms.some(t=>h.toLowerCase().includes(t)))||'';
+  let valUrl=autoUrl;
+  if(!valUrl){const sample=rows.slice(0,4);for(const h of hdrs){if(sample.some(r=>/^https?:\/\/|www\.|\.com/i.test(r[h]||''))){valUrl=h;break;}}}
+  const opts='<option value="">— select —</option>'+hdrs.map(h=>`<option value="${x(h)}">${x(h)}</option>`).join('');
+  $i('bulk-col-url').innerHTML=opts;$i('bulk-col-company').innerHTML='<option value="">— none —</option>'+hdrs.map(h=>`<option value="${x(h)}">${x(h)}</option>`).join('');
+  if(valUrl)$i('bulk-col-url').value=valUrl;
+  if(autoComp)$i('bulk-col-company').value=autoComp;
+  $i('bulk-info').textContent=rows.length+' rows loaded';
+  $i('bulk-uz').classList.add('hide');$i('bulk-config').classList.remove('hide');
 }
-
-// Concurrency pool: run N audits simultaneously
-// With API key: 5 concurrent is safe (400 req/100s quota, 2 PS calls per audit = 10 calls/audit-wave)
-// Without API key: reduce to 2 to stay under 25 req/100s
-const BULK_CONCURRENCY = 5;
-
-async function startBulkAudit() {
-  const urlCol = document.getElementById('bulk-col-url').value;
-  const compCol = document.getElementById('bulk-col-company').value;
-  if (!urlCol) { toast('Select the URL column', 'err'); return; }
-
-  const rows = bulkCsvRows.filter(r => (r[urlCol]||'').trim());
-  if (!rows.length) { toast('No valid URLs found in that column', 'err'); return; }
-
-  bulkResults = rows.map((r, i) => ({ idx: i, company: compCol ? r[compCol] : '', url: r[urlCol], status: 'pending', data: null, error: null }));
-  bulkRunning = true;
-  bulkShouldStop = false;
-  bulkPage = 0;
-  bulkFollowing = true;
-  bulkActiveIdx = -1;
-  updateBulkFollowBtn();
-
-  document.getElementById('bulk-results-area').classList.remove('hide');
-  document.getElementById('btn-bulk-run').textContent = 'Stop';
-  document.getElementById('btn-bulk-run').onclick = stopBulkAudit;
-  document.getElementById('bulk-export-btn').classList.add('hide');
-  renderBulkPage();
-
-  let done = 0;
-  const total = bulkResults.length;
-
-  // Concurrency pool: process up to BULK_CONCURRENCY rows simultaneously
-  let idx = 0;
-  async function runWorker() {
-    while (idx < bulkResults.length) {
-      if (bulkShouldStop) break;
-      const row = bulkResults[idx++];
-      row.status = 'running';
-      bulkActiveIdx = row.idx;
-
-      // Auto-follow: jump to the page containing the active row
-      if (bulkFollowing) {
-        const targetPage = bulkPageForIdx(row.idx);
-        if (targetPage !== bulkPage) {
-          bulkPage = targetPage;
-          renderBulkPage();
-        } else {
-          renderBulkRowInPage(row);
-        }
-      } else {
-        renderBulkRowInPage(row);
-      }
-
-      try {
-        const data = await api('POST', '/api/audit-website', { url: row.url });
-        row.status = 'done'; row.data = data;
-      } catch(e) {
-        row.status = 'error'; row.error = e.message;
-      }
-      done++;
-      const pct = Math.round(done / total * 100);
-      document.getElementById('bulk-prog-bar').style.width = pct + '%';
-      document.getElementById('bulk-prog-txt').textContent = `${done} / ${total} audited`;
-      document.getElementById('bulk-prog-ct').textContent = `✓ ${bulkResults.filter(r=>r.status==='done').length}  ✗ ${bulkResults.filter(r=>r.status==='error').length}`;
-      document.getElementById('bulk-prog-cur').textContent = `Running ${Math.min(BULK_CONCURRENCY, total - done)} in parallel...`;
-
-      // Update the row in the current page view if it's visible
-      if (bulkFollowing) {
-        const targetPage = bulkPageForIdx(row.idx);
-        if (targetPage !== bulkPage) {
-          bulkPage = targetPage;
-          renderBulkPage();
-        } else {
-          renderBulkRowInPage(row);
-        }
-      } else {
-        renderBulkRowInPage(row);
-      }
-    }
-  }
-
-  // Launch N workers simultaneously
-  const workers = Array.from({ length: Math.min(BULK_CONCURRENCY, total) }, runWorker);
-  await Promise.all(workers);
-
-  bulkRunning = false;
-  document.getElementById('bulk-prog-cur').textContent = bulkShouldStop ? 'Stopped.' : 'All done.';
-  document.getElementById('btn-bulk-run').textContent = 'Start Bulk Audit';
-  document.getElementById('btn-bulk-run').onclick = startBulkAudit;
-  document.getElementById('bulk-export-btn').classList.remove('hide');
-  toast(bulkShouldStop ? `Stopped at ${done}/${total}` : `Bulk audit complete — ${bulkResults.filter(r=>r.status==='done').length} done, ${bulkResults.filter(r=>r.status==='error').length} errors`, bulkShouldStop ? 'info' : 'ok', 6000);
+async function startBulkAudit(){
+  const urlCol=$i('bulk-col-url').value;
+  if(!urlCol){toast('Select the URL column','err');return;}
+  const compCol=$i('bulk-col-company').value;
+  const urls=bulkRows.filter(r=>(r[urlCol]||'').trim()).map(r=>({url:r[urlCol].trim(),company:compCol?r[compCol]||r[urlCol]:r[urlCol]}));
+  if(!urls.length){toast('No URLs found','err');return;}
+  const btn=$i('btn-bulk-run');btn.disabled=true;btn.textContent='Starting…';
+  const d=await api('POST','/api/bulk-audit',{urls,jobName:urls.length+' sites bulk audit'});
+  if(!d||d.error){toast(d?.error||'Failed','err');btn.disabled=false;btn.textContent='▶ Start Bulk Audit';return;}
+  bulkJobId=d.jobId;
+  $i('bulk-progress').classList.remove('hide');
+  $i('bulk-prog-txt').textContent='Running audit…';
+  btn.textContent='Running…';
+  pollBulkJob();
 }
-
-function stopBulkAudit() {
-  bulkShouldStop = true;
-  document.getElementById('btn-bulk-run').disabled = true;
-  document.getElementById('btn-bulk-run').textContent = 'Stopping...';
-}
-
-function resetBulkAudit() {
-  if (bulkRunning) { toast('Stop the audit first', 'err'); return; }
-  bulkResults = []; bulkCsvRows = []; bulkCsvHdrs = [];
-  bulkPage = 0; bulkFollowing = true; bulkActiveIdx = -1;
-  document.getElementById('bulk-upload-area').classList.remove('hide');
-  document.getElementById('bulk-map-area').classList.add('hide');
-  document.getElementById('bulk-results-area').classList.add('hide');
-  document.getElementById('bulk-export-btn').classList.add('hide');
-  document.getElementById('bulk-fi').value = '';
-  document.getElementById('btn-bulk-run').textContent = 'Start Bulk Audit';
-  document.getElementById('btn-bulk-run').onclick = startBulkAudit;
-  document.getElementById('btn-bulk-run').disabled = false;
-}
-
-// Render only the current page's rows into the tbody
-function renderBulkPage() {
-  const start = bulkPage * BULK_PAGE_SIZE;
-  const end = Math.min(start + BULK_PAGE_SIZE, bulkResults.length);
-  const pageRows = bulkResults.slice(start, end);
-  document.getElementById('bulk-tbody').innerHTML = pageRows.map(r => bulkRowHtml(r)).join('');
-  // Update pagination controls
-  const total = bulkTotalPages();
-  document.getElementById('bulk-pag-info').textContent =
-    `Page ${bulkPage + 1} of ${total}  \u00b7  rows ${start + 1}\u2013${end} of ${bulkResults.length}`;
-  document.getElementById('bulk-pag-prev').disabled = bulkPage === 0;
-  document.getElementById('bulk-pag-next').disabled = bulkPage >= total - 1;
-}
-
-// Update a single row in-place only if it's on the current page
-function renderBulkRowInPage(row) {
-  const start = bulkPage * BULK_PAGE_SIZE;
-  const end = start + BULK_PAGE_SIZE;
-  if (row.idx < start || row.idx >= end) return; // not on current page
-  const tbody = document.getElementById('bulk-tbody');
-  const existing = tbody.querySelector(`[data-bidx="${row.idx}"]`);
-  if (existing) {
-    existing.outerHTML = bulkRowHtml(row);
+async function pollBulkJob(){
+  if(!bulkJobId)return;
+  const jobs=await api('GET','/api/jobs');
+  const job=jobs?.find(j=>j.id===bulkJobId);
+  if(!job)return;
+  const pct=job.total_rows?Math.round((job.succeeded+job.failed)/job.total_rows*100):0;
+  $i('bulk-prog-fill').style.width=pct+'%';
+  $i('bulk-prog-txt').textContent=`${job.succeeded+job.failed} / ${job.total_rows} audited`;
+  $i('bulk-prog-ct').textContent=`✓ ${job.succeeded}  ✗ ${job.failed}`;
+  if(job.status==='running'||job.status==='pending'){
+    bulkPollTimer=setTimeout(pollBulkJob,4000);
+  }else{
+    // Done — load results
+    const r=await api('GET','/api/bulk-audit-rows/'+bulkJobId);
+    if(r&&r.rows){showBulkResults(r.rows);}
+    $i('btn-bulk-run').disabled=false;$i('btn-bulk-run').textContent='▶ Start Bulk Audit';
+    toast(`Bulk audit done: ${job.succeeded} succeeded, ${job.failed} failed`,job.failed?'info':'ok',5000);
   }
 }
-
-function bulkRowHtml(row) {
-  const m = row.data?.metrics || {};
-  const d = row.data?.desktop || {}; // desktop PageSpeed scores
-  const issues = row.data?.issues || [];
-  const crit = issues.filter(i=>i.severity==='critical').length;
-  const sc = v => v !== null && v !== undefined ? `<span style="font-weight:700;color:${v>=90?'var(--ok)':v>=50?'var(--warn)':'var(--err)'}">${v}</span>` : '<span style="color:var(--muted)">—</span>';
-  const statusBadge = row.status === 'pending' ? '<span class="badge b-pend">Pending</span>'
-    : row.status === 'running' ? '<span class="badge b-run"><span class="spin" style="width:10px;height:10px;border-width:1.5px;margin-right:4px"></span>Running</span>'
-    : row.status === 'error' ? `<span class="badge b-err" title="${x(row.error||'')}">Error</span>`
-    : '<span class="badge b-succ">Done</span>';
-  const detail = row.status === 'done'
-    ? `<button class="btn bg bsm" onclick="showBulkDetail(${row.idx})"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>`
-    : '';
-  return `<tr data-bidx="${row.idx}">
-    <td style="color:var(--muted)">${row.idx+1}</td>
-    <td class="co">${x(row.company || '—')}</td>
-    <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)">${x(row.url)}</td>
-    <td>${statusBadge}</td>
-    <td title="Mobile performance">${sc(m.performance)}</td>
-    <td title="Desktop performance">${sc(d.performance)}</td>
-    <td title="SEO score">${sc(m.seo)}</td>
-    <td title="Accessibility">${sc(m.accessibility)}</td>
-    <td>${row.status==='done'?issues.length:''}</td>
-    <td>${row.status==='done'&&crit?`<span style="color:var(--err);font-weight:700">${crit}</span>`:(row.status==='done'?'0':'')}</td>
-    <td style="font-size:11px;color:var(--muted)">${m.responseMs?m.responseMs+'ms':''}</td>
-    <td>${m.httpsWorks===true?'<span style="color:var(--ok)">✓</span>':m.httpsWorks===false?'<span style="color:var(--err)">✗</span>':''}</td>
-    <td>${detail}</td>
-  </tr>`;
+function showBulkResults(rows){
+  bulkResults=rows;
+  $i('bulk-results-area').classList.remove('hide');
+  $i('bulk-done-msg').textContent=`${rows.filter(r=>r.status==='success').length} / ${rows.length} sites audited`;
+  $i('bulk-thead').innerHTML='<th>#</th><th>Company / URL</th><th>Perf</th><th>SEO</th><th>Issues</th><th>Status</th>';
+  $i('bulk-tbody').innerHTML=rows.map((r,i)=>{
+    const m=r.data?.metrics||{};
+    const sc=v=>v!=null?`<span class="${scoreClass(v)}" style="font-weight:700">${v}</span>`:'—';
+    return`<tr>
+      <td style="color:#94a3b8">${i+1}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${x(r.company||'')}</td>
+      <td>${sc(m.performance)}</td><td>${sc(m.seo)}</td>
+      <td style="font-size:12px">${r.data?.issues?.length??'—'}</td>
+      <td><span class="badge b-${r.status==='success'?'done':'err'}">${r.status}</span></td>
+    </tr>`;
+  }).join('');
 }
-
-function showBulkDetail(idx) {
-  const row = bulkResults.find(r => r.idx === idx); if (!row?.data) return;
-  const tmp = document.createElement('div');
-  renderAudit(row.data, tmp);
-  document.getElementById('det-title').textContent = row.company || row.url;
-  document.getElementById('det-body').innerHTML = tmp.innerHTML;
-  document.getElementById('det-mo').classList.remove('hide');
-}
-
-function exportBulkCSV() {
-  const rows = bulkResults.filter(r => r.status === 'done' || r.status === 'error');
-  if (!rows.length) { toast('No results to export yet', 'err'); return; }
-
-  // Find the max number of issues across all rows so we can create enough issue columns
-  const maxIssues = Math.max(0, ...rows.map(r => (r.data?.issues || []).length));
-
-  // Build dynamic issue column headers (up to maxIssues)
-  const issueHeaders = [];
-  for (let i = 1; i <= maxIssues; i++) {
-    issueHeaders.push(`Issue ${i} Severity`, `Issue ${i} Category`, `Issue ${i} Title`, `Issue ${i} Description`);
-  }
-
-  const headers = [
-    'Company', 'URL', 'Status',
-    // PageSpeed scores
-    'Mobile Performance', 'Mobile SEO', 'Mobile Accessibility', 'Mobile Best Practices',
-    'Desktop Performance', 'Desktop SEO', 'Desktop Accessibility', 'Desktop Best Practices',
-    // Core Web Vitals
-    'FCP (Mobile)', 'LCP (Mobile)', 'CLS (Mobile)', 'TBT (Mobile)', 'Speed Index (Mobile)', 'TTI (Mobile)',
-    // Issue counts
-    'Issues Total', 'Critical', 'High', 'Medium', 'Low',
-    // Technical
-    'Response Ms', 'HTTPS Works', 'HTTP Redirects',
-    'Title', 'Title Length', 'Meta Desc Length',
-    'H1 Count', 'Has Viewport', 'Has Canonical', 'Has JSON-LD',
-    'Has Analytics', 'Has Sitemap', 'Has Favicon',
-    'Page HTML Size (KB)', 'Mixed Content Count',
-    'HSTS Header', 'X-Frame-Options', 'X-Content-Type-Options',
-    // All issues in full detail
-    ...issueHeaders
-  ];
-
-  const esc2 = v => '"' + String(v ?? '').replace(/"/g, '""').replace(/[\r\n]+/g, ' ') + '"';
-
-  const csvRows = rows.map(r => {
-    const m = r.data?.metrics || {};
-    const d = r.data?.desktop || {};
-    const issues = r.data?.issues || [];
-    const sev = (s) => issues.filter(i => i.severity === s).length;
-
-    // Build issue columns — pad to maxIssues with empty strings
-    const issueCols = [];
-    for (let i = 0; i < maxIssues; i++) {
-      const issue = issues[i];
-      issueCols.push(
-        issue?.severity ?? '',
-        issue?.category ?? '',
-        issue?.title ?? '',
-        issue?.detail ?? ''
-      );
-    }
-
-    return [
-      r.company, r.url, r.status,
-      // Mobile PageSpeed
-      m.performance ?? '', m.seo ?? '', m.accessibility ?? '', m.bestPractices ?? '',
-      // Desktop PageSpeed
-      d.performance ?? '', d.seo ?? '', d.accessibility ?? '', d.bestPractices ?? '',
-      // Core Web Vitals (mobile)
-      m.fcp ?? '', m.lcp ?? '', m.cls ?? '', m.tbt ?? '', m.speedIndex ?? '', m.tti ?? '',
-      // Issue counts
-      issues.length, sev('critical'), sev('high'), sev('medium'), sev('low'),
-      // Technical
-      m.responseMs ?? '', m.httpsWorks ?? '', m.httpRedirects ?? '',
-      m.title ?? '', m.titleLength ?? '', m.metaDescLength ?? '',
-      m.h1Count ?? '', m.viewport ?? '', m.hasCanonical ?? '', m.hasJsonLD ?? '',
-      m.hasAnalytics ?? '', m.hasSitemap ?? '', m.hasFavicon ?? '',
-      m.docSizeKB ?? '', m.mixedContentCount ?? '',
-      m.hsts ? 'Yes' : 'No', m.xFrame ? 'Yes' : 'No', m.xContentType ? 'Yes' : 'No',
-      // All issues
-      ...issueCols
-    ].map(esc2).join(',');
+function exportBulkCSV(){
+  if(!bulkResults.length){toast('No results yet','err');return;}
+  const headers=['#','Company/URL','Mobile Perf','Mobile SEO','Mobile Accessibility','Mobile BP','Desktop Perf','Desktop SEO','HTTPS','HTTP Redirect','FCP','LCP','Response MS','Issues Count','Status'];
+  const esc=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const csvRows=bulkResults.map((r,i)=>{
+    const m=r.data?.metrics||{};const d=r.data?.desktop||{};
+    return[i+1,r.company||'',m.performance??'',m.seo??'',m.accessibility??'',m.bestPractices??'',d.performance??'',d.seo??'',m.httpsWorks??'',m.httpRedirects??'',m.fcp??'',m.lcp??'',m.responseMs??'',(r.data?.issues||[]).length,r.status].map(esc).join(',');
   });
-
-  const blob = new Blob(['\uFEFF' + [headers.map(h => '"' + h + '"').join(','), ...csvRows].join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `website_audit_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  toast(`Exported ${rows.length} audit results (${maxIssues} issue columns)`, 'ok');
+  const blob=new Blob(['\uFEFF'+[headers.map(h=>'"'+h+'"').join(','),...csvRows].join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='bulk_audit_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+}
+function resetBulkAudit(){
+  bulkRows=[];bulkHdrs=[];bulkJobId=null;bulkResults=[];
+  if(bulkPollTimer){clearTimeout(bulkPollTimer);bulkPollTimer=null;}
+  $i('bulk-fi').value='';$i('bulk-uz').classList.remove('hide');$i('bulk-config').classList.add('hide');
+  $i('bulk-progress').classList.add('hide');$i('bulk-results-area').classList.add('hide');
+  $i('btn-bulk-run').disabled=false;$i('btn-bulk-run').textContent='▶ Start Bulk Audit';
 }
 
-// ── Website Audit (single) ────────────────────────────────────────────────────
-async function runAudit() {
-  const urlVal = document.getElementById('aud-url').value.trim();
-  if (!urlVal) { alert('Enter a URL to audit'); return; }
-  const btn = document.getElementById('btn-aud');
-  btn.disabled = true; btn.textContent = 'Auditing...';
-  const res = document.getElementById('aud-result');
-  res.innerHTML = `<div class="lc"><div class="spin spin-lg"></div><div>Running audit — this takes 30-60 seconds...</div></div>`;
-  try {
-    const data = await api('POST', '/api/audit-website', { url: urlVal });
-    renderAudit(data, res);
-  } catch(e) {
-    res.innerHTML = `<div class="alert ae">${x(e.message)}</div>`;
-  } finally {
-    btn.disabled = false; btn.textContent = 'Run Audit';
-  }
-}
-
-function scoreClass(n) {
-  if (n === null || n === undefined) return 'na';
-  return n >= 90 ? 'hi' : n >= 50 ? 'md' : 'lo';
-}
-
-function renderAudit(data, container) {
-  const m = data.metrics || {};
-  const issues = data.issues || [];
-  const sev = { critical: 0, high: 0, medium: 0, low: 0 };
-  issues.forEach(i => { if (sev[i.severity] !== undefined) sev[i.severity]++; });
-
-  const scoreBox = (val, label) => {
-    const sc = val !== null && val !== undefined ? val : null;
-    return `<div class="score-box"><div class="score-num ${scoreClass(sc)}">${sc !== null ? sc : '—'}</div><div class="score-lbl">${label}</div></div>`;
-  };
-
-  const metricRow = (label, val, cls='') => val !== undefined && val !== null
-    ? `<div class="metric-row"><span class="metric-key">${x(label)}</span><span class="metric-val ${cls}">${x(String(val))}</span></div>` : '';
-
-  const boolRow = (label, val, goodTrue=true) => val !== undefined && val !== null
-    ? `<div class="metric-row"><span class="metric-key">${x(label)}</span><span class="metric-val ${val === goodTrue ? 'good' : 'bad'}">${val ? 'Yes' : 'No'}</span></div>` : '';
-
-  const sevBadge = (s) => `<span class="sev-badge sev-${s}">${s}</span>`;
-
-  container.innerHTML = `
-    <div style="max-width:900px">
-      <!-- Header -->
-      <div class="card" style="margin-bottom:14px">
-        <div class="fb">
-          <div>
-            <div class="ct">${x(data.finalUrl || data.url)}</div>
-            <div style="font-size:12px;color:var(--muted);margin-top:3px">
-              Audited in ${((data.elapsedMs||0)/1000).toFixed(1)}s ·
-              ${issues.length} issue${issues.length!==1?'s':''} found
-              ${sev.critical ? ` · <span style="color:#dc2626;font-weight:600">${sev.critical} critical</span>` : ''}
-              ${sev.high ? ` · <span style="color:var(--err);font-weight:600">${sev.high} high</span>` : ''}
-            </div>
-          </div>
-          <div class="flex" style="gap:10px;font-size:12px">
-            ${sev.critical ? `<span class="badge b-err">${sev.critical} Critical</span>` : ''}
-            ${sev.high ? `<span class="badge" style="background:#ffedd5;color:#c2410c">${sev.high} High</span>` : ''}
-            ${sev.medium ? `<span class="badge b-paus">${sev.medium} Medium</span>` : ''}
-            ${sev.low ? `<span class="badge b-run">${sev.low} Low</span>` : ''}
-          </div>
+// ── Audit Renderer ────────────────────────────────────────────────────────────
+function scoreClass(n){if(n===null||n===undefined)return'na';return n>=90?'hi':n>=50?'md':'lo';}
+function renderAudit(data,container){
+  const m=data.metrics||{};const issues=data.issues||[];
+  const sev={critical:0,high:0,medium:0,low:0};
+  issues.forEach(i=>{if(sev[i.severity]!==undefined)sev[i.severity]++;});
+  const scoreBox=(val,label)=>{const sc=val!=null?val:null;return`<div class="score-box"><div class="score-num ${scoreClass(sc)}">${sc!==null?sc:'—'}</div><div class="score-lbl">${label}</div></div>`;};
+  const metricRow=(label,val,cls='')=>val!==undefined&&val!==null?`<div class="metric-row"><span class="metric-key">${x(label)}</span><span class="metric-val ${cls}">${x(String(val))}</span></div>`:'';
+  const boolRow=(label,val,goodTrue=true)=>val!==undefined&&val!==null?`<div class="metric-row"><span class="metric-key">${x(label)}</span><span class="metric-val ${val===goodTrue?'good':'bad'}">${val?'Yes':'No'}</span></div>`:'';
+  const sevBadge=s=>`<span class="sev-badge sev-${s}">${s}</span>`;
+  container.innerHTML=`<div style="max-width:900px">
+    <div class="card">
+      <div class="fb">
+        <div>
+          <div class="ct">${x(data.finalUrl||data.url||'')}</div>
+          <div style="font-size:12px;color:#64748b;margin-top:3px">Audited in ${((data.elapsedMs||0)/1000).toFixed(1)}s · ${issues.length} issue${issues.length!==1?'s':''} found${sev.critical?` · <span style="color:#dc2626;font-weight:600">${sev.critical} critical</span>`:''}</div>
+        </div>
+        <div class="flex" style="gap:6px;flex-wrap:wrap">
+          ${sev.critical?`<span class="badge b-err">${sev.critical} Critical</span>`:''}
+          ${sev.high?`<span class="badge" style="background:#ffedd5;color:#c2410c">${sev.high} High</span>`:''}
+          ${sev.medium?`<span class="badge b-pend">${sev.medium} Medium</span>`:''}
+          ${sev.low?`<span class="badge b-run">${sev.low} Low</span>`:''}
         </div>
       </div>
-
-      <!-- PageSpeed Scores: mobile + desktop -->
-      ${m.performance !== undefined || m.seo !== undefined ? `
-      <div style="margin-bottom:14px">
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Mobile PageSpeed</div>
-        <div class="score-grid">
-          ${scoreBox(m.performance, 'Performance')}
-          ${scoreBox(m.seo, 'SEO')}
-          ${scoreBox(m.accessibility, 'Accessibility')}
-          ${scoreBox(m.bestPractices, 'Best Practices')}
-        </div>
-        ${data.desktop ? `
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 6px">Desktop PageSpeed</div>
-        <div class="score-grid">
-          ${scoreBox(data.desktop.performance, 'Performance')}
-          ${scoreBox(data.desktop.seo, 'SEO')}
-          ${scoreBox(data.desktop.accessibility, 'Accessibility')}
-          ${scoreBox(data.desktop.bestPractices, 'Best Practices')}
-        </div>` : ''}
-      </div>` : ''}
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-        <!-- Core Web Vitals -->
-        <div class="card">
-          <div class="ct" style="margin-bottom:10px">Core Web Vitals (Mobile)</div>
-          <div style="display:flex;flex-direction:column;gap:5px">
-            ${metricRow('First Contentful Paint', m.fcp)}
-            ${metricRow('Largest Contentful Paint', m.lcp)}
-            ${metricRow('Cumulative Layout Shift', m.cls)}
-            ${metricRow('Total Blocking Time', m.tbt)}
-            ${metricRow('Server Response', m.responseMs ? m.responseMs + 'ms' : null, m.responseMs > 1500 ? 'warn' : m.responseMs > 3000 ? 'bad' : 'good')}
-            ${!m.fcp && !m.lcp ? '<div style="font-size:12px;color:var(--muted);padding:4px">PageSpeed data unavailable</div>' : ''}
-          </div>
-        </div>
-        <!-- Technical -->
-        <div class="card">
-          <div class="ct" style="margin-bottom:10px">Technical</div>
-          <div style="display:flex;flex-direction:column;gap:5px">
-            ${boolRow('HTTPS Working', m.httpsWorks)}
-            ${boolRow('HTTP → HTTPS Redirect', m.httpRedirects)}
-            ${boolRow('Viewport Meta Tag', m.viewport)}
-            ${boolRow('Analytics Detected', m.hasAnalytics)}
-            ${boolRow('XML Sitemap', m.hasSitemap)}
-            ${boolRow('Canonical Tag', m.hasCanonical)}
-            ${metricRow('Platform', m.platform)}
-            ${metricRow('Page HTML Size', m.docSizeKB ? m.docSizeKB + 'KB' : null)}
-            ${metricRow('Copyright Year', m.copyrightYear)}
-          </div>
-        </div>
-      </div>
-
-      <!-- Opportunities -->
-      ${m.opportunities?.length ? `<div class="card" style="margin-bottom:14px">
-        <div class="ct" style="margin-bottom:10px">Top Performance Opportunities</div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${m.opportunities.map(o => `<div class="metric-row"><span class="metric-key">${x(o.title)}</span><span class="metric-val warn">${o.savings ? 'saves ~' + o.savings : ''}</span></div>`).join('')}
-        </div>
-      </div>` : ''}
-
-      <!-- Issues -->
+    </div>
+    ${m.performance!==undefined||m.seo!==undefined?`
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Mobile PageSpeed</div>
+      <div class="score-grid">${scoreBox(m.performance,'Performance')}${scoreBox(m.seo,'SEO')}${scoreBox(m.accessibility,'Accessibility')}${scoreBox(m.bestPractices,'Best Practices')}</div>
+      ${data.desktop?`<div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin:8px 0 6px">Desktop PageSpeed</div>
+      <div class="score-grid">${scoreBox(data.desktop.performance,'Performance')}${scoreBox(data.desktop.seo,'SEO')}${scoreBox(data.desktop.accessibility,'Accessibility')}${scoreBox(data.desktop.bestPractices,'Best Practices')}</div>`:''}
+    </div>`:''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
       <div class="card">
-        <div class="ct" style="margin-bottom:12px">Issues Found (${issues.length})</div>
-        ${issues.length === 0 ? '<div style="color:var(--ok);font-size:13px">No issues detected — site appears healthy.</div>' : ''}
-        <div class="issue-list">
-          ${issues.map(i => `
-            <div class="issue-card ${i.severity}">
-              <div class="issue-cat">${sevBadge(i.severity)} ${x(i.category)}</div>
-              <div class="issue-title">${x(i.title)}</div>
-              <div class="issue-detail">${x(i.detail)}</div>
-            </div>`).join('')}
-        </div>
+        <div class="ct" style="margin-bottom:8px">Core Web Vitals</div>
+        ${metricRow('FCP',m.fcp)}${metricRow('LCP',m.lcp)}${metricRow('CLS',m.cls)}${metricRow('TBT',m.tbt)}${metricRow('Server Response',m.responseMs?m.responseMs+'ms':null,m.responseMs>3000?'bad':m.responseMs>1500?'warn':'good')}
+        ${!m.fcp&&!m.lcp?'<div style="font-size:12px;color:#94a3b8;padding:4px">PageSpeed data unavailable</div>':''}
       </div>
-
-      ${data.errors?.length ? `<div class="alert aw mt12">${x('Some checks failed: ' + data.errors.join('; '))}</div>` : ''}
-    </div>`;
+      <div class="card">
+        <div class="ct" style="margin-bottom:8px">Technical</div>
+        ${boolRow('HTTPS Working',m.httpsWorks)}${boolRow('HTTP→HTTPS Redirect',m.httpRedirects)}${boolRow('Viewport Meta',m.viewport)}${boolRow('Analytics',m.hasAnalytics)}${boolRow('XML Sitemap',m.hasSitemap)}${boolRow('Canonical Tag',m.hasCanonical)}${metricRow('Platform',m.platform)}${metricRow('Page Size',m.docSizeKB?m.docSizeKB+'KB':null)}
+      </div>
+    </div>
+    ${m.opportunities?.length?`<div class="card" style="margin-bottom:12px"><div class="ct" style="margin-bottom:8px">Performance Opportunities</div>${m.opportunities.map(o=>`<div class="metric-row"><span class="metric-key">${x(o.title)}</span><span class="metric-val warn">${o.savings?'~'+o.savings:''}</span></div>`).join('')}</div>`:''}
+    <div class="card"><div class="ct" style="margin-bottom:10px">Issues (${issues.length})</div>
+      ${issues.length===0?'<div style="color:#16a34a;font-size:13px">No issues detected.</div>':''}
+      <div class="issue-list">${issues.map(i=>`<div class="issue-card ${i.severity}"><div class="issue-cat">${sevBadge(i.severity)}${x(i.category)}</div><div class="issue-title">${x(i.title)}</div><div class="issue-detail">${x(i.detail)}</div></div>`).join('')}</div>
+    </div>
+    ${data.errors?.length?`<div class="alert aw mt12">${x('Some checks failed: '+data.errors.join('; '))}</div>`:''}
+  </div>`;
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-async function loadSettings() {
-  try {
-    const [provs, cost] = await Promise.all([api('GET', '/api/providers'), api('GET', '/api/cost-summary')]);
-    providers = provs;
-    const keyHtml = Object.entries(ENV_MAP).map(([envName, meta]) => {
-      const isSet = meta.provIds.some(pid => provs[pid]?.hasKey);
-      return `<div style="padding:12px 0;border-bottom:1px solid var(--border)">
-        <div class="fb">
-          <div>
-            <div style="font-weight:600;font-size:13px">${x(meta.name)}</div>
-            <div style="color:var(--muted);font-size:11px;margin-top:2px">${x(envName)} — <span class="badge ${isSet?'b-succ':'b-err'}">${isSet?'Set':'Not set'}</span></div>
-          </div>
-          <div class="flex" style="gap:6px">
-            <button class="btn bs bsm" onclick="setKey('${envName}','${x(meta.name)}')">Set Key</button>
-            ${isSet?`<button class="btn bd bsm" onclick="removeKey('${envName}')">Remove</button>`:''}
-          </div>
+const ENV_MAP={
+  GEMINI_API_KEY:{name:'Gemini (Google)',provIds:['gemini3flash','gemini']},
+  ANTHROPIC_API_KEY:{name:'Anthropic (Claude)',provIds:['claude','haiku']},
+  OPENAI_API_KEY:{name:'OpenAI (GPT)',provIds:['gpt5','gpt5mini','gpt5nano','openai']},
+  DEEPSEEK_API_KEY:{name:'DeepSeek',provIds:['deepseek']},
+  PAGESPEED_API_KEY:{name:'Google PageSpeed (Audit)',provIds:['_pagespeed']},
+};
+async function loadSettings(){
+  try{
+    const[provs,cost]=await Promise.all([api('GET','/api/providers'),api('GET','/api/cost-summary')]);
+    providers=provs||providers;
+    $i('keys-list').innerHTML=Object.entries(ENV_MAP).map(([envName,meta])=>{
+      const isSet=meta.provIds.some(pid=>providers[pid]?.hasKey);
+      return`<div class="key-card">
+        <div class="key-row">
+          <div class="key-info"><h4>${x(meta.name)}</h4><p>${x(envName)} — <span class="badge ${isSet?'b-succ':'b-pend'}">${isSet?'Set':'Not set'}</span></p></div>
+          <div style="display:flex;gap:6px">${isSet?`<button class="btn bd sm" onclick="removeKey('${envName}')">Remove</button>`:''}</div>
+        </div>
+        <div class="key-input-row">
+          <input class="fi" type="password" id="ki-${envName}" placeholder="${isSet?'Already set — enter new value to update':'Paste API key here'}">
+          <button class="btn bp sm" onclick="setKeyFromInput('${envName}')">Save</button>
         </div>
       </div>`;
     }).join('');
-    document.getElementById('keys-list').innerHTML = keyHtml;
-
-    const costEl = document.getElementById('cost-sum');
-    if (!cost.jobCount) { costEl.innerHTML='<div style="color:var(--muted);font-size:13px">No jobs yet</div>'; return; }
-    costEl.innerHTML = `<div class="srow" style="grid-template-columns:repeat(3,1fr)">
-      <div class="sc"><div class="sv">$${(cost.totalSpent||0).toFixed(4)}</div><div class="sl">Total Spent</div></div>
-      <div class="sc"><div class="sv">${cost.rowsResearched||0}</div><div class="sl">Rows Researched</div></div>
-      <div class="sc"><div class="sv">$${(cost.avgCostPerRow||0).toFixed(4)}</div><div class="sl">Avg / Row</div></div>
+    const c=cost||{};
+    if(!c.jobCount){$i('cost-sum').innerHTML='<div style="color:#94a3b8;font-size:13px">No jobs yet</div>';return;}
+    $i('cost-sum').innerHTML=`<div class="srow" style="grid-template-columns:repeat(3,1fr)">
+      <div class="sc"><div class="sv">${fmtCost(c.totalSpent)}</div><div class="sl">Total Spent</div></div>
+      <div class="sc"><div class="sv">${c.rowsResearched||0}</div><div class="sl">Rows Researched</div></div>
+      <div class="sc"><div class="sv">${fmtCost(c.avgCostPerRow)}</div><div class="sl">Avg / Row</div></div>
     </div>
-    <div class="mt12">${Object.entries(cost.byProvider||{}).map(([pid,p])=>`<div class="fb" style="padding:7px 0;font-size:13px;border-bottom:1px solid var(--border)"><span>${x(p.name)}</span><span style="color:var(--muted)">${p.jobs} jobs · ${p.rows} rows · $${(p.cost||0).toFixed(4)}</span></div>`).join('')}</div>`;
-  } catch(e) { console.error(e); }
+    <div class="mt12">${Object.entries(c.byProvider||{}).map(([pid,p])=>`<div class="fb" style="padding:6px 0;font-size:12px;border-bottom:1px solid #f1f5f9"><span>${x(p.name)}</span><span style="color:#64748b">${p.jobs} jobs · ${p.rows} rows · ${fmtCost(p.cost)}</span></div>`).join('')}</div>`;
+  }catch(e){console.error(e);}
 }
-
-async function setKey(envName, name) {
-  const key = prompt(`Enter your ${name} API key:`);
-  if (key === null) return;
-  try { await api('POST', '/api/setkey', { envName, key: key.trim() }); await loadSettings(); }
-  catch(e) { alert(e.message); }
+async function setKeyFromInput(envName){
+  const input=$i('ki-'+envName);const key=input.value.trim();if(!key)return;
+  await api('POST','/api/setkey',{envName,key});
+  input.value='';loadSettings();renderProvSelect();toast('Key saved','ok');
 }
-
-async function removeKey(envName) {
-  if (!confirm('Remove this API key?')) return;
-  try { await api('POST', '/api/setkey', { envName, key: '' }); await loadSettings(); }
-  catch(e) { alert(e.message); }
+async function removeKey(envName){
+  if(!confirm('Remove this API key?'))return;
+  await api('POST','/api/setkey',{envName,key:''});
+  loadSettings();renderProvSelect();toast('Key removed','info');
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
-async function loadAdmin() {
-  try {
-    const [users, jobs] = await Promise.all([api('GET', '/api/admin/users'), api('GET', '/api/admin/jobs')]);
-    document.getElementById('adm-users').innerHTML = `<table class="tbl"><thead><tr><th>ID</th><th>Email</th><th>Name</th><th>Admin</th><th>Keys</th><th>Joined</th></tr></thead><tbody>
-      ${users.map(u=>`<tr><td style="color:var(--muted)">${u.id}</td><td>${x(u.email)}</td><td>${x(u.name||'—')}</td><td>${u.is_admin?'<span class="badge b-succ">Admin</span>':''}</td><td>${u.keyCount||0}</td><td style="color:var(--muted)">${ago(u.created_at)}</td></tr>`).join('')}
-    </tbody></table>`;
-    document.getElementById('adm-jobs').innerHTML = `<table class="tbl"><thead><tr><th>ID</th><th>User</th><th>Name</th><th>Provider</th><th>Rows</th><th>Status</th><th>Cost</th><th>Created</th></tr></thead><tbody>
-      ${jobs.slice(0,60).map(j=>`<tr><td style="color:var(--muted)">${j.id}</td><td style="color:var(--muted);font-size:12px">${x(j.user_email||j.user_id)}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x(j.name)}</td><td>${x(j.providerName||j.provider)}</td><td>${j.succeeded}/${j.total_rows}</td><td><span class="badge b-${j.status}">${j.status}</span></td><td class="mono sm">$${(j.cost||0).toFixed(4)}</td><td style="color:var(--muted)">${ago(j.created_at)}</td></tr>`).join('')}
-    </tbody></table>`;
-  } catch(e) { document.getElementById('adm-users').innerHTML=`<div class="alert ae">${x(e.message)}</div>`; }
+async function loadAdmin(){
+  try{
+    const[users,jobs]=await Promise.all([api('GET','/api/admin/users'),api('GET','/api/admin/jobs')]);
+    $i('adm-users').innerHTML=`<table class="tbl"><thead><tr><th>ID</th><th>Email</th><th>Name</th><th>Admin</th><th>Keys</th><th>Joined</th></tr></thead><tbody>${users.map(u=>`<tr><td style="color:#94a3b8">${u.id}</td><td>${x(u.email)}</td><td>${x(u.name||'—')}</td><td>${u.is_admin?'<span class="badge b-succ">Admin</span>':''}</td><td>${u.keyCount||0}</td><td style="color:#94a3b8">${ago(u.created_at)}</td></tr>`).join('')}</tbody></table>`;
+    $i('adm-jobs').innerHTML=`<table class="tbl"><thead><tr><th>ID</th><th>User</th><th>Name</th><th>Provider</th><th>Rows</th><th>Status</th><th>Cost</th><th>Created</th></tr></thead><tbody>${jobs.slice(0,80).map(j=>`<tr><td style="color:#94a3b8">${j.id}</td><td style="font-size:11px;color:#94a3b8">${x(j.user_email||j.user_id)}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x(j.name)}</td><td style="font-size:12px">${x(j.providerName||j.provider)}</td><td>${j.succeeded||0}/${j.total_rows||0}</td><td><span class="badge b-${j.status}">${j.status}</span></td><td class="mono" style="font-size:12px">${fmtCost(j.cost)}</td><td style="color:#94a3b8;font-size:12px">${ago(j.created_at)}</td></tr>`).join('')}</tbody></table>`;
+  }catch(e){$i('adm-users').innerHTML=`<div class="alert ae">${x(e.message)}</div>`;}
 }
-
-function adminBackup() { const a=document.createElement('a'); a.href='/api/admin/backup?token='+token; a.download=''; a.click(); }
-function adminExport() { const a=document.createElement('a'); a.href='/api/admin/export-all?token='+token; a.download=''; a.click(); }
-
-// ── Utils ─────────────────────────────────────────────────────────────────────
-function x(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function ago(iso) {
-  if (!iso) return '—';
-  const d = Date.now() - new Date(iso+(iso.endsWith('Z')?'':' UTC')).getTime();
-  const s = Math.floor(d/1000);
-  if (s<60) return 'just now'; if (s<3600) return Math.floor(s/60)+'m ago';
-  if (s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
-}
-
-// ── Toast ────────────────────────────────────────────────────────────────────
-function toast(msg, type='info', dur=3500) {
-  const c = document.getElementById('toast-container');
-  const t = document.createElement('div');
-  t.className = 'toast ' + type;
-  t.textContent = msg;
-  c.appendChild(t);
-  setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, dur);
-}
-
-// ── Large-file CSV helpers ────────────────────────────────────────────────────
-function clientCSVRowCount(text) {
-  // Fast RFC-4180 row counter — handles quoted newlines
-  let rows = 0, inQ = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === '"') { if (inQ && text[i+1]==='"') i++; else inQ = !inQ; }
-    else if (c === '\n' && !inQ) rows++;
-  }
-  // account for no trailing newline
-  if (text.length && text[text.length-1] !== '\n') rows++;
-  return Math.max(0, rows - 1); // subtract header
-}
-
-function clientCSVSample(text, n=200) {
-  // Returns header + first n data rows, RFC-4180-safe
-  let rows = 0, inQ = false, i = 0;
-  while (i < text.length && rows <= n) {
-    const c = text[i];
-    if (c === '"') { if (inQ && text[i+1]==='"') i++; else inQ = !inQ; }
-    else if (c === '\n' && !inQ) rows++;
-    i++;
-  }
-  return text.slice(0, i);
-}
-
-// ── Pagination state ──────────────────────────────────────────────────────────
-let tblPage = 0;
-const TBL_PAGE_SIZE = 200;
-let allRows = []; // lightweight row index for paginated table
-
-function renderPagedTable() {
-  const start = tblPage * TBL_PAGE_SIZE;
-  const slice = allRows.slice(start, start + TBL_PAGE_SIZE);
-  const body = document.getElementById('res-body');
-  body.innerHTML = '';
-  slice.forEach(idx => {
-    const m = rowData[idx];
-    if (m) { const tr = document.createElement('tr'); tr.dataset.idx = idx; body.appendChild(tr); renderResRowInto(tr, m); }
-  });
-  // Pagination controls
-  let ctrl = document.getElementById('tbl-pg-ctrl');
-  if (!ctrl) {
-    ctrl = document.createElement('tr');
-    ctrl.id = 'tbl-pg-ctrl';
-    ctrl.innerHTML = '<td colspan="99"><div class="pg-ctrl"></div></td>';
-    document.getElementById('res-body').parentElement.appendChild(ctrl);
-  }
-  const total = allRows.length;
-  const pages = Math.ceil(total / TBL_PAGE_SIZE);
-  ctrl.querySelector('.pg-ctrl').innerHTML = pages <= 1 ? '' :
-    `<button class="btn bg bsm" onclick="goTblPage(${tblPage-1})" ${tblPage===0?'disabled':''}>← Prev</button>
-     <span>Page ${tblPage+1} of ${pages} · ${total} rows</span>
-     <button class="btn bg bsm" onclick="goTblPage(${tblPage+1})" ${tblPage>=pages-1?'disabled':''}>Next →</button>`;
-}
-
-function goTblPage(p) { tblPage = p; renderPagedTable(); }
-
-// ── Throttled SSE flush ───────────────────────────────────────────────────────
-let sseFlushPending = false;
-let sseQueue = [];
-
-function flushSSEQueue() {
-  sseFlushPending = false;
-  if (!sseQueue.length) return;
-  const batch = sseQueue.splice(0);
-  batch.forEach(m => {
-    rowData[m.idx] = m;
-    if (!allRows.includes(m.idx)) allRows.push(m.idx);
-  });
-  renderPagedTable();
-}
-
-function queueSSEResult(m) {
-  sseQueue.push(m);
-  if (!sseFlushPending) {
-    sseFlushPending = true;
-    requestAnimationFrame(flushSSEQueue);
-  }
-}
+function adminBackup(){const a=document.createElement('a');a.href='/api/admin/backup?token='+token;a.download='';a.click();}
+function adminExport(){const a=document.createElement('a');a.href='/api/admin/export-all?token='+token;a.download='';a.click();}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  initUpload();
-  if (token) boot().catch(() => logout());
-  // Escape key closes modals
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      document.querySelectorAll('.mo:not(.hide)').forEach(m => m.classList.add('hide'));
-    }
-  });
-});
+setupDrop();
+init();
 </script>
-</body>
-</html>
+</body></html>
