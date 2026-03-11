@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Prospect Researcher</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#1e293b;background:#f1f5f9}
@@ -348,9 +349,9 @@ select.fi{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
           <div id="ws2" class="hide">
             <div class="uz" id="uz" onclick="document.getElementById('fi').click()">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5" style="margin:0 auto 10px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              <div class="uz-title">Drop CSV file here or click to browse</div>
-              <div class="uz-sub">Supports CSV and TSV files</div>
-              <input type="file" id="fi" accept=".csv,.tsv,.txt" style="display:none" onchange="onFile(event)">
+              <div class="uz-title">Drop file here or click to browse</div>
+              <div class="uz-sub">Supports CSV, TSV, Excel (.xlsx, .xls)</div>
+              <input type="file" id="fi" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none" onchange="onFile(event)">
             </div>
             <div id="csv-prev" class="hide mt16"></div>
             <div class="flex mt20" style="justify-content:space-between">
@@ -517,9 +518,9 @@ select.fi{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
               <div id="bulk-upload-area">
                 <div class="uz" id="bulk-uz" onclick="document.getElementById('bulk-fi').click()">
                   <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.5" style="margin:0 auto 8px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  <div class="uz-title">Drop CSV file here or click to browse</div>
-                  <div class="uz-sub">Needs a column with website URLs</div>
-                  <input type="file" id="bulk-fi" accept=".csv,.tsv,.txt" style="display:none" onchange="onBulkFile(event)">
+                  <div class="uz-title">Drop file here or click to browse</div>
+                  <div class="uz-sub">Needs a URL column · CSV, TSV, Excel (.xlsx, .xls)</div>
+                  <input type="file" id="bulk-fi" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none" onchange="onBulkFile(event)">
                 </div>
               </div>
 
@@ -1062,10 +1063,44 @@ function initUpload() {
 
 function onFile(e) { const f = e.target.files[0]; if(f) { readFile(f); e.target.value = ''; } }
 
+function isExcel(f) { return /\.(xlsx|xls)$/i.test(f.name); }
+
 function readFile(f) {
-  const r = new FileReader();
-  r.onload = e => { csvRaw = e.target.result; parseCSV(); };
-  r.readAsText(f, 'utf-8');
+  if (isExcel(f)) {
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const recs = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (recs.length < 2) { alert('Excel sheet needs at least 1 header + 1 data row'); return; }
+        csvHdrs = recs[0].map(h => String(h ?? '').trim());
+        csvRows = recs.slice(1)
+          .map(row => { const o = {}; csvHdrs.forEach((h, i) => o[h] = String(row[i] ?? '').trim()); return o; })
+          .filter(row => Object.values(row).some(v => v));
+        totalRows = csvRows.length;
+        csvRaw = XLSX.utils.sheet_to_csv(ws);
+        colMap = autoGuess();
+        showCSVPreview();
+      } catch(err) { alert('Could not read Excel file: ' + err.message); }
+    };
+    r.readAsArrayBuffer(f);
+  } else {
+    const r = new FileReader();
+    r.onload = e => { csvRaw = e.target.result; parseCSV(); };
+    r.readAsText(f, 'utf-8');
+  }
+}
+
+function showCSVPreview() {
+  document.getElementById('btn-next2').disabled = false;
+  const prev = document.getElementById('csv-prev'); prev.classList.remove('hide');
+  const show = csvHdrs.slice(0, 6);
+  prev.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:10px"><strong>${totalRows}</strong> rows · <strong>${csvHdrs.length}</strong> columns</div>
+    <div style="overflow-x:auto"><table class="tbl" style="font-size:12px">
+      <thead><tr>${show.map(h=>`<th>${x(h)}</th>`).join('')}${csvHdrs.length>6?`<th style="color:var(--muted)">+${csvHdrs.length-6} more</th>`:''}</tr></thead>
+      <tbody>${csvRows.slice(0,4).map(row=>`<tr>${show.map(h=>`<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x(row[h]||'')}</td>`).join('')}${csvHdrs.length>6?'<td></td>':''}</tr>`).join('')}</tbody>
+    </table></div>`;
 }
 
 function parseCSV() {
@@ -1086,14 +1121,7 @@ function parseCSV() {
   csvRows = recs.slice(1).map(r => { const o={}; csvHdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
   totalRows = csvRows.length;
   colMap = autoGuess();
-  const prev = document.getElementById('csv-prev'); prev.classList.remove('hide');
-  const show = csvHdrs.slice(0,6);
-  prev.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:10px"><strong>${totalRows}</strong> rows · <strong>${csvHdrs.length}</strong> columns</div>
-    <div style="overflow-x:auto"><table class="tbl" style="font-size:12px">
-      <thead><tr>${show.map(h=>`<th>${x(h)}</th>`).join('')}${csvHdrs.length>6?`<th style="color:var(--muted)">+${csvHdrs.length-6} more</th>`:''}</tr></thead>
-      <tbody>${csvRows.slice(0,4).map(row=>`<tr>${show.map(h=>`<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x(row[h]||'')}</td>`).join('')}${csvHdrs.length>6?'<td></td>':''}</tr>`).join('')}</tbody>
-    </table></div>`;
-  document.getElementById('btn-next2').disabled = false;
+  showCSVPreview();
 }
 
 function autoGuess() {
@@ -1464,9 +1492,28 @@ function renderBulkPage() {
 
 function onBulkFile(e) {
   const f = e.target.files[0]; if (!f) return;
-  const r = new FileReader();
-  r.onload = ev => { parseBulkCSV(ev.target.result); };
-  r.readAsText(f, 'utf-8');
+  e.target.value = '';
+  if (isExcel(f)) {
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const recs = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (recs.length < 2) { alert('Excel sheet needs at least 1 header + 1 data row'); return; }
+        const hdrs = recs[0].map(h => String(h ?? '').trim());
+        const rows = recs.slice(1)
+          .map(row => { const o = {}; hdrs.forEach((h, i) => o[h] = String(row[i] ?? '').trim()); return o; })
+          .filter(row => Object.values(row).some(v => v));
+        parseBulkData(hdrs, rows);
+      } catch(err) { alert('Could not read Excel file: ' + err.message); }
+    };
+    r.readAsArrayBuffer(f);
+  } else {
+    const r = new FileReader();
+    r.onload = ev => { parseBulkCSV(ev.target.result); };
+    r.readAsText(f, 'utf-8');
+  }
 }
 
 function parseBulkCSV(raw) {
@@ -1483,8 +1530,14 @@ function parseBulkCSV(raw) {
   }
   cur.push(fld.trim()); if(cur.length>1||cur[0]!=='')recs.push(cur);
   if (recs.length < 2) { alert('CSV needs at least 1 header + 1 data row'); return; }
-  bulkCsvHdrs = recs[0].map(h => h.replace(/^["']|["']$/g,'').trim());
-  bulkCsvRows = recs.slice(1).map(r => { const o={}; bulkCsvHdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
+  const hdrs = recs[0].map(h => h.replace(/^["']|["']$/g,'').trim());
+  const rows = recs.slice(1).map(r => { const o={}; hdrs.forEach((h,i)=>o[h]=(r[i]||'').replace(/^["']|["']$/g,'').trim()); return o; }).filter(r=>Object.values(r).some(v=>v));
+  parseBulkData(hdrs, rows);
+}
+
+function parseBulkData(hdrs, rows) {
+  bulkCsvHdrs = hdrs;
+  bulkCsvRows = rows;
 
   // Auto-detect URL and company columns
   const urlTerms = ['url','website','web','domain','site','link','webpage'];
