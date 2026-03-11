@@ -84,8 +84,11 @@ const PROVDEFS={
   claude:{name:'Claude Sonnet 4',model:'claude-sonnet-4-20250514',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:3,outputCost:15,format:'anthropic',webSearch:true,webCostPerCall:0.015,cacheReadCost:0.30,cacheWriteCost:3.75,envName:'ANTHROPIC_API_KEY'},
   haiku:{name:'Claude Haiku 4.5',model:'claude-haiku-4-5-20251001',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:1,outputCost:5,format:'anthropic',webSearch:true,webCostPerCall:0.005,cacheReadCost:0.10,cacheWriteCost:1.25,envName:'ANTHROPIC_API_KEY'},
   gpt5:{name:'GPT-5',model:'gpt-5',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:1.25,outputCost:10,format:'openai',webSearch:true,webTool:'openai',webCostPerCall:0.018,envName:'OPENAI_API_KEY'},
+  gpt5mini:{name:'GPT-5 Mini',model:'gpt-5-mini',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.40,outputCost:1.60,format:'openai',webSearch:true,webTool:'openai',webCostPerCall:0.018,envName:'OPENAI_API_KEY'},
+  gpt5nano:{name:'GPT-5 Nano',model:'gpt-5-nano',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.10,outputCost:0.40,format:'openai',webSearch:false,webCostPerCall:0,envName:'OPENAI_API_KEY'},
   openai:{name:'GPT-4o Mini',model:'gpt-4o-mini',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.15,outputCost:0.60,format:'openai',webSearch:false,webCostPerCall:0,envName:'OPENAI_API_KEY'},
   deepseek:{name:'DeepSeek V3',model:'deepseek-chat',apiUrl:'https://api.deepseek.com/v1/chat/completions',inputCost:0.56,outputCost:1.68,format:'openai',webSearch:false,webCostPerCall:0,envName:'DEEPSEEK_API_KEY'},
+  _pagespeed:{name:'PageSpeed API',model:'',inputCost:0,outputCost:0,format:'none',webSearch:false,webCostPerCall:0,envName:'PAGESPEED_API_KEY',hidden:true},
 };
 function provSt(uid){const a={};const uk=S.getUserKeys.all(uid).map(r=>r.key_name);for(const[id,p]of Object.entries(PROVDEFS))a[id]={name:p.name,hasKey:uk.includes(p.envName),inputCost:p.inputCost,outputCost:p.outputCost,webSearch:p.webSearch,webCostPerCall:p.webCostPerCall||0,isDefault:!!p.isDefault};return a;}
 
@@ -852,7 +855,7 @@ function buildPrompt(row,map,idx,useWebSearch){
 const actv=new Map();
 
 // How many concurrent requests to allow per provider
-const CONCURRENCY={gemini:5,claude:5,haiku:5,gpt5:4,openai:5,deepseek:5};
+const CONCURRENCY={gemini:5,gemini3flash:5,claude:5,haiku:5,gpt5:4,gpt5mini:5,gpt5nano:5,openai:5,deepseek:5};
 
 async function runJob(jobId){
   const job=S.gJ.get(jobId);if(!job)return;const prov=PROVDEFS[job.provider];if(!prov)return;
@@ -1018,7 +1021,7 @@ function readB(req){return new Promise((resolve,reject)=>{let b='';let size=0;le
   req.on('end',()=>{if(!tooLarge)resolve(b);});
   req.on('error',e=>{if(!tooLarge)reject(e);});});}
 function json(res,d,s=200){res.writeHead(s,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify(d));}
-const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY'];
+const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY','PAGESPEED_API_KEY'];
 
 // ─── HTTP Server ───
 const server=createServer(async(req,res)=>{
@@ -1086,6 +1089,18 @@ const server=createServer(async(req,res)=>{
     res.end(jsonStr);}catch(e){json(res,{error:'Export failed: '+e.message},500);}return;}
 
   if(req.method==='GET'&&p==='/api/providers'){json(res,provSt(uid));return;}
+
+  if(req.method==='GET'&&p==='/api/cost-summary'){
+    const jobs=db.prepare('SELECT provider,cost,succeeded FROM jobs WHERE user_id=?').all(uid);
+    const totalSpent=jobs.reduce((a,j)=>a+(j.cost||0),0);
+    const rowsResearched=jobs.reduce((a,j)=>a+(j.succeeded||0),0);
+    const avgCostPerRow=rowsResearched?totalSpent/rowsResearched:0;
+    const byProvider={};
+    for(const j of jobs){
+      if(!byProvider[j.provider])byProvider[j.provider]={name:PROVDEFS[j.provider]?.name||j.provider,jobs:0,rows:0,cost:0};
+      byProvider[j.provider].jobs++;byProvider[j.provider].rows+=j.succeeded||0;byProvider[j.provider].cost+=j.cost||0;
+    }
+    json(res,{jobCount:jobs.length,totalSpent,rowsResearched,avgCostPerRow,byProvider});return;}
 
   if(req.method==='POST'&&p==='/api/setkey'){const b=await readB(req);try{const{envName,key}=JSON.parse(b);
     if(!VALID_KEYS.includes(envName))return json(res,{error:'Invalid key name'},400);
@@ -1297,11 +1312,27 @@ Return ONLY valid JSON (no markdown, no code fences):
   if(req.method==='POST'&&p==='/api/audit-website'){const b=await readB(req);try{
     const{url}=JSON.parse(b);
     if(!url||typeof url!=='string'||!url.trim())return json(res,{error:'url required'},400);
-    const result=await auditWebsite(url.trim());
-    json(res,result);
+    const psKey=userKey(uid,'PAGESPEED_API_KEY');
+    const result=await auditWebsite(url.trim(),psKey||undefined);
+    // Save to jobs table so it appears in Jobs history
+    const jobName='Audit: '+(url.trim().replace(/^https?:\/\//,'').split('/')[0]).slice(0,60);
+    const jr=S.iJ.run(uid,jobName,'pagespeed','website-audit',url.trim(),0,'{}',1,null);
+    const jid=Number(jr.lastInsertRowid);
+    S.iR.run(jid,0,url.trim(),'Website audit');
+    S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,0);
+    S.uJ.run(1,0,'complete',0,0,0,0,0,(result.elapsedMs||0)/1000,jid);
+    json(res,{...result,jobId:jid});
   }catch(e){json(res,{error:e.message||'Audit failed'},500);}return;}
 
-  if(req.method==='GET'&&p==='/api/jobs'){json(res,S.lJ.all(uid).map(j=>({...j,templateName:TEMPLATES[j.template_id]?.name||'Custom',templateIcon:TEMPLATES[j.template_id]?.icon||'\u270F\uFE0F',providerName:PROVDEFS[j.provider]?.name||j.provider})));return;}
+  if(req.method==='GET'&&p.match(/^\/api\/audit-row\/\d+$/)){
+    const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
+    if(!job||job.user_id!==uid||job.provider!=='pagespeed')return json(res,{error:'Not found'},404);
+    const row=db.prepare('SELECT research FROM rows WHERE job_id=? AND idx=0').get(jid);
+    if(!row?.research)return json(res,{error:'No audit data'},404);
+    try{json(res,JSON.parse(row.research));}catch{json(res,{error:'Invalid audit data'},500);}
+    return;}
+
+  if(req.method==='GET'&&p==='/api/jobs'){json(res,S.lJ.all(uid).map(j=>({...j,templateName:TEMPLATES[j.template_id]?.name||'Custom',templateIcon:TEMPLATES[j.template_id]?.icon||'\u270F\uFE0F',providerName:j.provider==='pagespeed'?'Website Audit':(PROVDEFS[j.provider]?.name||j.provider),isAudit:j.provider==='pagespeed'})));return;}
 
   if(req.method==='DELETE'&&p.match(/^\/api\/jobs\/\d+$/)){const jid=parseInt(p.split('/').pop());S.dR.run(jid);S.dJ.run(jid,uid);json(res,{ok:true});return;}
 

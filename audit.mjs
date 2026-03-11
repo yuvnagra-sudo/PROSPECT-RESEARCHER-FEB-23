@@ -152,8 +152,9 @@ async function checkHTTP(url) {
 // Without a key:  25 req/100s quota — use concurrency=2 max
 const PAGESPEED_BACKOFF_MS = 15000; // pause on 429 before retrying
 
-async function fetchPageSpeedStrategy(url, strategy) {
-  const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance&category=seo&category=accessibility&category=best-practices${PAGESPEED_API_KEY ? '&key=' + PAGESPEED_API_KEY : ''}`;
+async function fetchPageSpeedStrategy(url, strategy, apiKey) {
+  const key = apiKey || PAGESPEED_API_KEY;
+  const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance&category=seo&category=accessibility&category=best-practices${key ? '&key=' + key : ''}`;
   const TIMEOUTS = [55000, 65000, 75000];
   let lastError = '';
   for (let attempt = 0; attempt < TIMEOUTS.length; attempt++) {
@@ -227,12 +228,12 @@ function parseLHR(lhr) {
   };
 }
 
-async function checkPageSpeed(url) {
+async function checkPageSpeed(url, apiKey) {
   // Fire mobile + desktop simultaneously — both finish in the same time window
   // With API key: 400 req/100s, so 2 calls per audit is completely safe even at 5 concurrency
   const [mobileRes, desktopRes] = await Promise.all([
-    fetchPageSpeedStrategy(url, 'mobile'),
-    fetchPageSpeedStrategy(url, 'desktop'),
+    fetchPageSpeedStrategy(url, 'mobile', apiKey),
+    fetchPageSpeedStrategy(url, 'desktop', apiKey),
   ]);
 
   const mobileOk = mobileRes.ok;
@@ -511,7 +512,7 @@ function buildSummary(url, metrics, issues) {
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export async function auditWebsite(inputUrl) {
+export async function auditWebsite(inputUrl, apiKey) {
   const t0 = Date.now();
   const errors = [];
 
@@ -521,7 +522,7 @@ export async function auditWebsite(inputUrl) {
   // Run all four checks in parallel for speed
   const [httpRes, pageSpeedRes, sslRes, robotsRes] = await Promise.allSettled([
     checkHTTP(url),
-    checkPageSpeed(url),
+    checkPageSpeed(url, apiKey),
     checkSSL(url),
     checkRobots(url),
   ]);

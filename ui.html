@@ -445,6 +445,7 @@ select.fi{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         <div class="ph">
           <div><div class="pt" id="res-title">Results</div><div class="ps" id="res-sub"></div></div>
           <div class="flex" style="gap:7px">
+            <button class="btn bs bsm" onclick="nav('new')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>New Job</button>
             <button class="btn bs bsm hide" onclick="doCancel()" id="btn-cancel"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18"/></svg>Stop</button>
             <button class="btn bs bsm hide" onclick="doResume()" id="btn-resume">Resume</button>
             <button class="btn bs bsm hide" onclick="doExport()" id="btn-export"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>
@@ -706,10 +707,11 @@ let bldrSections = [];
 let colPreviewTimer = null;
 
 const ENV_MAP = {
-  GEMINI_API_KEY:    { name: 'Gemini (Google)',    provIds: ['gemini'] },
-  ANTHROPIC_API_KEY: { name: 'Anthropic (Claude)', provIds: ['claude','haiku'] },
-  OPENAI_API_KEY:    { name: 'OpenAI (GPT)',        provIds: ['gpt5','openai'] },
-  DEEPSEEK_API_KEY:  { name: 'DeepSeek',            provIds: ['deepseek'] },
+  GEMINI_API_KEY:    { name: 'Gemini (Google)',              provIds: ['gemini3flash','gemini'] },
+  ANTHROPIC_API_KEY: { name: 'Anthropic (Claude)',           provIds: ['claude','haiku'] },
+  OPENAI_API_KEY:    { name: 'OpenAI (GPT)',                 provIds: ['gpt5','openai'] },
+  DEEPSEEK_API_KEY:  { name: 'DeepSeek',                     provIds: ['deepseek'] },
+  PAGESPEED_API_KEY: { name: 'Google PageSpeed (Audit)',     provIds: ['_pagespeed'] },
 };
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -805,8 +807,10 @@ async function loadJobs() {
         <td class="mono sm">$${(j.cost||0).toFixed(4)}</td>
         <td style="color:var(--muted)">${ago(j.created_at)}</td>
         <td><div class="flex" style="gap:5px">
-          <button class="btn bg bsm" onclick="viewJob(${j.id})" title="View"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
-          <button class="btn bg bsm" onclick="dlExport(${j.id})" title="Export"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+          ${j.isAudit
+            ? `<button class="btn bg bsm" onclick="viewAuditJob(${j.id})" title="View Audit"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>`
+            : `<button class="btn bg bsm" onclick="viewJob(${j.id})" title="View"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          <button class="btn bg bsm" onclick="dlExport(${j.id})" title="Export"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>`}
           <button class="btn bg bsm" onclick="delJob(${j.id})" title="Delete" style="color:var(--err)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
         </div></td>
       </tr>`).join('')}</tbody></table></div>`;
@@ -841,6 +845,19 @@ function viewJob(id) {
   document.getElementById('log-wrap').innerHTML = '';
   nav('res');
   openSSE(id);
+}
+
+async function viewAuditJob(id) {
+  try {
+    const res = await fetch('/api/audit-row/' + id + '?token=' + token);
+    if (!res.ok) { toast('Could not load audit result', 'err'); return; }
+    const data = await res.json();
+    const tmp = document.createElement('div');
+    renderAudit(data, tmp);
+    document.getElementById('det-title').textContent = data.finalUrl || data.url || 'Audit Result';
+    document.getElementById('det-body').innerHTML = tmp.innerHTML;
+    document.getElementById('det-mo').classList.remove('hide');
+  } catch(e) { toast(e.message, 'err'); }
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
@@ -994,6 +1011,7 @@ function resetWizard() {
   document.getElementById('btn-next1').disabled = true;
   document.getElementById('col-prev-wrap').innerHTML = '<span style="font-size:12px;color:var(--muted)">Click Refresh to detect output columns from your prompt</span>';
   document.getElementById('col-prev-warn').classList.add('hide');
+  document.getElementById('fi').value = '';
   api('GET', '/api/providers').then(p => { providers = p; renderProvs(); }).catch(()=>{});
 }
 
@@ -1042,7 +1060,7 @@ function initUpload() {
   uz.addEventListener('drop', e => { e.preventDefault(); uz.classList.remove('over'); const f = e.dataTransfer.files[0]; if(f) readFile(f); });
 }
 
-function onFile(e) { const f = e.target.files[0]; if(f) readFile(f); }
+function onFile(e) { const f = e.target.files[0]; if(f) { readFile(f); e.target.value = ''; } }
 
 function readFile(f) {
   const r = new FileReader();
@@ -1262,6 +1280,21 @@ async function runBuilder() {
   }
 }
 
+function bldrLabelToKey(label) {
+  return label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40);
+}
+
+function bldrUpdateLabel(i, val) {
+  bldrSections[i].label = val;
+  bldrSections[i].key = bldrLabelToKey(val);
+  const keyEl = document.getElementById('bldr-key-' + i);
+  if (keyEl) keyEl.textContent = bldrSections[i].key;
+}
+
+function bldrUpdateDesc(i, val) {
+  bldrSections[i].desc = val;
+}
+
 function renderBldrSections() {
   document.getElementById('bldr-sec-count').textContent = `(${bldrSections.length} columns)`;
   document.getElementById('bldr-secs').innerHTML = bldrSections.map((s, i) => `
@@ -1269,10 +1302,10 @@ function renderBldrSections() {
       <div class="builder-sec-num">${i+1}</div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;gap:8px;align-items:center">
-          <input class="fi" value="${x(s.label)}" oninput="bldrSections[${i}].label=this.value" style="font-size:12px;padding:4px 8px;flex:1">
-          <span class="builder-sec-key mono">${x(s.key)}</span>
+          <input class="fi" value="${x(s.label)}" oninput="bldrUpdateLabel(${i},this.value)" style="font-size:12px;padding:4px 8px;flex:1" placeholder="Column name">
+          <span class="builder-sec-key mono" id="bldr-key-${i}">${x(s.key)}</span>
         </div>
-        ${s.desc ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${x(s.desc)}</div>` : ''}
+        <input class="fi" value="${x(s.desc||'')}" oninput="bldrUpdateDesc(${i},this.value)" style="font-size:11px;padding:3px 8px;margin-top:4px;color:var(--muted)" placeholder="Instruction for AI (e.g. Find the CEO name and LinkedIn URL)">
       </div>
       <button class="builder-sec-del" onclick="bldrRemoveSection(${i})">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -1286,20 +1319,21 @@ function bldrRemoveSection(i) {
 }
 
 function bldrAddSection() {
-  const label = prompt('Column name:');
-  if (!label || !label.trim()) return;
-  bldrSections.push({
-    key: label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40),
-    label: label.trim(), desc: ''
-  });
+  bldrSections.push({ key: 'column_' + (bldrSections.length + 1), label: 'New Column', desc: '' });
   renderBldrSections();
+  // Focus the label input of the new row
+  const inputs = document.getElementById('bldr-secs').querySelectorAll('input.fi');
+  if (inputs.length >= 2) {
+    const last = inputs[inputs.length - 2]; // label input (before desc input)
+    last.focus(); last.select();
+  }
 }
 
 function applyBuilder() {
   const prompt = document.getElementById('bldr-prompt').value;
   document.getElementById('sys-prompt').value = prompt;
   if (bldrSections.length) {
-    explicitSecs = bldrSections.map(s => ({ key: s.key, label: s.label }));
+    explicitSecs = bldrSections.map(s => ({ key: s.key, label: s.label, desc: s.desc || '' }));
   }
   closeBuilder();
   refreshColPreview();
