@@ -1322,7 +1322,13 @@ Return ONLY valid JSON (no markdown, no code fences):
     const escRawA=s=>'"'+String(s==null?'':s).replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
     // ── Audit job export ──────────────────────────────────────────────────────
     if(job.provider==='pagespeed'){
-      const auditHdrs=['Company','URL','Final URL','Status','Summary',
+      const totalRowCount=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=?').get(jid).c;
+      // Pass 1: find max issue count across all rows so we can set fixed column headers
+      let maxIssues=0;
+      const allRowsForScan=db.prepare('SELECT research FROM rows WHERE job_id=? AND status=?').all(jid,'success');
+      for(const r of allRowsForScan){try{const a=JSON.parse(r.research||'{}');maxIssues=Math.max(maxIssues,(a.issues||[]).length);}catch{}}
+      // Build headers with one group of columns per issue slot
+      const fixedHdrs=['Company','URL','Final URL','Status','Summary',
         'Performance (Mobile)','SEO (Mobile)','Accessibility (Mobile)','Best Practices (Mobile)',
         'Performance (Desktop)','SEO (Desktop)','Accessibility (Desktop)','Best Practices (Desktop)',
         'Response Ms','HTTP Status','HTTPS Works','HTTP→HTTPS Redirect',
@@ -1331,12 +1337,11 @@ Return ONLY valid JSON (no markdown, no code fences):
         'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
         'Doc Size KB','Alt Coverage %','Mixed Content Count',
         'FCP (ms)','LCP (ms)','CLS','TBT (ms)','Speed Index (ms)','TTI (ms)',
-        'Issue Count','Critical Issues','High Issues',
-        'Issue 1 Severity','Issue 1 Category','Issue 1 Title','Issue 1 Description',
-        'Issue 2 Severity','Issue 2 Category','Issue 2 Title','Issue 2 Description',
-        'Issue 3 Severity','Issue 3 Category','Issue 3 Title','Issue 3 Description',
-        'Errors'];
-      const totalRowCount=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=?').get(jid).c;
+        'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues'];
+      const issueHdrs=[];
+      for(let i=1;i<=maxIssues;i++){issueHdrs.push(`Issue ${i} Severity`,`Issue ${i} Category`,`Issue ${i} Title`,`Issue ${i} Description`);}
+      const auditHdrs=[...fixedHdrs,...issueHdrs,'Errors'];
+      // Pass 2: stream data
       res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="audit_export_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
       res.write('\uFEFF'+auditHdrs.join(',')+'\r\n');
       const PAGE=500;
@@ -1350,9 +1355,6 @@ Return ONLY valid JSON (no markdown, no code fences):
           const pct=v=>v==null?'':Math.round(v*100);
           const ms=v=>v==null?'':Math.round(v);
           const yn=v=>v==null?'':v?'Yes':'No';
-          const top=(i)=>issues[i]||{};
-          const critCount=issues.filter(x=>x.severity==='critical').length;
-          const highCount=issues.filter(x=>x.severity==='high').length;
           const cols=[
             escRawA(r.company),
             escRawA(a.url||r.company),
@@ -1367,12 +1369,18 @@ Return ONLY valid JSON (no markdown, no code fences):
             yn(m.hasAnalytics),yn(m.hasSitemap),yn(m.hasJsonLD),yn(m.hasFavicon),
             m.docSizeKB||'',m.altCoverage!=null?Math.round(m.altCoverage*100)+'%':'',m.mixedContentCount||0,
             ms(m.fcp),ms(m.lcp),m.cls!=null?m.cls.toFixed(3):'',ms(m.tbt),ms(m.speedIndex),ms(m.tti),
-            issues.length,critCount,highCount,
-            escRawA(top(0).severity||''),escRawA(top(0).category||''),escRawA(top(0).title||''),escRawA(top(0).description||''),
-            escRawA(top(1).severity||''),escRawA(top(1).category||''),escRawA(top(1).title||''),escRawA(top(1).description||''),
-            escRawA(top(2).severity||''),escRawA(top(2).category||''),escRawA(top(2).title||''),escRawA(top(2).description||''),
-            escRawA((a.errors||[]).join('; '))
+            issues.length,
+            issues.filter(x=>x.severity==='critical').length,
+            issues.filter(x=>x.severity==='high').length,
+            issues.filter(x=>x.severity==='medium').length,
+            issues.filter(x=>x.severity==='low').length,
           ];
+          // One group of 4 columns per issue slot, padded to maxIssues
+          for(let i=0;i<maxIssues;i++){
+            const iss=issues[i]||{};
+            cols.push(escRawA(iss.severity||''),escRawA(iss.category||''),escRawA(iss.title||''),escRawA(iss.description||''));
+          }
+          cols.push(escRawA((a.errors||[]).join('; ')));
           lines.push(cols.join(','));
         }
         res.write(lines.join('\r\n')+'\r\n');
