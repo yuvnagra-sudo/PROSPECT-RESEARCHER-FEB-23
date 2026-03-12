@@ -29,6 +29,7 @@ try{db.exec(`ALTER TABLE jobs ADD COLUMN user_id INTEGER DEFAULT 0`);}catch{}
 try{db.exec(`ALTER TABLE jobs ADD COLUMN sections_json TEXT`);}catch{}
 try{db.exec(`ALTER TABLE rows ADD COLUMN quality INT DEFAULT 0`);}catch{}
 try{db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`);}catch{}
+try{db.exec(`ALTER TABLE rows ADD COLUMN original_row TEXT`);}catch{}
 
 // Fix 5: Recover orphaned jobs left in "running" state after server crash/restart
 // Bulk audit jobs resume automatically; research jobs become 'paused' (user resumes manually)
@@ -62,7 +63,7 @@ const S={
   gJ:db.prepare(`SELECT*FROM jobs WHERE id=?`),
   lJ:db.prepare(`SELECT id,name,provider,template_id,total_rows,succeeded,failed,status,cost,elapsed,created_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 50`),
   dJ:db.prepare(`DELETE FROM jobs WHERE id=? AND user_id=?`),
-  iR:db.prepare(`INSERT INTO rows(job_id,idx,company,prompt)VALUES(?,?,?,?)`),
+  iR:db.prepare(`INSERT INTO rows(job_id,idx,company,prompt,original_row)VALUES(?,?,?,?,?)`),
   uR:db.prepare(`UPDATE rows SET status=?,research=?,error=?,input_tokens=?,output_tokens=?,cache_read=?,cache_write=? WHERE job_id=? AND idx=?`),
   gR:db.prepare(`SELECT*FROM rows WHERE job_id=? ORDER BY idx`),
   gP:db.prepare(`SELECT*FROM rows WHERE job_id=? AND status='pending' ORDER BY idx`),
@@ -1247,7 +1248,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     try{
       for(let start=0;start<rows.length;start+=CHUNK){
         const chunk=rows.slice(start,start+CHUNK);
-        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const{company,prompt}=buildPrompt(chunk[i],cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt);}})();
+        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const{company,prompt}=buildPrompt(chunk[i],cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt,JSON.stringify(chunk[i]));}})();
         // Yield to event loop between chunks so the server stays responsive
         if(start+CHUNK<rows.length)await new Promise(r=>setImmediate(r));
       }
@@ -1342,7 +1343,11 @@ Return ONLY valid JSON (no markdown, no code fences):
         'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues'];
       const issueHdrs=[];
       for(let i=1;i<=maxIssues;i++){issueHdrs.push(`Issue ${i} Severity`,`Issue ${i} Category`,`Issue ${i} Title`,`Issue ${i} Description`);}
-      const auditHdrs=[...fixedHdrs,...issueHdrs,'Errors'];
+      const verifyHdrs=['Site Alive','Final Domain','Original Domain','Domain Redirected',
+        'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal',
+        'Has Online Payment','Has Calculator/Tool','Has Email Capture',
+        'Has Click-to-Call','Has Email Link','Platform','Copyright Year','Page Text Snippet'];
+      const auditHdrs=[...fixedHdrs,...issueHdrs,'Errors',...verifyHdrs];
       // Pass 2: stream data
       res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="audit_export_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
       res.write('\uFEFF'+auditHdrs.join(',')+'\r\n');
@@ -1383,6 +1388,21 @@ Return ONLY valid JSON (no markdown, no code fences):
             cols.push(escRawA(iss.severity||''),escRawA(iss.category||''),escRawA(iss.title||''),escRawA(iss.detail||''));
           }
           cols.push(escRawA((a.errors||[]).join('; ')));
+          // ── URL verification columns (derived from audit data) ──────────────
+          const domainOf=u=>{try{return new URL(u).hostname.replace(/^www\./i,'').toLowerCase();}catch{return'';}};
+          const origDomain=domainOf(a.url||r.company);
+          const finalDomain=domainOf(a.finalUrl||'');
+          const cm2=m.contactMethods||{};
+          cols.push(
+            yn(m.status>=200&&m.status<=299),
+            escRawA(finalDomain),
+            escRawA(origDomain),
+            yn(finalDomain&&origDomain&&finalDomain!==origDomain),
+            yn(cm2.hasContactForm),yn(m.hasScheduling),yn(m.hasChatWidget),
+            yn(m.hasClientPortal),yn(m.hasOnlinePayment),yn(m.hasCalculatorOrTool),
+            yn(m.hasEmailCapture),yn(cm2.hasClickToCall),yn(cm2.hasEmail),
+            escRawA(m.platform||''),escRawA(m.copyrightYear||''),escRawA(m.pageTextSnippet||''),
+          );
           lines.push(cols.join(','));
         }
         res.write(lines.join('\r\n')+'\r\n');
@@ -1397,14 +1417,30 @@ Return ONLY valid JSON (no markdown, no code fences):
     let expSections=resolveSections(job,sampleRows);
     const escRaw=s=>'"'+String(s||'').replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
     const escClean=s=>'"'+sanitizeForCSV(String(s||'')).replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
+    // Helper: get original CSV row data — from stored JSON or parsed from prompt (legacy rows)
     const colMap=JSON.parse(job.col_map||'{}');
-    const origCols=Object.entries(colMap).filter(([role,hdr])=>hdr&&role!=='company').map(([role,hdr])=>({role,header:hdr})).filter(c=>c.header.toLowerCase()!=='company');
-    const hdrCols=['Company'];
-    origCols.forEach(c=>hdrCols.push(c.header));
-    hdrCols.push('Status');
+    // Map prompt labels (e.g. "Company", "Website") back to original CSV header names via col_map
+    const ROLE_BY_LABEL={'Company':'company','Website':'website','Contact':'contact','Title':'title','Email':'email','Phone':'phone','Address':'address','Industry/Category':'industry','Rating':'rating','Reviews':'reviews','Additional Context':'notes'};
+    const getOrigRowData=r=>{
+      if(r.original_row){try{return JSON.parse(r.original_row);}catch{}}
+      const raw={};for(const[,k,v]of(r.prompt||'').matchAll(/\*\*([^*\n]+)\*\*:\s*(.+)/g))raw[k]=v.trim();
+      const d={};for(const[k,v]of Object.entries(raw)){const role=ROLE_BY_LABEL[k];const hdr=role&&colMap[role]?colMap[role]:k;d[hdr]=v;}
+      return d;
+    };
+    // Determine original CSV headers — use col_map order for legacy rows, fallback to parsed keys
+    let origHeaders;
+    if(sampleRows[0]?.original_row){try{origHeaders=Object.keys(JSON.parse(sampleRows[0].original_row));}catch{}}
+    if(!origHeaders){
+      // Legacy: reconstruct header order from col_map (mapped cols first, then any extras from prompt)
+      const mappedHeaders=Object.entries(colMap).filter(([,h])=>h).map(([,h])=>h);
+      const firstRowData=sampleRows[0]?getOrigRowData(sampleRows[0]):{};
+      const extraHeaders=Object.keys(firstRowData).filter(h=>!mappedHeaders.includes(h));
+      origHeaders=mappedHeaders.length?[...mappedHeaders,...extraHeaders]:Object.keys(firstRowData);
+    }
+    if(!origHeaders?.length)origHeaders=['Company'];
+    const hdrCols=[...origHeaders];
     if(expSections.length)expSections.forEach(s=>hdrCols.push(s.label));
     else hdrCols.push('Research Brief');
-    hdrCols.push('Full Research','Input Tokens','Output Tokens','Provider');
     res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="prospect_research_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
     res.write('\uFEFF'+hdrCols.join(',')+'\r\n');
     // Stream rows in pages of 500 to avoid loading the entire result set into memory
@@ -1415,20 +1451,12 @@ Return ONLY valid JSON (no markdown, no code fences):
       const lines=[];
       for(const r of rows){
         let parsed=safeParseResearch(r.research);
-        const cols=[escRaw(r.company)];
-        origCols.forEach(c=>{
-          const roleLabel=c.role.charAt(0).toUpperCase()+c.role.slice(1);
-          const pat=new RegExp('\\*\\*'+roleLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?:[/A-Za-z]*):\\*\\*\\s*(.+?)(?:\\n|$)','i');
-          const m=r.prompt?r.prompt.match(pat):null;
-          cols.push(escRaw(m?m[1].trim():''));
-        });
-        cols.push(escRaw(r.status));
+        const origData=getOrigRowData(r);
+        const cols=origHeaders.map(h=>escRaw(origData[h]||''));
         if(expSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,expSections);
         if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
         else if(expSections.length)expSections.forEach(()=>cols.push('""'));
         else cols.push(escClean(parsed?._raw||r.error||''));
-        const fullResearch=(parsed?._parsed&&expSections.length)?expSections.map(s=>`${s.label}:\n${parsed[s.key]||''}`).join('\n\n'):(parsed?._raw||'');
-        cols.push(escRaw(fullResearch),r.input_tokens||0,r.output_tokens||0,escRaw(job.provider));
         lines.push(cols.join(','));
       }
       res.write(lines.join('\r\n')+'\r\n');
@@ -1446,7 +1474,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     const jobName='Audit: '+(url.trim().replace(/^https?:\/\//,'').split('/')[0]).slice(0,60);
     const jr=S.iJ.run(uid,jobName,'pagespeed','website-audit',url.trim(),0,'{}',1,null);
     const jid=Number(jr.lastInsertRowid);
-    S.iR.run(jid,0,url.trim(),'Website audit');
+    S.iR.run(jid,0,url.trim(),'Website audit',null);
     S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
     // Respond immediately — audit runs in background
     json(res,{jobId:jid,status:'running'});
@@ -1482,7 +1510,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     const jr=S.iJ.run(uid,name,'pagespeed','website-audit','',0,'{}',urls.length,null);
     const jid=Number(jr.lastInsertRowid);
     S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
-    for(let i=0;i<urls.length;i++){const u=urls[i];S.iR.run(jid,i,u.url||String(u),u.company||u.url||String(u));}
+    for(let i=0;i<urls.length;i++){const u=urls[i];S.iR.run(jid,i,u.url||String(u),u.company||u.url||String(u),null);}
     json(res,{jobId:jid,status:'running'});
     runBulkAudit(jid).catch(e=>console.error('bulk audit error',e.message));
   }catch(e){json(res,{error:e.message||'Bulk audit failed'},500);}return;}
