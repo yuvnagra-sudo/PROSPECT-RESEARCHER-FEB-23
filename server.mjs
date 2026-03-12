@@ -1356,7 +1356,7 @@ Return ONLY valid JSON (no markdown, no code fences):
           const ms=v=>v==null?'':Math.round(v);
           const yn=v=>v==null?'':v?'Yes':'No';
           const cols=[
-            escRawA(r.company),
+            escRawA(r.prompt && r.prompt !== 'Website audit' ? r.prompt : r.company),
             escRawA(a.url||r.company),
             escRawA(a.finalUrl||''),
             escRawA(r.status),
