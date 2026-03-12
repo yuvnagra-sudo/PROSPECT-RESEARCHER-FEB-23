@@ -410,7 +410,7 @@ async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
   let res;try{res=await fetch(prov.apiUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${apiKey}`},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
-  if(res.status===429)throw{type:'rate_limit',wait:30000};
+  if(res.status===429){const ra=res.headers.get('retry-after');const wait=ra?Math.ceil(parseFloat(ra))*1000:5000;throw{type:'rate_limit',wait};};
   if(!res.ok){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}throw{type:'api_error',message:m};}
   const data=await res.json();const c=data.choices?.[0];const u=data.usage||{};
   const research=typeof c?.message?.content==='string'?c.message.content:'';
@@ -907,7 +907,7 @@ async function runBulkAudit(jid){
 const actv=new Map();
 
 // How many concurrent requests to allow per provider
-const CONCURRENCY={gemini:5,gemini3flash:5,claude:5,haiku:5,gpt5:4,gpt5mini:5,gpt5nano:5,openai:5,deepseek:5};
+const CONCURRENCY={gemini:5,gemini3flash:5,claude:5,haiku:5,gpt5:20,gpt5mini:25,gpt5nano:30,openai:10,deepseek:10};
 
 async function runJob(jobId){
   const job=S.gJ.get(jobId);if(!job)return;const prov=PROVDEFS[job.provider];if(!prov)return;
