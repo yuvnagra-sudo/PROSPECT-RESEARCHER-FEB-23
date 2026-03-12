@@ -84,6 +84,46 @@ function parseFavicon(html) {
   return /<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/i.test(html)
     || /<link[^>]+rel=["'][^"']*apple-touch-icon[^"']*["'][^>]*>/i.test(html);
 }
+function parsePlatform(html) {
+  if (/wp-content\/|wp-includes\//i.test(html)) return 'WordPress';
+  if (/cdn\.shopify\.com/i.test(html)) return 'Shopify';
+  if (/static1\.squarespace\.com|squarespace\.com\/universal/i.test(html)) return 'Squarespace';
+  if (/static\.parastorage\.com|wixstatic\.com/i.test(html)) return 'Wix';
+  if (/assets\.website-files\.com/i.test(html)) return 'Webflow';
+  if (/framer\.com\/m\//i.test(html)) return 'Framer';
+  if (/hs-scripts\.com|hubspot\.com\/hs-fs/i.test(html)) return 'HubSpot';
+  const gen = html.match(/<meta\s+(?:[^>]*?\s+)?name=["']generator["'][^>]*content=["']([^"']+)/i)
+    || html.match(/<meta\s+(?:[^>]*?\s+)?content=["']([^"']+?)["'][^>]*name=["']generator["']/i);
+  if (gen) {
+    const g = gen[1];
+    if (/wordpress/i.test(g)) return 'WordPress';
+    if (/squarespace/i.test(g)) return 'Squarespace';
+    if (/wix/i.test(g)) return 'Wix';
+    if (/webflow/i.test(g)) return 'Webflow';
+    if (/ghost/i.test(g)) return 'Ghost';
+    if (/joomla/i.test(g)) return 'Joomla';
+    if (/drupal/i.test(g)) return 'Drupal';
+  }
+  return '';
+}
+function parseCopyrightYear(html) {
+  const m = html.match(/(?:©|&copy;|&#169;|copyright)\s*(?:&nbsp;|\s)*((?:19|20)\d{2})/i);
+  return m ? m[1] : '';
+}
+function parseContactMethods(html) {
+  const hasContactForm = /<form\b[^>]*>/i.test(html) && (
+    /type=["']email["']/i.test(html) ||
+    /contact|enquir|inquiry|reach.?us/i.test(html) ||
+    /gform_wrapper|wpcf7|wpforms|ninja-forms|gravityform/i.test(html) ||
+    /typeform|jotform|formstack/i.test(html)
+  );
+  const hasCalendly = /calendly\.com/i.test(html);
+  const hasBookingWidget = hasCalendly ||
+    /acuityscheduling\.com|simplybook\.me|tidycal\.com|booksy\.com|setmore\.com/i.test(html);
+  const hasClickToCall = /href=["']tel:/i.test(html);
+  const hasEmail = /href=["']mailto:/i.test(html);
+  return { hasContactForm, hasCalendly, hasBookingWidget, hasClickToCall, hasEmail };
+}
 
 // ─── Check: HTTP + HTML ───────────────────────────────────────────────────────
 async function checkHTTP(url) {
@@ -112,6 +152,9 @@ async function checkHTTP(url) {
   const analytics = parseAnalytics(html);
   const ogTags = parseOGTags(html);
   const mixedContent = parseMixedContent(html, url);
+  const platform = parsePlatform(html);
+  const copyrightYear = parseCopyrightYear(html);
+  const contactMethods = parseContactMethods(html);
 
   return {
     ok: true,
@@ -143,6 +186,9 @@ async function checkHTTP(url) {
       analytics,
       hasFavicon: parseFavicon(html),
       docSizeKB: Math.round(html.length / 1024),
+      platform,
+      copyrightYear,
+      contactMethods,
     },
   };
 }
@@ -562,6 +608,9 @@ export async function auditWebsite(inputUrl, apiKey) {
     altCoverage: html.altCoverage?.coverage,
     hasAnalytics: analytics.hasGA || analytics.hasGTM || analytics.hasOther || undefined,
     hasSitemap: robots?.sitemapXmlExists || robots?.sitemapInRobots,
+    platform: html.platform || '',
+    copyrightYear: html.copyrightYear || '',
+    contactMethods: html.contactMethods || {},
     mixedContentCount: html.mixedContent?.length,
     hsts: httpData?.headers?.hsts,
     csp: httpData?.headers?.csp,

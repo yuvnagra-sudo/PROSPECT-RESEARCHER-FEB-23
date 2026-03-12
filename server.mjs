@@ -1336,7 +1336,7 @@ Return ONLY valid JSON (no markdown, no code fences):
         'H1 Count','Has Viewport','Has Canonical','Is Noindex',
         'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
         'Doc Size KB','Alt Coverage %','Mixed Content Count',
-        'FCP (ms)','LCP (ms)','CLS','TBT (ms)','Speed Index (ms)','TTI (ms)',
+        'FCP','LCP','CLS','TBT','Speed Index','TTI',
         'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues'];
       const issueHdrs=[];
       for(let i=1;i<=maxIssues;i++){issueHdrs.push(`Issue ${i} Severity`,`Issue ${i} Category`,`Issue ${i} Title`,`Issue ${i} Description`);}
@@ -1352,7 +1352,7 @@ Return ONLY valid JSON (no markdown, no code fences):
         for(const r of rows){
           let a={};try{a=JSON.parse(r.research||'{}');}catch{}
           const m=a.metrics||{};const d=a.desktop||{};const issues=a.issues||[];
-          const pct=v=>v==null?'':Math.round(v*100);
+          const sc=v=>v==null?'':v;
           const ms=v=>v==null?'':Math.round(v);
           const yn=v=>v==null?'':v?'Yes':'No';
           const cols=[
@@ -1361,14 +1361,14 @@ Return ONLY valid JSON (no markdown, no code fences):
             escRawA(a.finalUrl||''),
             escRawA(r.status),
             escRawA(a.summary||r.error||''),
-            pct(m.performance),pct(m.seo),pct(m.accessibility),pct(m.bestPractices),
-            pct(d.performance),pct(d.seo),pct(d.accessibility),pct(d.bestPractices),
+            sc(m.performance),sc(m.seo),sc(m.accessibility),sc(m.bestPractices),
+            sc(d.performance),sc(d.seo),sc(d.accessibility),sc(d.bestPractices),
             ms(m.responseMs),m.status||'',yn(m.httpsWorks),yn(m.httpRedirects),
             escRawA(m.title||''),m.titleLength||'',escRawA(m.metaDesc||''),m.metaDescLength||'',
             m.h1Count??'',yn(m.viewport),yn(m.hasCanonical),yn(m.isNoindex),
             yn(m.hasAnalytics),yn(m.hasSitemap),yn(m.hasJsonLD),yn(m.hasFavicon),
             m.docSizeKB||'',m.altCoverage!=null?Math.round(m.altCoverage*100)+'%':'',m.mixedContentCount||0,
-            ms(m.fcp),ms(m.lcp),m.cls!=null?m.cls.toFixed(3):'',ms(m.tbt),ms(m.speedIndex),ms(m.tti),
+            m.fcp||'',m.lcp||'',m.cls||'',m.tbt||'',m.speedIndex||'',m.tti||'',
             issues.length,
             issues.filter(x=>x.severity==='critical').length,
             issues.filter(x=>x.severity==='high').length,
@@ -1378,7 +1378,7 @@ Return ONLY valid JSON (no markdown, no code fences):
           // One group of 4 columns per issue slot, padded to maxIssues
           for(let i=0;i<maxIssues;i++){
             const iss=issues[i]||{};
-            cols.push(escRawA(iss.severity||''),escRawA(iss.category||''),escRawA(iss.title||''),escRawA(iss.description||''));
+            cols.push(escRawA(iss.severity||''),escRawA(iss.category||''),escRawA(iss.title||''),escRawA(iss.detail||''));
           }
           cols.push(escRawA((a.errors||[]).join('; ')));
           lines.push(cols.join(','));
