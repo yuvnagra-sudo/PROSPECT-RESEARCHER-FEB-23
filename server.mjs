@@ -404,8 +404,8 @@ async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
   // GPT-5 can handle longer structured outputs; GPT-4o-mini is cheaper so keep at 6000
   const maxTok=prov.model.startsWith('gpt-5')?8000:6000;
   const body={model:prov.model,[tk]:maxTok,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
-  // Native JSON mode when sections are defined (works with GPT-5, GPT-4o-mini, DeepSeek)
-  if(sections&&sections.length>=2)body.response_format={type:'json_object'};
+  // Native JSON mode when sections are defined — disabled when web search is active (incompatible with tools)
+  if(sections&&sections.length>=2&&!web)body.response_format={type:'json_object'};
   if(prov.webTool==='openai'&&web)body.tools=[{type:'web_search_preview'}];
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
@@ -1425,7 +1425,8 @@ Return ONLY valid JSON (no markdown, no code fences):
         if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
         else if(expSections.length)expSections.forEach(()=>cols.push('""'));
         else cols.push(escClean(parsed?._raw||r.error||''));
-        cols.push(escRaw(parsed?._raw||''),r.input_tokens||0,r.output_tokens||0,escRaw(job.provider));
+        const fullResearch=(parsed?._parsed&&expSections.length)?expSections.map(s=>`${s.label}:\n${parsed[s.key]||''}`).join('\n\n'):(parsed?._raw||'');
+        cols.push(escRaw(fullResearch),r.input_tokens||0,r.output_tokens||0,escRaw(job.provider));
         lines.push(cols.join(','));
       }
       res.write(lines.join('\r\n')+'\r\n');
