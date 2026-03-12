@@ -1319,6 +1319,68 @@ Return ONLY valid JSON (no markdown, no code fences):
   if(req.method==='GET'&&p.match(/^\/api\/export\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
     try{
+    const escRawA=s=>'"'+String(s==null?'':s).replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
+    // ── Audit job export ──────────────────────────────────────────────────────
+    if(job.provider==='pagespeed'){
+      const auditHdrs=['Company','URL','Final URL','Status','Summary',
+        'Performance (Mobile)','SEO (Mobile)','Accessibility (Mobile)','Best Practices (Mobile)',
+        'Performance (Desktop)','SEO (Desktop)','Accessibility (Desktop)','Best Practices (Desktop)',
+        'Response Ms','HTTP Status','HTTPS Works','HTTP→HTTPS Redirect',
+        'Title','Title Length','Meta Description','Meta Desc Length',
+        'H1 Count','Has Viewport','Has Canonical','Is Noindex',
+        'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
+        'Doc Size KB','Alt Coverage %','Mixed Content Count',
+        'FCP (ms)','LCP (ms)','CLS','TBT (ms)','Speed Index (ms)','TTI (ms)',
+        'Issue Count','Critical Issues','High Issues',
+        'Issue 1 Severity','Issue 1 Category','Issue 1 Title','Issue 1 Description',
+        'Issue 2 Severity','Issue 2 Category','Issue 2 Title','Issue 2 Description',
+        'Issue 3 Severity','Issue 3 Category','Issue 3 Title','Issue 3 Description',
+        'Errors'];
+      const totalRowCount=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=?').get(jid).c;
+      res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="audit_export_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
+      res.write('\uFEFF'+auditHdrs.join(',')+'\r\n');
+      const PAGE=500;
+      const pageStmt=db.prepare('SELECT * FROM rows WHERE job_id=? ORDER BY idx LIMIT ? OFFSET ?');
+      for(let offset=0;offset<totalRowCount;offset+=PAGE){
+        const rows=pageStmt.all(jid,PAGE,offset);
+        const lines=[];
+        for(const r of rows){
+          let a={};try{a=JSON.parse(r.research||'{}');}catch{}
+          const m=a.metrics||{};const d=a.desktop||{};const issues=a.issues||[];
+          const pct=v=>v==null?'':Math.round(v*100);
+          const ms=v=>v==null?'':Math.round(v);
+          const yn=v=>v==null?'':v?'Yes':'No';
+          const top=(i)=>issues[i]||{};
+          const critCount=issues.filter(x=>x.severity==='critical').length;
+          const highCount=issues.filter(x=>x.severity==='high').length;
+          const cols=[
+            escRawA(r.company),
+            escRawA(a.url||r.company),
+            escRawA(a.finalUrl||''),
+            escRawA(r.status),
+            escRawA(a.summary||r.error||''),
+            pct(m.performance),pct(m.seo),pct(m.accessibility),pct(m.bestPractices),
+            pct(d.performance),pct(d.seo),pct(d.accessibility),pct(d.bestPractices),
+            ms(m.responseMs),m.status||'',yn(m.httpsWorks),yn(m.httpRedirects),
+            escRawA(m.title||''),m.titleLength||'',escRawA(m.metaDesc||''),m.metaDescLength||'',
+            m.h1Count??'',yn(m.viewport),yn(m.hasCanonical),yn(m.isNoindex),
+            yn(m.hasAnalytics),yn(m.hasSitemap),yn(m.hasJsonLD),yn(m.hasFavicon),
+            m.docSizeKB||'',m.altCoverage!=null?Math.round(m.altCoverage*100)+'%':'',m.mixedContentCount||0,
+            ms(m.fcp),ms(m.lcp),m.cls!=null?m.cls.toFixed(3):'',ms(m.tbt),ms(m.speedIndex),ms(m.tti),
+            issues.length,critCount,highCount,
+            escRawA(top(0).severity||''),escRawA(top(0).category||''),escRawA(top(0).title||''),escRawA(top(0).description||''),
+            escRawA(top(1).severity||''),escRawA(top(1).category||''),escRawA(top(1).title||''),escRawA(top(1).description||''),
+            escRawA(top(2).severity||''),escRawA(top(2).category||''),escRawA(top(2).title||''),escRawA(top(2).description||''),
+            escRawA((a.errors||[]).join('; '))
+          ];
+          lines.push(cols.join(','));
+        }
+        res.write(lines.join('\r\n')+'\r\n');
+        if(offset+PAGE<totalRowCount)await new Promise(r=>setImmediate(r));
+      }
+      res.end();return;
+    }
+    // ── Research job export ───────────────────────────────────────────────────
     // Use a paginated DB query to avoid loading all rows into memory at once
     const totalRowCount=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=?').get(jid).c;
     const sampleRows=db.prepare('SELECT * FROM rows WHERE job_id=? ORDER BY idx LIMIT 20').all(jid);
