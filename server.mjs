@@ -31,7 +31,9 @@ try{db.exec(`ALTER TABLE rows ADD COLUMN quality INT DEFAULT 0`);}catch{}
 try{db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`);}catch{}
 
 // Fix 5: Recover orphaned jobs left in "running" state after server crash/restart
-db.exec("UPDATE jobs SET status='paused' WHERE status='running'");
+// Bulk audit jobs resume automatically; research jobs become 'paused' (user resumes manually)
+db.exec("UPDATE jobs SET status='paused' WHERE status='running' AND provider!='pagespeed'");
+// Bulk audit jobs: keep as 'running' — runBulkAudit will resume them after functions are defined
 
 // Admin designation: use ADMIN_EMAIL env var, fallback to auto-promote first user
 const ADMIN_EMAIL=process.env.ADMIN_EMAIL||'';
@@ -64,6 +66,7 @@ const S={
   uR:db.prepare(`UPDATE rows SET status=?,research=?,error=?,input_tokens=?,output_tokens=?,cache_read=?,cache_write=? WHERE job_id=? AND idx=?`),
   gR:db.prepare(`SELECT*FROM rows WHERE job_id=? ORDER BY idx`),
   gP:db.prepare(`SELECT*FROM rows WHERE job_id=? AND status='pending' ORDER BY idx`),
+  gAuditPending:db.prepare(`SELECT idx,company as url,company FROM rows WHERE job_id=? AND (status IS NULL OR status NOT IN('success','error')) ORDER BY idx`),
   gC:db.prepare(`SELECT*FROM rows WHERE job_id=? AND status IN('success','error')ORDER BY idx`),
   dR:db.prepare(`DELETE FROM rows WHERE job_id=?`),
   adminListUsers:db.prepare(`SELECT id,email,name,is_admin,created_at FROM users ORDER BY created_at`),
@@ -851,6 +854,55 @@ function buildPrompt(row,map,idx,useWebSearch){
   return{company,prompt:pr};
 }
 
+// ─── Bulk Audit Runner (persistent, DB-driven, auto-resumable) ───────────────
+const activeBulkAudits=new Set();
+
+async function runBulkAudit(jid){
+  if(activeBulkAudits.has(jid))return; // already running
+  const job=db.prepare('SELECT*FROM jobs WHERE id=?').get(jid);
+  if(!job||job.provider!=='pagespeed')return;
+  activeBulkAudits.add(jid);
+  const psKey=userKey(job.user_id,'PAGESPEED_API_KEY');
+  const CONC=psKey?5:2;
+  // Only process rows not yet completed — safe to restart anytime
+  const pending=S.gAuditPending.all(jid);
+  if(!pending.length){
+    // All rows done — finalize
+    const done=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=? AND status=\'success\'').get(jid).c;
+    const fail=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=? AND status=\'error\'').get(jid).c;
+    S.uJ.run(done,fail,'complete',0,0,0,0,0,0,jid);
+    activeBulkAudits.delete(jid);return;
+  }
+  let qi=0;
+  const worker=async()=>{
+    while(qi<pending.length){
+      const row=pending[qi++];
+      const url=row.url||row.company||'';
+      try{
+        const result=await auditWebsite(url,psKey||undefined);
+        S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,row.idx);
+      }catch(e){
+        S.uR.run('error',null,e.message||'Audit failed',0,0,0,0,jid,row.idx);
+      }
+      // Update progress counts in DB after every row
+      const ok=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=? AND status=\'success\'').get(jid).c;
+      const fail=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=? AND status=\'error\'').get(jid).c;
+      S.uJ.run(ok,fail,'running',0,0,0,0,0,0,jid);
+    }
+  };
+  try{
+    await Promise.all(Array.from({length:Math.min(CONC,pending.length)},worker));
+  }finally{
+    activeBulkAudits.delete(jid);
+    const ok=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=? AND status=\'success\'').get(jid).c;
+    const fail=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=? AND status=\'error\'').get(jid).c;
+    const total=job.total_rows||pending.length;
+    const finalStatus=ok+fail>=total?(fail===total?'error':'complete'):'paused';
+    S.uJ.run(ok,fail,finalStatus,0,0,0,0,0,0,jid);
+    console.log(`Bulk audit ${jid} ${finalStatus}: ${ok} ok, ${fail} fail of ${total}`);
+  }
+}
+
 // ─── Job Runner (parallel worker pool) ───
 const actv=new Map();
 
@@ -905,7 +957,9 @@ async function runJob(jobId){
   async function worker(){
     while(queue.length>0&&!ctx.cancelled){
       const row=queue.shift();if(!row)break;
-      emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
+      // Emit row-start event so UI can show spinner for just this row
+      emit({type:'row-start',idx:row.idx,company:row.company});
+      emit({type:'progress',succeeded:ok,failed:fail,done:ok+fail,total:job.total_rows,current:row.company});
 
       // ─── Pre-audit: run website audit before LLM for website-audit template ───
       let rowPrompt=row.prompt;
@@ -1208,8 +1262,11 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   if(req.method==='GET'&&p.match(/^\/api\/stream\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
-       res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':'*'});
+    res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','x-accel-buffering':'no','access-control-allow-origin':'*'});
     let clientClosed=false;req.on('close',()=>{clientClosed=true;});
+    // Keepalive ping every 25s so Railway/Nginx proxies don't drop idle SSE connections
+    const ping=setInterval(()=>{if(clientClosed){clearInterval(ping);return;}try{res.write(':ping\n\n');}catch{clearInterval(ping);}},25000);
+    req.on('close',()=>clearInterval(ping));
     // Emit column definitions so frontend knows the table structure
     const completedRows=S.gC.all(jid);
     const sseSections=resolveSections(job,completedRows);
@@ -1217,7 +1274,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     // Page the completed-rows replay in batches of 200 to avoid blocking the event loop
     const REPLAY_BATCH=200;
     for(let i=0;i<completedRows.length;i+=REPLAY_BATCH){
-      if(clientClosed)return;
+      if(clientClosed){clearInterval(ping);return;}
       const batch=completedRows.slice(i,i+REPLAY_BATCH);
       for(const r of batch){
         let parsed=safeParseResearch(r.research);
@@ -1227,7 +1284,7 @@ Return ONLY valid JSON (no markdown, no code fences):
       // Yield between batches so the event loop stays responsive
       if(i+REPLAY_BATCH<completedRows.length)await new Promise(r=>setImmediate(r));
     }
-    if(clientClosed)return;
+    if(clientClosed){clearInterval(ping);return;}
     if(job.status==='complete'||job.status==='cancelled'||job.status==='paused'||job.status==='error'){
       res.write('data: '+JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})+'\n\n');
     }else{
@@ -1354,20 +1411,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
     for(let i=0;i<urls.length;i++){const u=urls[i];S.iR.run(jid,i,u.url||String(u),u.company||u.url||String(u));}
     json(res,{jobId:jid,status:'running'});
-    const psKey=userKey(uid,'PAGESPEED_API_KEY');const CONC=psKey?5:2;
-    (async()=>{
-      let ok=0,fail=0,idx=0;
-      const worker=async()=>{
-        while(idx<urls.length){
-          const i=idx++;const u=urls[i];const url=u.url||String(u);
-          try{const result=await auditWebsite(url,psKey||undefined);S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,i);ok++;}
-          catch(e){S.uR.run('error',null,e.message||'Audit failed',0,0,0,0,jid,i);fail++;}
-          S.uJ.run(ok,fail,'running',0,0,0,0,0,0,jid);
-        }
-      };
-      await Promise.all(Array.from({length:Math.min(CONC,urls.length)},worker));
-      S.uJ.run(ok,fail,fail===urls.length?'error':'complete',0,0,0,0,0,0,jid);
-    })().catch(e=>console.error('bulk audit error',e.message));
+    runBulkAudit(jid).catch(e=>console.error('bulk audit error',e.message));
   }catch(e){json(res,{error:e.message||'Bulk audit failed'},500);}return;}
 
   if(req.method==='GET'&&p.match(/^\/api\/bulk-audit-rows\/\d+$/)){
@@ -1383,6 +1427,18 @@ Return ONLY valid JSON (no markdown, no code fences):
     console.error('Request error:',topErr.message);
     try{if(!res.headersSent)json(res,{error:topErr.message||'Internal server error'},topErr.message.includes('too large')?413:500);}catch{}
   }
+});
+
+// ─── Auto-resume bulk audit jobs that were interrupted by a server restart ───
+// Runs after server starts; any pagespeed job still in 'running' or 'paused' state
+// gets picked up and continues from the last completed row
+setImmediate(async()=>{
+  const interrupted=db.prepare("SELECT id FROM jobs WHERE provider='pagespeed' AND status IN('running','paused')").all();
+  for(const j of interrupted){
+    console.log(`Auto-resuming bulk audit job ${j.id}…`);
+    runBulkAudit(j.id).catch(e=>console.error(`Auto-resume job ${j.id} error:`,e.message));
+  }
+  if(interrupted.length)console.log(`Resumed ${interrupted.length} bulk audit job(s)`);
 });
 
 // ─── Start Server ───
