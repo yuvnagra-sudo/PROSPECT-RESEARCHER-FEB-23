@@ -311,6 +311,7 @@ textarea.fi{resize:vertical;line-height:1.5}
             <button class="btn bs sm" onclick="resetSheet()">× Reset</button>
             <button class="btn bs sm" onclick="openTmplModal()">📋 Template</button>
             <button class="btn bs sm" onclick="openAIModal()">✨ AI Columns</button>
+            <button class="btn bs sm" id="btn-ctx" onclick="openCtxModal()">📋 Context Columns</button>
             <div id="no-company-banner" class="hide">
               ⚠️ Company column:
               <select id="company-sel" onchange="colMap.company=this.value;updateCostEst()"></select>
@@ -324,6 +325,7 @@ textarea.fi{resize:vertical;line-height:1.5}
             <select id="prov-sel" onchange="updateCostEst()"></select>
             <label class="ws-label"><input type="checkbox" id="ws-chk" onchange="updateCostEst()"> Web</label>
             <span id="cost-badge"></span>
+            <button id="btn-cancel" class="btn bs sm hide" onclick="cancelResearch()">■ Cancel</button>
             <button id="btn-run" class="btn bp sm" onclick="runResearch()">▶ Run</button>
           </div>
         </div>
@@ -498,6 +500,25 @@ textarea.fi{resize:vertical;line-height:1.5}
   </div>
 </div>
 
+<!-- ── Context Columns Modal ── -->
+<div id="ctx-modal" class="modal-wrap hide" onclick="if(event.target===this)closeCtxModal()">
+  <div class="modal">
+    <div class="modal-hd"><span>Select Context Columns</span><button class="btn bg sm" onclick="closeCtxModal()">✕</button></div>
+    <div class="modal-bd">
+      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Choose which CSV columns the AI will see when researching each company.</p>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn bs sm" onclick="ctxSelectAll()">Select All</button>
+        <button class="btn bs sm" onclick="ctxClearAll()">Clear All</button>
+      </div>
+      <div id="ctx-col-list" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:300px;overflow-y:auto"></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn bs sm" onclick="closeCtxModal()">Cancel</button>
+      <button class="btn bp" onclick="saveCtxCols()">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Row Detail Modal ── -->
 <div id="det-modal" class="modal-wrap hide" onclick="if(event.target===this)closeDetModal()">
   <div class="modal modal-lg">
@@ -520,6 +541,7 @@ let enrichCols = []; // [{key,label,desc}]
 let rowResults = {}; // {rowIdx:{colKey:val}}
 let rowStatuses = {}; // {rowIdx:'pending'|'running'|'done'|'error'}
 let curJobId = null, sse = null, drawerIdx = -1;
+let contextCols = []; // CSV columns selected by user to pass as LLM context
 // Bulk audit
 let bulkRows = [], bulkHdrs = [], bulkJobId = null, bulkPollTimer = null, bulkResults = [];
 // AI modal
@@ -581,6 +603,7 @@ async function boot(){
   if(me?.is_admin)$i('nav-admin').classList.remove('hide');
   renderProvSelect();
   nav('table');
+  checkActiveJob();
 }
 async function init(){
   if(!token){$i('app').classList.add('hide');return;}
@@ -647,6 +670,7 @@ function readFile(f){
   }
 }
 function parseCSV(raw){
+  if(!raw||typeof raw!=='string'){alert('Could not read file contents');return;}
   let text=raw;if(text.charCodeAt(0)===0xfeff)text=text.slice(1);
   text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
   const fl=text.split('\n')[0]||'';
@@ -677,6 +701,7 @@ function autoGuess(){
 }
 function onDataLoaded(){
   colMap=autoGuess();rowResults={};rowStatuses={};
+  contextCols=[...csvHdrs]; // default: all columns selected
   // Show company selector if not detected
   if(!colMap.company){
     $i('no-company-banner').classList.remove('hide');
@@ -687,15 +712,17 @@ function onDataLoaded(){
   $i('upload-zone').classList.add('hide');
   $i('sheet-view').classList.remove('hide');
   $i('row-count').textContent=csvRows.length+' rows';
+  updateCtxBadge();
   updateCostEst();
   renderTable();
 }
 function resetSheet(){
-  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;
+  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];
   if(sse){sse.close();sse=null;}
   $i('upload-zone').classList.remove('hide');$i('fi').value='';
   $i('sheet-view').classList.add('hide');
   $i('btn-run').disabled=false;$i('btn-run').textContent='▶ Run';
+  $i('btn-cancel').classList.add('hide');
   $i('run-progress').classList.add('hide');
 }
 
@@ -826,6 +853,27 @@ function applyAICols(){
   toast(`Added ${aiSuggestedCols.length} columns`,'ok');
 }
 
+// ── Context Columns Modal ─────────────────────────────────────────────────────
+function updateCtxBadge(){
+  const btn=$i('btn-ctx');if(!btn)return;
+  const total=csvHdrs.length,sel=contextCols.length;
+  btn.textContent=`📋 Context Columns (${sel}/${total})`;
+}
+function openCtxModal(){
+  const list=$i('ctx-col-list');
+  list.innerHTML=csvHdrs.map(h=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0"><input type="checkbox" value="${x(h)}" ${contextCols.includes(h)?'checked':''} style="cursor:pointer"> ${x(h)}</label>`).join('');
+  $i('ctx-modal').classList.remove('hide');
+}
+function closeCtxModal(){$i('ctx-modal').classList.add('hide');}
+function saveCtxCols(){
+  contextCols=Array.from($i('ctx-col-list').querySelectorAll('input:checked')).map(i=>i.value);
+  if(!contextCols.length){toast('Select at least one column','err');return;}
+  closeCtxModal();updateCtxBadge();
+  toast(`${contextCols.length} context columns selected`,'ok');
+}
+function ctxSelectAll(){$i('ctx-col-list').querySelectorAll('input').forEach(i=>i.checked=true);}
+function ctxClearAll(){$i('ctx-col-list').querySelectorAll('input').forEach(i=>i.checked=false);}
+
 // ── Run Research ──────────────────────────────────────────────────────────────
 function buildSystemPrompt(){
   if(!enrichCols.length)return'You are a B2B researcher. Research the prospect thoroughly.';
@@ -838,24 +886,98 @@ async function runResearch(){
   if(!colMap.company){toast('Select the company name column','err');return;}
   const pid=$i('prov-sel').value;
   if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
+  // Reset all result states (cells show as empty dash until results arrive)
+  rowResults={};rowStatuses={};
+  renderTable();
   const btn=$i('btn-run');btn.disabled=true;btn.textContent='Running…';
+  $i('btn-cancel').classList.remove('hide');
   $i('run-progress').classList.remove('hide');
   $i('prog-fill').style.width='0%';$i('prog-txt').textContent='Starting…';
-  // Mark all enrichment cells as pending
-  csvRows.forEach((_,i)=>{rowStatuses[i]={};enrichCols.forEach(c=>{rowStatuses[i][c.key]='running';});});
-  renderTable();
-  const rows=csvRows.map(r=>({company:r[colMap.company]||'',website:r[colMap.website]||'',contact:r[colMap.contact]||'',title:r[colMap.title]||'',email:r[colMap.email]||'',phone:r[colMap.phone]||'',address:r[colMap.address]||'',industry:r[colMap.industry]||'',notes:r[colMap.notes]||''}));
-  const d=await api('POST','/api/research',{rows,colMap,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),provider:pid,useWebSearch:$i('ws-chk').checked,jobName:''});
-  if(!d||d.error){toast(d?.error||'Failed to start job','err');btn.disabled=false;btn.textContent='▶ Run';$i('run-progress').classList.add('hide');return;}
+  // Build CSV from user-selected context columns (preserves chosen data for LLM)
+  const selectedHdrs=contextCols.length?contextCols:csvHdrs;
+  const csvEsc=v=>{const s=String(v||'').replace(/"/g,'""');return s.includes(',')||s.includes('"')||s.includes('\n')?`"${s}"`:s;};
+  const csvLines=[selectedHdrs.map(csvEsc).join(',')];
+  for(const r of csvRows)csvLines.push(selectedHdrs.map(h=>csvEsc(r[h])).join(','));
+  const csv=csvLines.join('\n');
+  const d=await api('POST','/api/research',{csv,colMapOverride:colMap,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),provider:pid,useWebSearch:$i('ws-chk').checked,jobName:''});
+  if(!d||d.error){toast(d?.error||'Failed to start job','err');stopRunUI();return;}
   curJobId=d.jobId;
-  toast('Research started!','ok');
+  localStorage.setItem('pr_active_job',JSON.stringify({jobId:d.jobId,enrichCols}));
   openSSE(d.jobId);
 }
-function openSSE(jobId){
-  if(sse)sse.close();
+async function cancelResearch(){
+  if(!curJobId)return;
+  $i('btn-cancel').disabled=true;$i('btn-cancel').textContent='Cancelling…';
+  await api('POST','/api/cancel/'+curJobId);
+  if(sse){sse.close();sse=null;}
+  localStorage.removeItem('pr_active_job');
+  stopRunUI();
+  toast('Job cancelled','info');
+}
+function stopRunUI(){
+  $i('btn-run').disabled=false;$i('btn-run').textContent='▶ Run';
+  $i('btn-cancel').classList.add('hide');$i('btn-cancel').disabled=false;$i('btn-cancel').textContent='■ Cancel';
+  $i('run-progress').classList.add('hide');
+  curJobId=null;
+}
+
+let sseRetryDelay=2000,sseRetryTimer=null;
+function openSSE(jobId,isReconnect=false){
+  if(sse){sse.close();sse=null;}
+  if(sseRetryTimer){clearTimeout(sseRetryTimer);sseRetryTimer=null;}
   sse=new EventSource('/api/stream/'+jobId+'?token='+token);
-  sse.onmessage=e=>{try{onSSEMsg(JSON.parse(e.data));}catch{}};
-  sse.onerror=()=>{sse.close();sse=null;};
+  sse.onmessage=e=>{
+    sseRetryDelay=2000; // reset backoff on successful message
+    try{onSSEMsg(JSON.parse(e.data));}catch(err){console.warn('SSE parse error',err);}
+  };
+  sse.onerror=()=>{
+    // Don't give up — schedule a reconnect with exponential backoff
+    // The job is still running on the server; we just lost the stream
+    sse.close();sse=null;
+    if(!curJobId)return; // job was cancelled or never started
+    $i('prog-txt').textContent='Reconnecting…';
+    sseRetryDelay=Math.min(sseRetryDelay*1.5,30000);
+    sseRetryTimer=setTimeout(()=>openSSE(jobId,true),sseRetryDelay);
+  };
+  if(isReconnect){
+    // Results already in table — clear any stale spinner cells so reconnect replays cleanly
+    // (the server replays all completed rows, so we'll get fresh result events)
+  }
+}
+
+// When the laptop wakes up or the tab becomes visible again, force-reconnect SSE
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&curJobId&&!sse){
+    $i('prog-txt').textContent='Reconnecting…';
+    openSSE(curJobId,true);
+  }
+});
+
+// On page load, check if there was an active job that's still running on the server
+async function checkActiveJob(){
+  const saved=localStorage.getItem('pr_active_job');
+  if(!saved)return;
+  try{
+    const {jobId,enrichCols:savedCols}=JSON.parse(saved);
+    const jobs=await api('GET','/api/jobs');
+    const job=jobs?.find(j=>j.id===jobId);
+    if(!job){localStorage.removeItem('pr_active_job');return;}
+    if(job.status==='complete'||job.status==='error'||job.status==='cancelled'){
+      localStorage.removeItem('pr_active_job');
+      // Show toast pointing user to Jobs tab
+      toast(`Job "${job.name}" finished (${job.status}) — view in Jobs tab`,'info',6000);
+      return;
+    }
+    // Job still running — restore enrichCols and reconnect
+    enrichCols=savedCols||[];
+    curJobId=jobId;
+    $i('run-progress').classList.remove('hide');
+    $i('btn-run').disabled=true;$i('btn-run').textContent='Running…';
+    $i('btn-cancel').classList.remove('hide');
+    $i('prog-txt').textContent='Reconnecting to running job…';
+    openSSE(jobId,true);
+    toast('Reconnected to running job','ok');
+  }catch(e){localStorage.removeItem('pr_active_job');}
 }
 function onSSEMsg(m){
   if(m.type==='result'){
@@ -869,14 +991,23 @@ function onSSEMsg(m){
         updateCell(idx,c.key,val!=null?'done':'error',val);
       });
     }
+  }else if(m.type==='row-start'){
+    // row just started — show spinner only for this row's cells
+    const idx=m.idx;
+    enrichCols.forEach(c=>{
+      if(!rowStatuses[idx]?.[c.key]){updateCell(idx,c.key,'running',null);}
+    });
   }else if(m.type==='progress'){
-    const pct=m.pct||Math.round((m.done||0)/(m.total||1)*100);
+    const done=(m.done!=null?m.done:(m.succeeded||0)+(m.failed||0));
+    const total=m.total||csvRows.length;
+    const pct=m.pct||Math.round(done/total*100);
     $i('prog-fill').style.width=pct+'%';
-    $i('prog-txt').textContent=(m.done||0)+' / '+(m.total||csvRows.length);
+    $i('prog-txt').textContent=done+' / '+total+(m.current?' — '+m.current:'');
   }else if(m.type==='done'){
     if(sse){sse.close();sse=null;}
-    $i('btn-run').disabled=false;$i('btn-run').textContent='▶ Run';
-    $i('run-progress').classList.add('hide');
+    if(sseRetryTimer){clearTimeout(sseRetryTimer);sseRetryTimer=null;}
+    localStorage.removeItem('pr_active_job');
+    stopRunUI();
     const ok=m.succeeded||0,fail=m.failed||0;
     toast(`Done! ${ok} succeeded${fail?' · '+fail+' failed':''}${m.cost?' · '+fmtCost(m.cost):''}`,'ok',5000);
   }
@@ -917,7 +1048,7 @@ async function loadJobs(){
       <td style="font-size:12px;font-family:monospace">${fmtCost(j.cost)}</td>
       <td style="font-size:12px;color:#64748b">${ago(j.created_at)}</td>
       <td class="td-actions">
-        ${j.isAudit?`<button class="btn bs sm" onclick="viewAuditJob(${j.id},'${x(j.name)}')">View</button>`:`<button class="btn bs sm" onclick="viewJob(${j.id},'${x(j.name)}')">View</button><button class="btn bs sm" onclick="exportJob(${j.id})">Export</button>`}
+        ${j.isAudit?`<button class="btn bs sm" onclick="viewAuditJob(${j.id},'${x(j.name)}')">View</button>`:`<button class="btn bs sm" onclick="viewJob(${j.id},'${x(j.name)}')">View</button>`}<button class="btn bs sm" onclick="exportJob(${j.id})">⬇ Export</button>
         <button class="btn bd sm" onclick="deleteJob(${j.id},this)">Delete</button>
       </td>
     </tr>`).join('')}</tbody>
@@ -1077,6 +1208,7 @@ function onBulkFile(e){
   }
 }
 function parseBulkCSV(raw){
+  if(!raw||typeof raw!=='string'){alert('Could not read file contents');return;}
   let text=raw;if(text.charCodeAt(0)===0xfeff)text=text.slice(1);
   text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
   const fl=text.split('\n')[0]||'';
