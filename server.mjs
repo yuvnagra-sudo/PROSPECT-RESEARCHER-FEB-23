@@ -428,6 +428,8 @@ function callLLM(p,prov,sys,web,apiKey,jobSignal,sections){
 // Extract section definitions from any prompt text (for custom prompts)
 function extractSectionsFromPrompt(promptText){
   if(!promptText)return[];
+  // If the prompt explicitly requests plain text / no JSON, don't impose structure on it
+  if(/(?:plain\s+text|no\s+json|no\s+labels|no\s+field\s+names|no\s+formatting|just\s+the\s+sentences|return\s+only\s+(?:your\s+)?\d|only\s+plain\s+text)/i.test(promptText))return[];
   const sections=[];const seen=new Set();
   const addSec=(rawLabel)=>{
     if(sections.length>=15)return;
