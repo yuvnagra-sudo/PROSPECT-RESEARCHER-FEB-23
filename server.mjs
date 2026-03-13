@@ -1535,7 +1535,8 @@ Rules:
     // ── Research job export ───────────────────────────────────────────────────
     // Use a paginated DB query to avoid loading all rows into memory at once
     const totalRowCount=db.prepare('SELECT COUNT(*) as c FROM rows WHERE job_id=?').get(jid).c;
-    const sampleRows=db.prepare('SELECT * FROM rows WHERE job_id=? ORDER BY idx LIMIT 20').all(jid);
+    // Fetch up to 20 non-skipped rows for header/section detection, plus any skipped rows at the top
+    const sampleRows=db.prepare('SELECT * FROM rows WHERE job_id=? AND status!=\'skipped\' ORDER BY idx LIMIT 20').all(jid);
     let expSections=resolveSections(job,sampleRows);
     const escRaw=s=>'"'+String(s||'').replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
     const escClean=s=>'"'+sanitizeForCSV(String(s||'')).replace(/"/g,'""').replace(/[\r\n]+/g,' ')+'"';
@@ -1549,13 +1550,15 @@ Rules:
       const d={};for(const[k,v]of Object.entries(raw)){const role=ROLE_BY_LABEL[k];const hdr=role&&colMap[role]?colMap[role]:k;d[hdr]=v;}
       return d;
     };
-    // Determine original CSV headers — use col_map order for legacy rows, fallback to parsed keys
+    // Determine original CSV headers — skip blank/skipped rows which have no original data
+    const firstRealRow=sampleRows.find(r=>r.status!=='skipped'&&r.original_row&&r.original_row!=='{}');
     let origHeaders;
-    if(sampleRows[0]?.original_row){try{origHeaders=Object.keys(JSON.parse(sampleRows[0].original_row));}catch{}}
+    if(firstRealRow?.original_row){try{origHeaders=Object.keys(JSON.parse(firstRealRow.original_row));}catch{}}
     if(!origHeaders){
       // Legacy: reconstruct header order from col_map (mapped cols first, then any extras from prompt)
       const mappedHeaders=Object.entries(colMap).filter(([,h])=>h).map(([,h])=>h);
-      const firstRowData=sampleRows[0]?getOrigRowData(sampleRows[0]):{};
+      const legacyRow=sampleRows.find(r=>r.status!=='skipped'&&r.prompt);
+      const firstRowData=legacyRow?getOrigRowData(legacyRow):{};
       const extraHeaders=Object.keys(firstRowData).filter(h=>!mappedHeaders.includes(h));
       origHeaders=mappedHeaders.length?[...mappedHeaders,...extraHeaders]:Object.keys(firstRowData);
     }
