@@ -329,7 +329,7 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   // Structured JSON output:
   // Gemini 3: CAN combine responseMimeType + responseSchema WITH google_search tools (new in Gemini 3)
   // Gemini 2.5: CANNOT combine responseMimeType with google_search (mutually exclusive)
-  if(sections&&sections.length>=2){
+  if(sections&&sections.length>=1){
     const props={};sections.forEach(s=>{
       props[s.key]={type:'STRING',description:getSectionHint(s.key)||s.label};
     });
@@ -428,7 +428,7 @@ async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const maxTok=prov.model.startsWith('gpt-5')?8000:6000;
   const body={model:prov.model,[tk]:maxTok,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
   // Native JSON mode when sections are defined — only available without tools
-  if(sections&&sections.length>=2)body.response_format={type:'json_object'};
+  if(sections&&sections.length>=1)body.response_format={type:'json_object'};
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
   let res;try{res=await fetch(prov.apiUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${apiKey}`},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
@@ -648,7 +648,7 @@ Return a single valid JSON object with these exact keys: ${keyList}
 - Do NOT wrap in code fences or add text outside the JSON
 - Every value must be SPECIFIC and SUBSTANTIVE — include real names, dates, numbers, and sources
 - Generic or vague answers like "they focus on growth" are NOT acceptable
-- Minimum 20 words per section value; aim for 40-80 words for richer sections
+- Minimum 20 words per section value; aim for 40-80 words for richer sections; maximum 120 words per section
 ${guidanceBlock}
 Here is an example of a correct response:
 ${sampleJson}
@@ -787,7 +787,7 @@ function safeParseResearch(text){
 // Resolve sections for a job — tries explicit, prompt, template default, then first result output
 function resolveSections(job,rows){
   // Priority 1: explicitly stored sections (from section editor)
-  if(job.sections_json){try{const ex=JSON.parse(job.sections_json);if(Array.isArray(ex)&&ex.length>=2)return ex;}catch{}}
+  if(job.sections_json){try{const ex=JSON.parse(job.sections_json);if(Array.isArray(ex)&&ex.length>=1)return ex;}catch{}}
   // Priority 2: always try extracting from the actual system prompt first
   let secs=[];
   if(job.system_prompt)secs=extractSectionsFromPrompt(job.system_prompt);
@@ -802,12 +802,12 @@ function resolveSections(job,rows){
     if(parsed&&parsed._parsed){
       // Already structured JSON — extract keys as sections
       secs=Object.keys(parsed).filter(k=>!k.startsWith('_')).map(k=>({key:k,label:k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}));
-      if(secs.length>=2)return secs;
+      if(secs.length>=1)return secs;
     }
     // Try detecting from raw output text
     const raw=parsed?._raw||first.research;
     secs=extractSectionsFromOutput(typeof raw==='string'?raw:JSON.stringify(raw));
-    if(secs.length>=2)return secs;
+    if(secs.length>=1)return secs;
   }
   return[];
 }
@@ -967,7 +967,7 @@ async function runJob(jobId){
 
   // Resolve sections for structured output — explicit > prompt > template default
   let jobSections=[];
-  if(job.sections_json){try{const ex=JSON.parse(job.sections_json);if(Array.isArray(ex)&&ex.length>=2)jobSections=ex;}catch{}}
+  if(job.sections_json){try{const ex=JSON.parse(job.sections_json);if(Array.isArray(ex)&&ex.length>=1)jobSections=ex;}catch{}}
   if(!jobSections.length&&job.system_prompt)jobSections=extractSectionsFromPrompt(job.system_prompt);
   if(!jobSections.length){const tmpl=TEMPLATES[job.template_id];if(tmpl?.sections?.length&&tmpl.prompt===job.system_prompt)jobSections=tmpl.sections;}
   let wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
@@ -1033,7 +1033,7 @@ async function runJob(jobId){
           let structured=parseStructuredResponse(r.research,jobSections);
           const quality=scoreQuality(structured,jobSections);
           // Smart retry: if quality is low and we haven't quality-retried yet, try once more
-          if((quality<40||!structured._parsed)&&retries<1&&jobSections.length>=2){
+          if((quality<40||!structured._parsed)&&retries<1&&jobSections.length>=1){
             const noDataVals=['no data found','not available','n/a','none','not found','no information','no info','unknown'];
             const emptySecs=jobSections.filter(s=>{const v=(structured[s.key]||'').trim();return v.length<5||noDataVals.includes(v.toLowerCase());});
             if(emptySecs.length>0){
@@ -1283,7 +1283,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
-    const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=2?JSON.stringify(explicitSections):null;
+    const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=1?JSON.stringify(explicitSections):null;
     const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
     const jobId=Number(result.lastInsertRowid);
     // Chunked inserts: 500 rows per transaction to avoid blocking the event loop on large files
