@@ -1160,15 +1160,26 @@ function onResSseMsg(m){
   }else if(m.type==='result'){
     if(m.status==='error')resFailedRows++;
     const tr=document.createElement('tr');
-    const res=m.research||{};
-    const q=m.quality||0;
-    const qColor=q>=70?'#16a34a':q>=40?'#ca8a04':'#dc2626';
-    tr.innerHTML=`<td style="color:#94a3b8;font-size:11px">${m.idx+1}</td>
-      <td class="td-company">${x(m.company||'')}</td>`+
-      resSections.map(s=>{const v=res[s.key];return`<td class="td-research" onclick="openResDetModal(this,'${x(s.label||s.key)}','${x(v?String(v).replace(/'/g,"\\'"):'')}')" title="${x(v?String(v).slice(0,200):'')}">${v?x(String(v).slice(0,100))+(String(v).length>100?'…':''):'<span style="color:#cbd5e1">—</span>'}</td>`;}).join('')+
-      `<td style="font-size:11px;color:${qColor}">${q}%</td>
-      <td><button class="btn bg sm" onclick="retryResRow(${resJobId},${m.idx},this)">↺</button></td>`;
-    $i('res-body').appendChild(tr);
+    if(m.status==='skipped'){
+      tr.style.opacity='0.4';
+      tr.innerHTML=`<td style="color:#94a3b8;font-size:11px">${m.idx+1}</td>`+
+        `<td colspan="100" style="color:#64748b;font-style:italic;font-size:12px">— blank row —</td>`;
+    }else{
+      const res=m.research||{};
+      const q=m.quality||0;
+      const qColor=q>=70?'#16a34a':q>=40?'#ca8a04':'#dc2626';
+      tr.innerHTML=`<td style="color:#94a3b8;font-size:11px">${m.idx+1}</td>
+        <td class="td-company">${x(m.company||'')}</td>`+
+        resSections.map(s=>{const v=res[s.key];return`<td class="td-research" onclick="openResDetModal(this,'${x(s.label||s.key)}','${x(v?String(v).replace(/'/g,"\\'"):'')}')" title="${x(v?String(v).slice(0,200):'')}">${v?x(String(v).slice(0,100))+(String(v).length>100?'…':''):'<span style="color:#cbd5e1">—</span>'}</td>`;}).join('')+
+        `<td style="font-size:11px;color:${qColor}">${q}%</td>
+        <td><button class="btn bg sm" onclick="retryResRow(${resJobId},${m.idx},this)">↺</button></td>`;
+    }
+    // Insert at correct position by idx (handles out-of-order SSE arrivals)
+    const tbody=$i('res-body');
+    const rows=[...tbody.querySelectorAll('tr[data-idx]')];
+    const after=rows.find(r=>parseInt(r.dataset.idx)>m.idx);
+    tr.dataset.idx=m.idx;
+    after?tbody.insertBefore(tr,after):tbody.appendChild(tr);
   }else if(m.type==='progress'){
     $i('res-progress').classList.remove('hide');
     $i('res-prog-fill').style.width=(m.pct||0)+'%';

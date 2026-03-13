@@ -66,6 +66,8 @@ const S={
   lJ:db.prepare(`SELECT id,name,provider,template_id,total_rows,succeeded,failed,status,cost,elapsed,created_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 50`),
   dJ:db.prepare(`DELETE FROM jobs WHERE id=? AND user_id=?`),
   iR:db.prepare(`INSERT INTO rows(job_id,idx,company,prompt,original_row)VALUES(?,?,?,?,?)`),
+  iRS:db.prepare(`INSERT INTO rows(job_id,idx,company,prompt,original_row,status)VALUES(?,?,?,?,?,'skipped')`),
+  gSk:db.prepare(`SELECT idx FROM rows WHERE job_id=? AND status='skipped' ORDER BY idx`),
   uR:db.prepare(`UPDATE rows SET status=?,research=?,error=?,input_tokens=?,output_tokens=?,cache_read=?,cache_write=? WHERE job_id=? AND idx=?`),
   gR:db.prepare(`SELECT*FROM rows WHERE job_id=? ORDER BY idx`),
   gP:db.prepare(`SELECT*FROM rows WHERE job_id=? AND status='pending' ORDER BY idx`),
@@ -822,7 +824,7 @@ function parseCSV(text){
   cur.push(field.trim());if(cur.length>1||cur[0]!=='')records.push(cur);
   if(records.length<2)return{headers:[],rows:[]};
   const hdrs=records[0].map(h=>h.replace(/^["']|["']$/g,'').trim());const rows=[];
-  for(let i=1;i<records.length;i++){const v=records[i];if(!v.length||(v.length===1&&!v[0]))continue;
+  for(let i=1;i<records.length;i++){const v=records[i];if(!v.length||(v.length===1&&!v[0])){rows.push({_blank:true});continue;}
     const row={};hdrs.forEach((h,idx)=>{row[h]=(v[idx]||'').replace(/^["']|["']$/g,'').trim();});rows.push(row);}
   return{headers:hdrs,rows};
 }
@@ -976,6 +978,9 @@ async function runJob(jobId){
   // Stream already-completed rows back to any reconnecting client
   for(const r of S.gC.all(jobId))
     emit({type:'result',idx:r.idx,company:r.company,status:r.status,research:safeParseResearch(r.research),error:r.error,inputTokens:r.input_tokens,outputTokens:r.output_tokens});
+  // Emit skipped (blank) rows so UI can render placeholders at the right positions
+  for(const r of S.gSk.all(jobId))
+    emit({type:'result',idx:r.idx,company:'',status:'skipped',research:null});
   emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:'Starting…'});
 
   // Shared queue — workers pull from the front
@@ -1291,7 +1296,7 @@ Return ONLY valid JSON (no markdown, no code fences):
     try{
       for(let start=0;start<rows.length;start+=CHUNK){
         const chunk=rows.slice(start,start+CHUNK);
-        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const{company,prompt}=buildPrompt(chunk[i],cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt,JSON.stringify(chunk[i]));}})();
+        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const row=chunk[i];if(row._blank){S.iRS.run(jobId,start+i,'','','{}');}else{const{company,prompt}=buildPrompt(row,cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt,JSON.stringify(row));}}})();
         // Yield to event loop between chunks so the server stays responsive
         if(start+CHUNK<rows.length)await new Promise(r=>setImmediate(r));
       }
@@ -1567,13 +1572,19 @@ Rules:
       const rows=pageStmt.all(jid,PAGE,offset);
       const lines=[];
       for(const r of rows){
-        let parsed=safeParseResearch(r.research);
         const origData=getOrigRowData(r);
         const cols=origHeaders.map(h=>escRaw(origData[h]||''));
-        if(expSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,expSections);
-        if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
-        else if(expSections.length)expSections.forEach(()=>cols.push('""'));
-        else cols.push(escClean(parsed?._raw||r.error||''));
+        if(r.status==='skipped'){
+          // Blank row from original CSV — output empty research cells to preserve alignment
+          if(expSections.length)expSections.forEach(()=>cols.push('""'));
+          else cols.push('""');
+        }else{
+          let parsed=safeParseResearch(r.research);
+          if(expSections.length&&!parsed?._parsed&&parsed?._raw)parsed=parseStructuredResponse(parsed._raw,expSections);
+          if(expSections.length&&parsed?._parsed)expSections.forEach(s=>cols.push(escClean(parsed[s.key]||'')));
+          else if(expSections.length)expSections.forEach(()=>cols.push('""'));
+          else cols.push(escClean(parsed?._raw||r.error||''));
+        }
         lines.push(cols.join(','));
       }
       res.write(lines.join('\r\n')+'\r\n');
