@@ -5,6 +5,7 @@ import { resolve, join } from 'path';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
 import { auditWebsite } from './audit.mjs';
+import { takeScreenshot } from './screenshot.mjs';
 
 // Load HTML at module init so it is always available before the server starts
 const HTML = readFileSync(new URL('./ui.html', import.meta.url), 'utf8');
@@ -400,14 +401,28 @@ async function callAnthropic(prompt,prov,sys,web,apiKey,jobSignal){
   const data=await res.json();const u=data.usage||{};
   return{research:(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n'),inputTokens:u.input_tokens||0,outputTokens:u.output_tokens||0,cacheRead:u.cache_read_input_tokens||0,cacheWrite:u.cache_creation_input_tokens||0};
 }
+async function callOpenAIResponses(prompt,prov,sys,apiKey,jobSignal){
+  // web_search_preview is only supported by the Responses API, not Chat Completions
+  const body={model:prov.model,tools:[{type:'web_search_preview'}],instructions:sys,input:prompt};
+  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),90000);
+  const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
+  let res;try{res=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${apiKey}`},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 90s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
+  if(res.status===429){const ra=res.headers.get('retry-after');const wait=ra?Math.ceil(parseFloat(ra))*1000:5000;throw{type:'rate_limit',wait};}
+  if(!res.ok){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}throw{type:'api_error',message:m};}
+  const data=await res.json();const u=data.usage||{};
+  const research=(data.output||[]).filter(o=>o.type==='message').flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('\n');
+  if(!research)throw{type:'api_error',message:'OpenAI Responses API returned empty response'};
+  return{research,inputTokens:u.input_tokens||0,outputTokens:u.output_tokens||0,cacheRead:0,cacheWrite:0};
+}
 async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
+  // web_search_preview requires the Responses API — route there when web search is on
+  if(prov.webTool==='openai'&&web)return callOpenAIResponses(prompt,prov,sys,apiKey,jobSignal);
   const tk=prov.model.startsWith('gpt-5')?'max_completion_tokens':'max_tokens';
   // GPT-5 can handle longer structured outputs; GPT-4o-mini is cheaper so keep at 6000
   const maxTok=prov.model.startsWith('gpt-5')?8000:6000;
   const body={model:prov.model,[tk]:maxTok,messages:[{role:'system',content:sys},{role:'user',content:prompt}]};
-  // Native JSON mode when sections are defined — disabled when web search is active (incompatible with tools)
-  if(sections&&sections.length>=2&&!web)body.response_format={type:'json_object'};
-  if(prov.webTool==='openai'&&web)body.tools=[{type:'web_search_preview'}];
+  // Native JSON mode when sections are defined — only available without tools
+  if(sections&&sections.length>=2)body.response_format={type:'json_object'};
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),60000);
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
   let res;try{res=await fetch(prov.apiUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${apiKey}`},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 60s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
@@ -877,12 +892,16 @@ async function runBulkAudit(jid){
     activeBulkAudits.delete(jid);return;
   }
   let qi=0;
+  let ssAttempt=0,ssOk=0,ssFail=0;
   const worker=async()=>{
     while(qi<pending.length){
       const row=pending[qi++];
       const url=row.url||row.company||'';
       try{
         const result=await auditWebsite(url,psKey||undefined);
+        const ss=await takeScreenshot(result.finalUrl||url);
+        ssAttempt++;if(ss.status==='success')ssOk++;else ssFail++;
+        result.screenshot_status=ss.status;result.screenshot_path=ss.path;
         S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,row.idx);
       }catch(e){
         S.uR.run('error',null,e.message||'Audit failed',0,0,0,0,jid,row.idx);
@@ -903,6 +922,7 @@ async function runBulkAudit(jid){
     const finalStatus=ok+fail>=total?(fail===total?'error':'complete'):'paused';
     S.uJ.run(ok,fail,finalStatus,0,0,0,0,0,0,jid);
     console.log(`Bulk audit ${jid} ${finalStatus}: ${ok} ok, ${fail} fail of ${total}`);
+    console.log(`Screenshots: ${ssAttempt} attempted, ${ssOk} succeeded, ${ssFail} failed`);
   }
 }
 
@@ -1336,17 +1356,27 @@ Return ONLY valid JSON (no markdown, no code fences):
         'Performance (Desktop)','SEO (Desktop)','Accessibility (Desktop)','Best Practices (Desktop)',
         'Response Ms','HTTP Status','HTTPS Works','HTTP→HTTPS Redirect',
         'Title','Title Length','Meta Description','Meta Desc Length',
-        'H1 Count','Has Viewport','Has Canonical','Is Noindex',
+        'First H1','H1 Count','Has Viewport','Has Canonical','Is Noindex',
+        'OG Title','OG Description','OG Image',
         'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
         'Doc Size KB','Alt Coverage %','Mixed Content Count',
+        'Server','CSP Header',
         'FCP','LCP','CLS','TBT','Speed Index','TTI',
+        'TTFB (ms)','Total Weight (KB)','Requests','Scripts','Stylesheets','Fonts',
+        'DOM Nodes','JS Execution (ms)','Main Thread (ms)','Long Tasks (>50ms)',
+        'Unused JS (KB)','Unused CSS (KB)',
+        'Render Blocking','Render Block Savings (ms)',
+        'Unoptimized Images (KB)','Modern Image Formats (KB)','Responsive Images (KB)','Offscreen Images (KB)',
+        'Unminified JS (KB)','Unminified CSS (KB)','Text Compression (KB)','Legacy JS (KB)','Duplicate JS (KB)','Efficient Animations (KB)',
+        '3rd Party Block (ms)','3rd Party Weight (KB)',
         'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues'];
       const issueHdrs=[];
       for(let i=1;i<=maxIssues;i++){issueHdrs.push(`Issue ${i} Severity`,`Issue ${i} Category`,`Issue ${i} Title`,`Issue ${i} Description`);}
       const verifyHdrs=['Site Alive','Final Domain','Original Domain','Domain Redirected',
         'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal',
         'Has Online Payment','Has Calculator/Tool','Has Email Capture',
-        'Has Click-to-Call','Has Email Link','Platform','Copyright Year','Page Text Snippet'];
+        'Has Click-to-Call','Has Email Link','Platform','Copyright Year','Page Text Snippet',
+        'Screenshot Status','Screenshot Path'];
       const auditHdrs=[...fixedHdrs,...issueHdrs,'Errors',...verifyHdrs];
       // Pass 2: stream data
       res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="audit_export_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
@@ -1372,10 +1402,19 @@ Return ONLY valid JSON (no markdown, no code fences):
             sc(d.performance),sc(d.seo),sc(d.accessibility),sc(d.bestPractices),
             ms(m.responseMs),m.status||'',yn(m.httpsWorks),yn(m.httpRedirects),
             escRawA(m.title||''),m.titleLength||'',escRawA(m.metaDesc||''),m.metaDescLength||'',
-            m.h1Count??'',yn(m.viewport),yn(m.hasCanonical),yn(m.isNoindex),
+            escRawA(m.firstH1||''),m.h1Count??'',yn(m.viewport),yn(m.hasCanonical),yn(m.isNoindex),
+            escRawA(m.ogTitle||''),escRawA(m.ogDescription||''),escRawA(m.ogImage||''),
             yn(m.hasAnalytics),yn(m.hasSitemap),yn(m.hasJsonLD),yn(m.hasFavicon),
             m.docSizeKB||'',m.altCoverage!=null?Math.round(m.altCoverage*100)+'%':'',m.mixedContentCount||0,
+            escRawA(m.server||''),yn(!!m.csp),
             m.fcp||'',m.lcp||'',m.cls||'',m.tbt||'',m.speedIndex||'',m.tti||'',
+            m.ttfbMs??'',m.totalPageWeightKB??'',m.requestCount??'',m.numScripts??'',m.numStylesheets??'',m.numFonts??'',
+            m.domNodes??'',m.jsExecutionMs??'',m.mainThreadMs??'',m.longTaskCount??'',
+            m.unusedJsKB??'',m.unusedCssKB??'',
+            m.renderBlockingCount??'',m.renderBlockingSavingsMs??'',
+            m.unoptimizedImagesKB??'',m.modernImageFormatsKB??'',m.responsiveImagesKB??'',m.offscreenImagesKB??'',
+            m.unminifiedJsKB??'',m.unminifiedCssKB??'',m.textCompressionKB??'',m.legacyJsKB??'',m.duplicateJsKB??'',m.efficientAnimationsKB??'',
+            m.thirdPartyBlockingMs??'',m.thirdPartyWeightKB??'',
             issues.length,
             issues.filter(x=>x.severity==='critical').length,
             issues.filter(x=>x.severity==='high').length,
@@ -1402,6 +1441,7 @@ Return ONLY valid JSON (no markdown, no code fences):
             yn(m.hasClientPortal),yn(m.hasOnlinePayment),yn(m.hasCalculatorOrTool),
             yn(m.hasEmailCapture),yn(cm2.hasClickToCall),yn(cm2.hasEmail),
             escRawA(m.platform||''),escRawA(m.copyrightYear||''),escRawA(m.pageTextSnippet||''),
+            escRawA(a.screenshot_status||''),escRawA(a.screenshot_path||''),
           );
           lines.push(cols.join(','));
         }

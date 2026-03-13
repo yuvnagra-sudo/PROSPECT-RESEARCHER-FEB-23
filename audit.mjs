@@ -87,9 +87,11 @@ function parseFavicon(html) {
 function parsePlatform(html) {
   if (/wp-content\/|wp-includes\//i.test(html)) return 'WordPress';
   if (/cdn\.shopify\.com/i.test(html)) return 'Shopify';
-  if (/static1\.squarespace\.com|squarespace\.com\/universal/i.test(html)) return 'Squarespace';
-  if (/static\.parastorage\.com|wixstatic\.com/i.test(html)) return 'Wix';
-  if (/assets\.website-files\.com/i.test(html)) return 'Webflow';
+  if (/static1\.squarespace\.com|squarespace\.com\/universal|sqsp\.net/i.test(html)) return 'Squarespace';
+  if (/static\.parastorage\.com|wixstatic\.com|wixsite\.com/i.test(html)) return 'Wix';
+  if (/assets\.website-files\.com|webflow\.io/i.test(html)) return 'Webflow';
+  if (/weebly\.com/i.test(html)) return 'Weebly';
+  if (/godaddy\.com|secureserver\.net/i.test(html)) return 'GoDaddy';
   if (/framer\.com\/m\//i.test(html)) return 'Framer';
   if (/hs-scripts\.com|hubspot\.com\/hs-fs/i.test(html)) return 'HubSpot';
   const gen = html.match(/<meta\s+(?:[^>]*?\s+)?name=["']generator["'][^>]*content=["']([^"']+)/i)
@@ -104,25 +106,39 @@ function parsePlatform(html) {
     if (/joomla/i.test(g)) return 'Joomla';
     if (/drupal/i.test(g)) return 'Drupal';
   }
-  return '';
+  return 'Unknown';
 }
 function parseCopyrightYear(html) {
   const m = html.match(/(?:©|&copy;|&#169;|copyright)\s*(?:&nbsp;|\s)*((?:19|20)\d{2})/i);
   return m ? m[1] : '';
 }
 function parseContactMethods(html) {
-  const hasContactForm = /<form\b[^>]*>/i.test(html) && (
-    /type=["']email["']/i.test(html) ||
-    /contact|enquir|inquiry|reach.?us/i.test(html) ||
-    /gform_wrapper|wpcf7|wpforms|ninja-forms|gravityform/i.test(html) ||
-    /typeform|jotform|formstack/i.test(html)
-  );
+  const hasContactForm = /<form\b[^>]*>/i.test(html);
+  const hasScheduling = /calendly\.com|acuityscheduling\.com|cal\.com|oncehub\.com|tidycal\.com|hubspot\.com\/meetings/i.test(html)
+    || /<a\b[^>]*href=["'][^"']*(?:schedule|\/book)[^"']*["']/i.test(html);
   const hasCalendly = /calendly\.com/i.test(html);
-  const hasBookingWidget = hasCalendly ||
-    /acuityscheduling\.com|simplybook\.me|tidycal\.com|booksy\.com|setmore\.com/i.test(html);
+  const hasBookingWidget = hasScheduling ||
+    /simplybook\.me|booksy\.com|setmore\.com/i.test(html);
+  const hasChatWidget = /tawk\.to|intercom\.io|drift\.com|crisp\.chat|tidio\.com|livechat|zendesk\.com|freshdesk\.com|chatwoot/i.test(html);
+  const hasClientPortal = /taxdome\.com|canopy\.com|liscio\.me|smartvault\.com|sharefile\.com|citrix/i.test(html)
+    || /<a\b[^>]*href=["'][^"']*(?:portal|client-login|secure-login)[^"']*["']/i.test(html);
+  const hasOnlinePayment = /stripe\.com|paypal\.com|square\.com|helcim\.com|cpacharge\.com|affinipay\.com/i.test(html)
+    || /<a\b[^>]*href=["'][^"']*(?:\/pay(?:ment)?|make-a-payment)[^"']*["']/i.test(html);
+  const hasCalculatorOrTool = /(?:id|class|href)=["'][^"']*(?:calculator|estimator|quiz|assessment)[^"']*["']/i.test(html);
+  const hasEmailCapture = /mailchimp\.com|convertkit\.com|constantcontact\.com/i.test(html)
+    || /(?:class|href)=["'][^"']*(?:newsletter|subscribe|download)[^"']*["']/i.test(html);
   const hasClickToCall = /href=["']tel:/i.test(html);
   const hasEmail = /href=["']mailto:/i.test(html);
-  return { hasContactForm, hasCalendly, hasBookingWidget, hasClickToCall, hasEmail };
+  return { hasContactForm, hasScheduling, hasCalendly, hasBookingWidget, hasChatWidget, hasClientPortal, hasOnlinePayment, hasCalculatorOrTool, hasEmailCapture, hasClickToCall, hasEmail };
+}
+function parsePageTextSnippet(html) {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ').trim();
+  return text.slice(0, 500);
 }
 
 // ─── Check: HTTP + HTML ───────────────────────────────────────────────────────
@@ -155,6 +171,7 @@ async function checkHTTP(url) {
   const platform = parsePlatform(html);
   const copyrightYear = parseCopyrightYear(html);
   const contactMethods = parseContactMethods(html);
+  const pageTextSnippet = parsePageTextSnippet(html);
 
   return {
     ok: true,
@@ -189,6 +206,7 @@ async function checkHTTP(url) {
       platform,
       copyrightYear,
       contactMethods,
+      pageTextSnippet,
     },
   };
 }
@@ -235,6 +253,18 @@ function parseLHR(lhr) {
   const audits = lhr.audits || {};
   const score = (cat) => (cat?.score !== null && cat?.score !== undefined) ? Math.round(cat.score * 100) : null;
   const parseDisplayVal = (v) => (v && typeof v === 'string') ? v.trim() : null;
+
+  // Savings in KB (null if audit missing or no savings)
+  const savingsKB = id => {
+    const bytes = audits[id]?.details?.overallSavingsBytes;
+    return (bytes != null && bytes > 0) ? Math.round(bytes / 1024) : null;
+  };
+  const numericMs = id => audits[id]?.numericValue != null ? Math.round(audits[id].numericValue) : null;
+  const numericVal = id => audits[id]?.numericValue != null ? Math.round(audits[id].numericValue) : null;
+
+  // Diagnostics audit contains aggregate page stats
+  const diag = audits['diagnostics']?.details?.items?.[0] ?? {};
+
   const oppAudits = Object.values(audits).filter(a => {
     if (!a.title) return false;
     const isOpportunity = a.details?.type === 'opportunity';
@@ -259,17 +289,68 @@ function parseLHR(lhr) {
           : null,
       score: a.score !== null ? Math.round((a.score || 0) * 100) : null,
     }));
+
+  // Third-party totals
+  const tpItems = audits['third-party-summary']?.details?.items || [];
+  const thirdPartyBlockingMs = tpItems.length ? Math.round(tpItems.reduce((t, i) => t + (i.blockingTime || 0), 0)) : null;
+  const thirdPartyWeightKB = tpItems.length ? Math.round(tpItems.reduce((t, i) => t + (i.transferSize || 0), 0) / 1024) : null;
+
   return {
+    // ── Scores ──────────────────────────────────────────────────────────────
     performance: score(cats['performance']),
     seo: score(cats['seo']),
     accessibility: score(cats['accessibility']),
     bestPractices: score(cats['best-practices']),
+
+    // ── Core Web Vitals ─────────────────────────────────────────────────────
     fcp: parseDisplayVal(audits['first-contentful-paint']?.displayValue),
     lcp: parseDisplayVal(audits['largest-contentful-paint']?.displayValue),
     cls: parseDisplayVal(audits['cumulative-layout-shift']?.displayValue),
     tbt: parseDisplayVal(audits['total-blocking-time']?.displayValue),
     speedIndex: parseDisplayVal(audits['speed-index']?.displayValue),
     tti: parseDisplayVal(audits['interactive']?.displayValue),
+
+    // ── Additional timing ───────────────────────────────────────────────────
+    ttfbMs: numericMs('server-response-time'),
+
+    // ── Page structure (from diagnostics audit) ─────────────────────────────
+    totalPageWeightKB: diag.totalByteWeight != null ? Math.round(diag.totalByteWeight / 1024) : null,
+    requestCount: diag.numRequests ?? null,
+    numScripts: diag.numScripts ?? null,
+    numStylesheets: diag.numStylesheets ?? null,
+    numFonts: diag.numFonts ?? null,
+    longTaskCount: diag.numTasksOver50ms ?? null,
+    jsExecutionMs: numericMs('bootup-time'),
+    mainThreadMs: numericMs('mainthread-work-breakdown'),
+    domNodes: numericVal('dom-size'),
+
+    // ── Unused resources ────────────────────────────────────────────────────
+    unusedJsKB: savingsKB('unused-javascript'),
+    unusedCssKB: savingsKB('unused-css-rules'),
+
+    // ── Render blocking ─────────────────────────────────────────────────────
+    renderBlockingCount: audits['render-blocking-resources']?.details?.items?.length ?? null,
+    renderBlockingSavingsMs: audits['render-blocking-resources']?.details?.overallSavingsMs != null
+      ? Math.round(audits['render-blocking-resources'].details.overallSavingsMs) : null,
+
+    // ── Image optimisation ──────────────────────────────────────────────────
+    unoptimizedImagesKB: savingsKB('uses-optimized-images'),
+    modernImageFormatsKB: savingsKB('uses-webp-images'),
+    responsiveImagesKB: savingsKB('uses-responsive-images'),
+    offscreenImagesKB: savingsKB('offscreen-images'),
+
+    // ── JS / CSS optimisation ───────────────────────────────────────────────
+    unminifiedJsKB: savingsKB('unminified-javascript'),
+    unminifiedCssKB: savingsKB('unminified-css'),
+    textCompressionKB: savingsKB('uses-text-compression'),
+    legacyJsKB: savingsKB('legacy-javascript'),
+    duplicateJsKB: savingsKB('duplicated-javascript'),
+    efficientAnimationsKB: savingsKB('efficient-animated-content'),
+
+    // ── Third party ─────────────────────────────────────────────────────────
+    thirdPartyBlockingMs,
+    thirdPartyWeightKB,
+
     opportunities,
   };
 }
@@ -608,15 +689,28 @@ export async function auditWebsite(inputUrl, apiKey) {
     altCoverage: html.altCoverage?.coverage,
     hasAnalytics: analytics.hasGA || analytics.hasGTM || analytics.hasOther || undefined,
     hasSitemap: robots?.sitemapXmlExists || robots?.sitemapInRobots,
-    platform: html.platform || '',
+    platform: html.platform || 'Unknown',
     copyrightYear: html.copyrightYear || '',
     contactMethods: html.contactMethods || {},
+    hasScheduling: html.contactMethods?.hasScheduling || false,
+    hasChatWidget: html.contactMethods?.hasChatWidget || false,
+    hasClientPortal: html.contactMethods?.hasClientPortal || false,
+    hasOnlinePayment: html.contactMethods?.hasOnlinePayment || false,
+    hasCalculatorOrTool: html.contactMethods?.hasCalculatorOrTool || false,
+    hasEmailCapture: html.contactMethods?.hasEmailCapture || false,
+    pageTextSnippet: html.pageTextSnippet || '',
     mixedContentCount: html.mixedContent?.length,
     hsts: httpData?.headers?.hsts,
     csp: httpData?.headers?.csp,
     xContentType: httpData?.headers?.xContentType,
     xFrame: httpData?.headers?.xFrame,
     server: httpData?.headers?.server,
+    // HTML extended
+    firstH1: html.h1s?.[0] || '',
+    ogTitle: html.ogTags?.['og:title'] || '',
+    ogDescription: html.ogTags?.['og:description'] || '',
+    ogImage: html.ogTags?.['og:image'] || '',
+
     // PageSpeed — always present; null means unavailable, not zero
     performance: pageSpeed?.ok ? pageSpeed.metrics.performance : null,
     seo: pageSpeed?.ok ? pageSpeed.metrics.seo : null,
@@ -628,6 +722,32 @@ export async function auditWebsite(inputUrl, apiKey) {
     tbt: pageSpeed?.ok ? pageSpeed.metrics.tbt : null,
     speedIndex: pageSpeed?.ok ? pageSpeed.metrics.speedIndex : null,
     tti: pageSpeed?.ok ? pageSpeed.metrics.tti : null,
+    ttfbMs: pageSpeed?.ok ? pageSpeed.metrics.ttfbMs : null,
+    totalPageWeightKB: pageSpeed?.ok ? pageSpeed.metrics.totalPageWeightKB : null,
+    requestCount: pageSpeed?.ok ? pageSpeed.metrics.requestCount : null,
+    numScripts: pageSpeed?.ok ? pageSpeed.metrics.numScripts : null,
+    numStylesheets: pageSpeed?.ok ? pageSpeed.metrics.numStylesheets : null,
+    numFonts: pageSpeed?.ok ? pageSpeed.metrics.numFonts : null,
+    longTaskCount: pageSpeed?.ok ? pageSpeed.metrics.longTaskCount : null,
+    jsExecutionMs: pageSpeed?.ok ? pageSpeed.metrics.jsExecutionMs : null,
+    mainThreadMs: pageSpeed?.ok ? pageSpeed.metrics.mainThreadMs : null,
+    domNodes: pageSpeed?.ok ? pageSpeed.metrics.domNodes : null,
+    unusedJsKB: pageSpeed?.ok ? pageSpeed.metrics.unusedJsKB : null,
+    unusedCssKB: pageSpeed?.ok ? pageSpeed.metrics.unusedCssKB : null,
+    renderBlockingCount: pageSpeed?.ok ? pageSpeed.metrics.renderBlockingCount : null,
+    renderBlockingSavingsMs: pageSpeed?.ok ? pageSpeed.metrics.renderBlockingSavingsMs : null,
+    unoptimizedImagesKB: pageSpeed?.ok ? pageSpeed.metrics.unoptimizedImagesKB : null,
+    modernImageFormatsKB: pageSpeed?.ok ? pageSpeed.metrics.modernImageFormatsKB : null,
+    responsiveImagesKB: pageSpeed?.ok ? pageSpeed.metrics.responsiveImagesKB : null,
+    offscreenImagesKB: pageSpeed?.ok ? pageSpeed.metrics.offscreenImagesKB : null,
+    unminifiedJsKB: pageSpeed?.ok ? pageSpeed.metrics.unminifiedJsKB : null,
+    unminifiedCssKB: pageSpeed?.ok ? pageSpeed.metrics.unminifiedCssKB : null,
+    textCompressionKB: pageSpeed?.ok ? pageSpeed.metrics.textCompressionKB : null,
+    legacyJsKB: pageSpeed?.ok ? pageSpeed.metrics.legacyJsKB : null,
+    duplicateJsKB: pageSpeed?.ok ? pageSpeed.metrics.duplicateJsKB : null,
+    efficientAnimationsKB: pageSpeed?.ok ? pageSpeed.metrics.efficientAnimationsKB : null,
+    thirdPartyBlockingMs: pageSpeed?.ok ? pageSpeed.metrics.thirdPartyBlockingMs : null,
+    thirdPartyWeightKB: pageSpeed?.ok ? pageSpeed.metrics.thirdPartyWeightKB : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
     pageSpeedOk: pageSpeed?.ok || false,
     pageSpeedError: !pageSpeed?.ok ? (pageSpeed?.error || 'PageSpeed data unavailable') : null,
