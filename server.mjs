@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { createServer } from 'http';
-import { readFileSync, existsSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, statSync, createReadStream } from 'fs';
 import { resolve, join } from 'path';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
 import { auditWebsite } from './audit.mjs';
 import { takeScreenshot } from './screenshot.mjs';
+import { callGeminiVision } from './vision.mjs';
 
 // Load HTML at module init so it is always available before the server starts
 const HTML = readFileSync(new URL('./ui.html', import.meta.url), 'utf8');
@@ -389,6 +390,11 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
 
   return{research,inputTokens:u.promptTokenCount||0,outputTokens:u.candidatesTokenCount||0,cacheRead:0,cacheWrite:0};
 }
+
+// ─── Gemini Vision (screenshot analysis) ─────────────────────────────────────
+const SCREENSHOT_DIR_PATH=resolve(process.cwd(),'screenshots');
+
+// callGeminiVision is now imported from vision.mjs
 
 async function callAnthropic(prompt,prov,sys,web,apiKey,jobSignal){
   const body={model:prov.model,max_tokens:8000,system:[{type:'text',text:sys,cache_control:{type:'ephemeral'}}],messages:[{role:'user',content:prompt}]};
@@ -902,6 +908,13 @@ async function runBulkAudit(jid){
         const ss=await takeScreenshot(result.finalUrl||url);
         ssAttempt++;if(ss.status==='success')ssOk++;else ssFail++;
         result.screenshot_status=ss.status;result.screenshot_path=ss.path;
+        // Gemini visual analysis of screenshot
+        if(ss.status==='success'&&ss.path){
+          const geminiKey=userKey(job.user_id,'GEMINI_API_KEY');
+          if(geminiKey){
+            try{result.visual_analysis=await callGeminiVision(ss.path,geminiKey);}catch{}
+          }
+        }
         S.uR.run('success',JSON.stringify(result),null,0,0,0,0,jid,row.idx);
       }catch(e){
         S.uR.run('error',null,e.message||'Audit failed',0,0,0,0,jid,row.idx);
@@ -1106,6 +1119,16 @@ const server=createServer(async(req,res)=>{
   const url=new URL(req.url,`http://localhost:${PORT}`);const p=url.pathname;
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,DELETE,OPTIONS','access-control-allow-headers':'content-type,authorization'});res.end();return;}
   if(req.method==='GET'&&p==='/'){res.writeHead(200,{'content-type':'text/html'});res.end(HTML);return;}
+
+  // Serve screenshot images
+  if(req.method==='GET'&&p.startsWith('/screenshots/')){
+    const fname=p.slice('/screenshots/'.length).replace(/\.\./g,'');
+    if(!fname||!fname.endsWith('.png')){res.writeHead(404);res.end('Not found');return;}
+    const fpath=join(resolve(process.cwd(),'screenshots'),fname);
+    if(!existsSync(fpath)){res.writeHead(404);res.end('Not found');return;}
+    res.writeHead(200,{'content-type':'image/png','cache-control':'public,max-age=86400'});
+    createReadStream(fpath).pipe(res);return;
+  }
 
   // ── Public auth routes ──
   if(req.method==='POST'&&p==='/api/signup'){const b=await readB(req);try{
@@ -1339,6 +1362,59 @@ Return ONLY valid JSON (no markdown, no code fences):
     }catch(e){json(res,{error:e.message},500);}
     return;}
 
+  // ── Batch retry all failed rows in a job ─────────────────────────────────
+  if(req.method==='POST'&&p.match(/^\/api\/retry-failed\/\d+$/)){
+    const jid=parseInt(p.split('/').pop());
+    const job=S.gJ.get(jid);if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
+    const prov=PROVDEFS[job.provider];if(!prov)return json(res,{error:'Unknown provider'},400);
+    const apiKey=userKey(uid,prov.envName);if(!apiKey)return json(res,{error:'No API key'},400);
+    const failedRows=db.prepare("SELECT * FROM rows WHERE job_id=? AND status='error'").all(jid);
+    if(!failedRows.length)return json(res,{retried:0});
+    // Run sequentially to avoid hammering the API
+    let retried=0;
+    (async()=>{
+      const jobSections=resolveSections(job,S.gR.all(jid));
+      const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,jobSections);
+      for(const row of failedRows){
+        try{
+          const r=await callLLM(row.prompt,prov,wrappedSys,!!job.use_web_search,apiKey,null,jobSections);
+          const structured=parseStructuredResponse(r.research,jobSections);
+          const quality=scoreQuality(structured,jobSections);
+          S.uR.run('success',JSON.stringify(structured),null,r.inputTokens,r.outputTokens,r.cacheRead||0,r.cacheWrite||0,jid,row.idx);
+          try{db.prepare('UPDATE rows SET quality=? WHERE job_id=? AND idx=?').run(quality,jid,row.idx);}catch{}
+          retried++;
+        }catch{}
+      }
+    })().catch(()=>{});
+    json(res,{retried:failedRows.length});
+    return;}
+
+  // ── AI formula/instruction generation ────────────────────────────────────
+  if(req.method==='POST'&&p==='/api/generate-formula'){const b=await readB(req);try{
+    const{description,columns}=JSON.parse(b);
+    if(!description||description.trim().length<5)return json(res,{error:'Describe what the formula should do (at least 5 characters)'},400);
+    const provOrder=['gemini3flash','gemini','haiku','claude','openai','gpt5','deepseek'];
+    const uk=S.getUserKeys.all(uid).map(r=>r.key_name);
+    let pid=null;for(const id of provOrder){const pv=PROVDEFS[id];if(pv&&uk.includes(pv.envName)){pid=id;break;}}
+    if(!pid)return json(res,{error:'No API key configured. Add a key in Settings first.'},400);
+    const prov=PROVDEFS[pid];const ak=userKey(uid,prov.envName);
+    const colList=(columns||[]).slice(0,50).join(', ');
+    const sysPrompt=`You are a research instruction writer. The user will describe what they want an AI research column to find or compute. Generate a clear, specific research instruction (1-3 sentences) that an AI researcher can follow for each company row.
+
+Available column references (use {column_name} syntax to reference them): ${colList||'(no columns yet)'}
+
+Rules:
+- Write a concise research instruction, not code or a formula
+- If the user wants to transform/combine existing columns, describe how: e.g. "Combine {first_name} and {last_name} with a space to form the full name."
+- If the user wants AI research, describe what to find
+- Be specific and actionable
+- Output ONLY the instruction text, no explanation, no quotes, no JSON`;
+    const result=await callLLM(description.trim(),prov,sysPrompt,false,ak,null,null);
+    const formula=(result.research||'').replace(/^["']|["']$/g,'').trim();
+    if(!formula)return json(res,{error:'AI returned empty result. Try again.'},500);
+    json(res,{formula});
+  }catch(e){json(res,{error:e.message||'Generation failed'},500);}return;}
+
   if(req.method==='GET'&&p.match(/^\/api\/export\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||(job.user_id!==uid&&!isAdmin(uid))){res.writeHead(404);res.end('Not found');return;}
     try{
@@ -1376,7 +1452,7 @@ Return ONLY valid JSON (no markdown, no code fences):
         'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal',
         'Has Online Payment','Has Calculator/Tool','Has Email Capture',
         'Has Click-to-Call','Has Email Link','Platform','Copyright Year','Page Text Snippet',
-        'Screenshot Status','Screenshot Path'];
+        'Screenshot Status','Screenshot Path','Visual Analysis'];
       const auditHdrs=[...fixedHdrs,...issueHdrs,'Errors',...verifyHdrs];
       // Pass 2: stream data
       res.writeHead(200,{'content-type':'text/csv','content-disposition':`attachment; filename="audit_export_${new Date().toISOString().slice(0,10)}.csv"`,'access-control-allow-origin':'*','transfer-encoding':'chunked'});
@@ -1442,6 +1518,7 @@ Return ONLY valid JSON (no markdown, no code fences):
             yn(m.hasEmailCapture),yn(cm2.hasClickToCall),yn(cm2.hasEmail),
             escRawA(m.platform||''),escRawA(m.copyrightYear||''),escRawA(m.pageTextSnippet||''),
             escRawA(a.screenshot_status||''),escRawA(a.screenshot_path||''),
+            escRawA(a.visual_analysis||''),
           );
           lines.push(cols.join(','));
         }

@@ -236,6 +236,24 @@ textarea.fi{resize:vertical;line-height:1.5}
 .toast{animation:fadein .2s ease}
 .divider{height:1px;background:#f1f5f9;margin:10px 0}
 .srow{display:grid;gap:10px}.sc{background:#f8fafc;border-radius:8px;padding:12px}.sv{font-size:20px;font-weight:700}.sl{font-size:11px;color:#64748b;margin-top:3px}
+
+/* ── Column badges ── */
+.col-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle}
+.cb-llm{background:#eff6ff;color:#3b82f6}.cb-api{background:#f0fdf4;color:#16a34a}.cb-fx{background:#fefce8;color:#ca8a04}
+
+/* ── Hidden columns ── */
+.col-hidden{display:none!important}
+#hidden-badge{font-size:11px;color:#6366f1;background:#eff6ff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;white-space:nowrap}
+
+/* ── Screenshot modal ── */
+.modal-xl{max-width:960px}
+.ss-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.ss-layout{grid-template-columns:1fr}}
+.ss-img{width:100%;border-radius:8px;border:1px solid #e2e8f0;display:block}
+.ss-analysis{font-size:12px;line-height:1.6;color:#374151;white-space:pre-wrap;max-height:400px;overflow-y:auto;background:#f8fafc;border-radius:8px;padding:12px;border:1px solid #e2e8f0}
+
+/* ── Preview modal ── */
+.pre-block{background:#1e293b;color:#e2e8f0;font-family:monospace;font-size:11px;line-height:1.6;padding:14px;border-radius:8px;white-space:pre-wrap;overflow-y:auto;max-height:220px;margin-top:6px}
 </style>
 </head><body>
 
@@ -312,6 +330,7 @@ textarea.fi{resize:vertical;line-height:1.5}
             <button class="btn bs sm" onclick="openTmplModal()">📋 Template</button>
             <button class="btn bs sm" onclick="openAIModal()">✨ AI Columns</button>
             <button class="btn bs sm" id="btn-ctx" onclick="openCtxModal()">📋 Context Columns</button>
+            <button id="hidden-badge" class="hide" onclick="showHiddenCols()"></button>
             <div id="no-company-banner" class="hide">
               ⚠️ Company column:
               <select id="company-sel" onchange="colMap.company=this.value;updateCostEst()"></select>
@@ -326,6 +345,8 @@ textarea.fi{resize:vertical;line-height:1.5}
             <label class="ws-label"><input type="checkbox" id="ws-chk" onchange="updateCostEst()"> Web</label>
             <span id="cost-badge"></span>
             <button id="btn-cancel" class="btn bs sm hide" onclick="cancelResearch()">■ Cancel</button>
+            <button id="btn-test" class="btn bs sm" onclick="runResearch(10)" title="Run on first 10 rows only">⚡ Test (10)</button>
+            <button id="btn-preview" class="btn bs sm" onclick="previewPrompt()" title="Preview the exact prompt before running">👁 Preview</button>
             <button id="btn-run" class="btn bp sm" onclick="runResearch()">▶ Run</button>
           </div>
         </div>
@@ -357,6 +378,7 @@ textarea.fi{resize:vertical;line-height:1.5}
           <div class="prog-bar"><div class="prog-fill" id="res-prog-fill" style="width:0%"></div></div>
           <span id="res-prog-txt"></span>
         </div>
+        <button class="btn bs sm hide" id="btn-retry-all" onclick="retryAllFailed()">↺ Retry Failed</button>
         <button class="btn bs sm" onclick="exportResJob()">⬇ Export CSV</button>
       </div>
       <div id="res-tbl-wrap">
@@ -464,7 +486,12 @@ textarea.fi{resize:vertical;line-height:1.5}
     </div>
     <div>
       <label class="fi-l">Research Instruction <span style="font-size:11px;color:#94a3b8;font-weight:400">(what should AI find?)</span></label>
-      <textarea class="fi" id="drw-desc" rows="7" placeholder="e.g. Find the company's top 3 pain points and business challenges they face"></textarea>
+      <textarea class="fi" id="drw-desc" rows="5" placeholder="e.g. Find the company's top 3 pain points and business challenges they face"></textarea>
+    </div>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
+      <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:8px">✨ Generate with AI</div>
+      <textarea class="fi" id="formula-gen-desc" rows="2" placeholder="e.g. Combine first name and last name with a space between them" style="font-size:12px;margin-bottom:8px"></textarea>
+      <button class="btn bs sm" id="formula-gen-btn" onclick="generateFormula()" style="width:100%;justify-content:center">Generate Instruction</button>
     </div>
   </div>
   <div class="drw-ft">
@@ -522,9 +549,44 @@ textarea.fi{resize:vertical;line-height:1.5}
 <!-- ── Row Detail Modal ── -->
 <div id="det-modal" class="modal-wrap hide" onclick="if(event.target===this)closeDetModal()">
   <div class="modal modal-lg">
-    <div class="modal-hd"><span id="det-title">Row Details</span><button class="btn bg sm" onclick="closeDetModal()">✕</button></div>
+    <div class="modal-hd"><span id="det-title">Row Details</span><div style="display:flex;gap:6px"><button class="btn bs sm" id="det-copy-btn" onclick="copyDetVal()" style="display:none">📋 Copy</button><button class="btn bg sm" onclick="closeDetModal()">✕</button></div></div>
     <div class="modal-bd" id="det-body"></div>
     <div class="modal-ft"><button class="btn bs" onclick="closeDetModal()">Close</button></div>
+  </div>
+</div>
+
+<!-- ── Screenshot Modal ── -->
+<div id="ss-modal" class="modal-wrap hide" onclick="if(event.target===this)closeSSModal()">
+  <div class="modal modal-xl">
+    <div class="modal-hd"><span id="ss-modal-title">Website Screenshot</span><button class="btn bg sm" onclick="closeSSModal()">✕</button></div>
+    <div class="modal-bd">
+      <div class="ss-layout">
+        <div><img id="ss-img" class="ss-img" src="" alt="Screenshot"><div id="ss-url" style="font-size:11px;color:#94a3b8;margin-top:6px;text-align:center"></div></div>
+        <div>
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:6px">Gemini Visual Analysis</div>
+          <div id="ss-analysis" class="ss-analysis">No analysis available.</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-ft"><button class="btn bs" onclick="closeSSModal()">Close</button></div>
+  </div>
+</div>
+
+<!-- ── Preview Prompt Modal ── -->
+<div id="prev-modal" class="modal-wrap hide" onclick="if(event.target===this)closePrevModal()">
+  <div class="modal modal-lg">
+    <div class="modal-hd"><span>Preview Prompt</span><button class="btn bg sm" onclick="closePrevModal()">✕</button></div>
+    <div class="modal-bd">
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:4px">SYSTEM PROMPT</div>
+        <div id="prev-system" class="pre-block"></div>
+      </div>
+      <div>
+        <div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:4px">FIRST ROW USER MESSAGE</div>
+        <div id="prev-user" class="pre-block"></div>
+      </div>
+    </div>
+    <div class="modal-ft"><button class="btn bs" onclick="closePrevModal()">Close</button></div>
   </div>
 </div>
 
@@ -547,7 +609,11 @@ let bulkRows = [], bulkHdrs = [], bulkJobId = null, bulkPollTimer = null, bulkRe
 // AI modal
 let aiSuggestedCols = [];
 // Results pane
-let resJobId = null, resSections = [], resSse = null;
+let resJobId = null, resSections = [], resSse = null, resFailedRows = 0;
+// Detail modal
+let currentDetVal = '';
+// Hidden columns (Set of column keys)
+let hiddenCols = new Set();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function x(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -717,7 +783,7 @@ function onDataLoaded(){
   renderTable();
 }
 function resetSheet(){
-  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];
+  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];hiddenCols=new Set();
   if(sse){sse.close();sse=null;}
   $i('upload-zone').classList.remove('hide');$i('fi').value='';
   $i('sheet-view').classList.add('hide');
@@ -733,7 +799,7 @@ function renderTable(){
   const head=$i('tbl-head');
   head.innerHTML=`<th class="th-rn">#</th>`+
     csvHdrs.map(h=>`<th class="th-in">${x(h)}</th>`).join('')+
-    enrichCols.map((c,i)=>`<th class="th-en" onclick="openDrawer(${i})" title="Click to edit"><div class="th-en-inner">${x(c.label)}<span class="th-en-edit">✎</span></div></th>`).join('')+
+    enrichCols.map((c,i)=>{const hidden=hiddenCols.has(c.key);const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';return`<th class="th-en${hidden?' col-hidden':''}" id="th-${c.key}" onclick="openDrawer(${i})" title="Click to edit"><div class="th-en-inner">${x(c.label)}${badge}<span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="margin-left:auto;font-size:11px;opacity:0.5;cursor:pointer">⊖</span><span class="th-en-edit">✎</span></div></th>`;}).join('')+
     `<th class="th-add" onclick="addBlankCol()" title="Add column">+</th>`;
   // Body
   const tbody=$i('tbl-body');tbody.innerHTML='';
@@ -753,10 +819,11 @@ function buildRow(i){
   enrichCols.forEach(c=>{
     const st=rowStatuses[i]?.[c.key];
     const val=rowResults[i]?.[c.key];
-    if(st==='running')html+=`<td class="td-en td-empty" id="cell-${i}-${c.key}"><span class="spin-cell"></span></td>`;
-    else if(st==='done'&&val)html+=`<td class="td-en" id="cell-${i}-${c.key}" onclick="openDet(${i})" title="${x(String(val).slice(0,200))}">${x(String(val).slice(0,120))}${String(val).length>120?'…':''}</td>`;
-    else if(st==='error')html+=`<td class="td-en td-err-cell" id="cell-${i}-${c.key}" title="Error">Error</td>`;
-    else html+=`<td class="td-en td-empty" id="cell-${i}-${c.key}">—</td>`;
+    const hid=hiddenCols.has(c.key)?' col-hidden':'';
+    if(st==='running')html+=`<td class="td-en td-empty${hid}" id="cell-${i}-${c.key}"><span class="spin-cell"></span></td>`;
+    else if(st==='done'&&val)html+=`<td class="td-en${hid}" id="cell-${i}-${c.key}" onclick="openDet(${i})" title="${x(String(val).slice(0,200))}">${x(String(val).slice(0,120))}${String(val).length>120?'…':''}</td>`;
+    else if(st==='error')html+=`<td class="td-en td-err-cell${hid}" id="cell-${i}-${c.key}" title="Error">Error</td>`;
+    else html+=`<td class="td-en td-empty${hid}" id="cell-${i}-${c.key}">—</td>`;
   });
   tr.innerHTML=html;
   return tr;
@@ -880,26 +947,30 @@ function buildSystemPrompt(){
   const secs=enrichCols.map((c,i)=>`${i+1}. **${c.label}**${c.desc?' — '+c.desc:''}`).join('\n');
   return`You are a senior B2B researcher. For each company, research and provide:\n\n${secs}\n\nBe specific, accurate, and actionable.`;
 }
-async function runResearch(){
+async function runResearch(limit){
   if(!csvRows.length){toast('Upload a CSV first','err');return;}
   if(!enrichCols.length){toast('Add at least one research column','err');return;}
   if(!colMap.company){toast('Select the company name column','err');return;}
   const pid=$i('prov-sel').value;
   if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
+  const isTest=limit!=null&&limit>0;
   // Reset all result states (cells show as empty dash until results arrive)
   rowResults={};rowStatuses={};
   renderTable();
   const btn=$i('btn-run');btn.disabled=true;btn.textContent='Running…';
+  $i('btn-test').disabled=true;
   $i('btn-cancel').classList.remove('hide');
   $i('run-progress').classList.remove('hide');
   $i('prog-fill').style.width='0%';$i('prog-txt').textContent='Starting…';
   // Build CSV from user-selected context columns (preserves chosen data for LLM)
   const selectedHdrs=contextCols.length?contextCols:csvHdrs;
   const csvEsc=v=>{const s=String(v||'').replace(/"/g,'""');return s.includes(',')||s.includes('"')||s.includes('\n')?`"${s}"`:s;};
+  const rowsToUse=isTest?csvRows.slice(0,limit):csvRows;
   const csvLines=[selectedHdrs.map(csvEsc).join(',')];
-  for(const r of csvRows)csvLines.push(selectedHdrs.map(h=>csvEsc(r[h])).join(','));
+  for(const r of rowsToUse)csvLines.push(selectedHdrs.map(h=>csvEsc(r[h])).join(','));
   const csv=csvLines.join('\n');
-  const d=await api('POST','/api/research',{csv,colMapOverride:colMap,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),provider:pid,useWebSearch:$i('ws-chk').checked,jobName:''});
+  const jobName=isTest?`[TEST] ${limit} rows`:''
+  const d=await api('POST','/api/research',{csv,colMapOverride:colMap,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),provider:pid,useWebSearch:$i('ws-chk').checked,jobName});
   if(!d||d.error){toast(d?.error||'Failed to start job','err');stopRunUI();return;}
   curJobId=d.jobId;
   localStorage.setItem('pr_active_job',JSON.stringify({jobId:d.jobId,enrichCols}));
@@ -916,6 +987,7 @@ async function cancelResearch(){
 }
 function stopRunUI(){
   $i('btn-run').disabled=false;$i('btn-run').textContent='▶ Run';
+  $i('btn-test').disabled=false;
   $i('btn-cancel').classList.add('hide');$i('btn-cancel').disabled=false;$i('btn-cancel').textContent='■ Cancel';
   $i('run-progress').classList.add('hide');
   curJobId=null;
@@ -1082,10 +1154,11 @@ function openResSse(id){
 }
 function onResSseMsg(m){
   if(m.type==='meta'){
-    resSections=m.sections||[];
+    resSections=m.sections||[];resFailedRows=0;
     $i('res-head').innerHTML='<th>#</th><th>Company</th>'+resSections.map(s=>`<th>${x(s.label||s.key)}</th>`).join('')+'<th>Quality</th><th>Actions</th>';
-    $i('res-body').innerHTML='';
+    $i('res-body').innerHTML='';$i('btn-retry-all').classList.add('hide');
   }else if(m.type==='result'){
+    if(m.status==='error')resFailedRows++;
     const tr=document.createElement('tr');
     const res=m.research||{};
     const q=m.quality||0;
@@ -1105,11 +1178,14 @@ function onResSseMsg(m){
     $i('res-progress').classList.add('hide');
     $i('res-status-badge').innerHTML=`<span class="badge b-${m.status}">${m.status}</span>`;
     if(m.cost)$i('res-status-badge').innerHTML+=` <span style="font-size:12px;color:#64748b;margin-left:6px">${fmtCost(m.cost)}</span>`;
+    if(resFailedRows>0){$i('btn-retry-all').classList.remove('hide');$i('btn-retry-all').textContent=`↺ Retry Failed (${resFailedRows})`;}
   }
 }
 function openResDetModal(td,label,val){
+  currentDetVal=val||'';
   $i('det-title').textContent=label;
   $i('det-body').innerHTML=`<div class="det-val">${x(val||'—')}</div>`;
+  $i('det-copy-btn').style.display=val?'':'none';
   $i('det-modal').classList.remove('hide');
 }
 async function retryResRow(jobId,rowIdx,btn){
@@ -1262,12 +1338,12 @@ async function pollBulkJob(){
   $i('bulk-prog-fill').style.width=pct+'%';
   $i('bulk-prog-txt').textContent=`${job.succeeded+job.failed} / ${job.total_rows} audited`;
   $i('bulk-prog-ct').textContent=`✓ ${job.succeeded}  ✗ ${job.failed}`;
+  // Always fetch and show current rows on every tick (fix: results were only shown on completion)
+  const r=await api('GET','/api/bulk-audit-rows/'+bulkJobId);
+  if(r&&r.rows&&r.rows.length)showBulkResults(r.rows);
   if(job.status==='running'||job.status==='pending'){
     bulkPollTimer=setTimeout(pollBulkJob,4000);
   }else{
-    // Done — load results
-    const r=await api('GET','/api/bulk-audit-rows/'+bulkJobId);
-    if(r&&r.rows){showBulkResults(r.rows);}
     $i('btn-bulk-run').disabled=false;$i('btn-bulk-run').textContent='▶ Start Bulk Audit';
     toast(`Bulk audit done: ${job.succeeded} succeeded, ${job.failed} failed`,job.failed?'info':'ok',5000);
   }
@@ -1275,17 +1351,20 @@ async function pollBulkJob(){
 function showBulkResults(rows){
   bulkResults=rows;
   $i('bulk-results-area').classList.remove('hide');
-  $i('bulk-done-msg').textContent=`${rows.filter(r=>r.status==='success').length} / ${rows.length} sites audited`;
-  $i('bulk-thead').innerHTML='<th>#</th><th>Company / URL</th><th>Perf</th><th>SEO</th><th>Issues</th><th>Status</th>';
+  const done=rows.filter(r=>r.status==='success').length;
+  $i('bulk-done-msg').textContent=`${done} / ${rows.length} sites audited`;
+  $i('bulk-thead').innerHTML='<th>#</th><th>Company / URL</th><th>Perf</th><th>SEO</th><th>Issues</th><th>Status</th><th>📸</th>';
   $i('bulk-tbody').innerHTML=rows.map((r,i)=>{
     const m=r.data?.metrics||{};
     const sc=v=>v!=null?`<span class="${scoreClass(v)}" style="font-weight:700">${v}</span>`:'—';
+    const ssBtn=r.data?.screenshot_path?`<button class="btn bg sm" onclick="openSSModal(bulkResults[${i}])" title="View screenshot">📸</button>`:`<span style="color:#cbd5e1">—</span>`;
     return`<tr>
       <td style="color:#94a3b8">${i+1}</td>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${x(r.company||'')}</td>
       <td>${sc(m.performance)}</td><td>${sc(m.seo)}</td>
       <td style="font-size:12px">${r.data?.issues?.length??'—'}</td>
       <td><span class="badge b-${r.status==='success'?'done':'err'}">${r.status}</span></td>
+      <td>${ssBtn}</td>
     </tr>`;
   }).join('');
 }
@@ -1416,6 +1495,94 @@ async function loadAdmin(){
 }
 function adminBackup(){const a=document.createElement('a');a.href='/api/admin/backup?token='+token;a.download='';a.click();}
 function adminExport(){const a=document.createElement('a');a.href='/api/admin/export-all?token='+token;a.download='';a.click();}
+
+// ── Copy Cell Value ───────────────────────────────────────────────────────────
+function copyDetVal(){
+  if(!currentDetVal)return;
+  navigator.clipboard.writeText(currentDetVal).then(()=>toast('Copied!','ok',2000)).catch(()=>toast('Copy failed','err'));
+}
+
+// ── Batch Retry Failed Rows ───────────────────────────────────────────────────
+async function retryAllFailed(){
+  if(!resJobId)return;
+  const btn=$i('btn-retry-all');btn.disabled=true;btn.textContent='Retrying…';
+  const d=await api('POST','/api/retry-failed/'+resJobId);
+  btn.disabled=false;
+  if(!d||d.error){toast(d?.error||'Retry failed','err');btn.classList.add('hide');return;}
+  toast(`Retrying ${d.retried} failed rows…`,'info');
+  btn.classList.add('hide');resFailedRows=0;
+  // Reconnect SSE to stream updated results
+  openResSse(resJobId);
+}
+
+// ── Preview Prompt Modal ───────────────────────────────────────────────────────
+async function previewPrompt(){
+  if(!csvRows.length){toast('Upload a CSV first','err');return;}
+  if(!enrichCols.length){toast('Add research columns first','err');return;}
+  const btn=$i('btn-preview');btn.disabled=true;btn.textContent='Loading…';
+  const selectedHdrs=contextCols.length?contextCols:csvHdrs;
+  const csvEsc=v=>{const s=String(v||'').replace(/"/g,'""');return s.includes(',')||s.includes('"')||s.includes('\n')?`"${s}"`:s;};
+  const csvLines=[selectedHdrs.map(csvEsc).join(',')];
+  for(const r of csvRows.slice(0,2))csvLines.push(selectedHdrs.map(h=>csvEsc(r[h])).join(','));
+  const d=await api('POST','/api/preview-prompt',{csv:csvLines.join('\n'),colMapOverride:colMap,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''}))});
+  btn.disabled=false;btn.textContent='👁 Preview';
+  if(!d||d.error){toast(d?.error||'Preview failed','err');return;}
+  $i('prev-system').textContent=d.systemPrompt||'(none)';
+  $i('prev-user').textContent=d.userMessage||'(none)';
+  $i('prev-modal').classList.remove('hide');
+}
+function closePrevModal(){$i('prev-modal').classList.add('hide');}
+
+// ── Screenshot Modal ───────────────────────────────────────────────────────────
+function openSSModal(row){
+  const ssPath=row.data?.screenshot_path||'';
+  const company=row.company||'Screenshot';
+  $i('ss-modal-title').textContent=company;
+  $i('ss-url').textContent=row.data?.finalUrl||row.data?.url||'';
+  if(ssPath){
+    const fn=ssPath.split('/').pop();
+    $i('ss-img').src='/screenshots/'+fn;
+    $i('ss-img').style.display='';
+  }else{$i('ss-img').style.display='none';}
+  $i('ss-analysis').textContent=row.data?.visual_analysis||'No Gemini analysis available.\n\nRun the audit with a GEMINI_API_KEY set to get visual analysis automatically.';
+  $i('ss-modal').classList.remove('hide');
+}
+function closeSSModal(){$i('ss-modal').classList.add('hide');$i('ss-img').src='';}
+
+// ── Column Hide/Show ───────────────────────────────────────────────────────────
+function toggleColHide(key){
+  if(hiddenCols.has(key))hiddenCols.delete(key);else hiddenCols.add(key);
+  // Toggle class on all cells and header for this column
+  const th=document.getElementById('th-'+key);if(th)th.classList.toggle('col-hidden',hiddenCols.has(key));
+  document.querySelectorAll(`[id^="cell-"][id$="-${key}"]`).forEach(el=>el.classList.toggle('col-hidden',hiddenCols.has(key)));
+  updateHiddenBadge();
+}
+function updateHiddenBadge(){
+  const badge=$i('hidden-badge');
+  if(hiddenCols.size>0){badge.classList.remove('hide');badge.textContent=`${hiddenCols.size} hidden ↩`;}
+  else{badge.classList.add('hide');}
+}
+function showHiddenCols(){
+  const keys=[...hiddenCols];
+  if(!keys.length)return;
+  const names=keys.map(k=>{const c=enrichCols.find(e=>e.key===k);return c?.label||k;}).join(', ');
+  if(confirm(`Show hidden columns?\n\n${names}`)){
+    keys.forEach(k=>{hiddenCols.delete(k);const th=document.getElementById('th-'+k);if(th)th.classList.remove('col-hidden');document.querySelectorAll(`[id^="cell-"][id$="-${k}"]`).forEach(el=>el.classList.remove('col-hidden'));});
+    updateHiddenBadge();
+  }
+}
+
+// ── AI Formula Generation ──────────────────────────────────────────────────────
+async function generateFormula(){
+  const desc=$i('formula-gen-desc').value.trim();
+  if(!desc){toast('Describe what the formula should do','err');return;}
+  const btn=$i('formula-gen-btn');btn.disabled=true;btn.textContent='Generating…';
+  const columns=csvHdrs.concat(enrichCols.map(c=>c.key));
+  const d=await api('POST','/api/generate-formula',{description:desc,columns});
+  btn.disabled=false;btn.textContent='Generate';
+  if(!d||d.error){toast(d?.error||'Generation failed','err');return;}
+  if(d.formula){$i('drw-desc').value=d.formula;toast('Formula generated!','ok');}
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 setupDrop();

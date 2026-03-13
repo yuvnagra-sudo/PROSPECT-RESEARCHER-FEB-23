@@ -2,6 +2,8 @@
 // Each connector: async (params, apiKey?) → { key: value, ... }
 
 import { auditWebsite } from './audit.mjs';
+import { callGeminiVision } from './vision.mjs';
+import { takeScreenshot } from './screenshot.mjs';
 
 const TIMEOUT = 15000;
 
@@ -125,6 +127,20 @@ async function dnsMx(params) {
   }
 }
 
+// ─── Gemini Vision Connector ────────────────────────────────────────────────
+// Screenshots a website and sends the image to Gemini for visual analysis
+async function geminiVision(params, apiKey) {
+  if (!apiKey) return { error: 'GEMINI_API_KEY required', visual_analysis: '' };
+  const url = params.url;
+  if (!url) return { error: 'No URL provided', visual_analysis: '' };
+  const ss = await takeScreenshot(url);
+  if (ss.status !== 'success' || !ss.path) {
+    return { error: 'Screenshot failed — site may be unreachable', visual_analysis: '', screenshot_path: '' };
+  }
+  const analysis = await callGeminiVision(ss.path, apiKey);
+  return { screenshot_path: ss.path, visual_analysis: analysis || 'No analysis returned' };
+}
+
 // ─── Custom HTTP Connector ─────────────────────────────────────────────────
 // User defines: url template, method, headers, auth type, response extraction
 async function customHttp(params, apiKey, config) {
@@ -231,6 +247,15 @@ const BUILTIN_CONNECTORS = {
     inputFields: ['domain'],
     outputFields: ['email_provider', 'mx_record', 'has_spf'],
     fn: dnsMx,
+  },
+  gemini_vision: {
+    name: 'Gemini Vision Analysis',
+    description: 'Screenshots a website and analyzes it with Gemini Vision — design, CTAs, trust signals, improvement recommendations',
+    keyName: 'GEMINI_API_KEY',
+    keyRequired: true,
+    inputFields: ['url'],
+    outputFields: ['screenshot_path', 'visual_analysis'],
+    fn: geminiVision,
   },
   custom_http: {
     name: 'Custom HTTP API',
