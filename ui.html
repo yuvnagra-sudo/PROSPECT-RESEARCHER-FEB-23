@@ -241,9 +241,83 @@ textarea.fi{resize:vertical;line-height:1.5}
 .col-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle}
 .cb-llm{background:#eff6ff;color:#3b82f6}.cb-api{background:#f0fdf4;color:#16a34a}.cb-fx{background:#fefce8;color:#ca8a04}
 
+/* ── Per-column run button & status badge ── */
+.col-run-btn{background:#6366f1;color:#fff;border:none;border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;flex-shrink:0;line-height:1.4;transition:background .15s}
+.col-run-btn:hover{background:#4f46e5}
+.col-status-badge{font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0}
+.csb-running{background:#eff6ff;color:#3b82f6}
+.csb-done{background:#f0fdf4;color:#16a34a}
+.csb-error{background:#fef2f2;color:#dc2626}
+
 /* ── Hidden columns ── */
 .col-hidden{display:none!important}
 #hidden-badge{font-size:11px;color:#6366f1;background:#eff6ff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;white-space:nowrap}
+
+/* ── Sort indicators ── */
+.th-in{cursor:pointer!important}
+.th-in:hover{background:#f1f5f9!important}
+.sort-asc::after{content:' ↑';font-size:9px;color:#6366f1}
+.sort-desc::after{content:' ↓';font-size:9px;color:#6366f1}
+
+/* ── Row checkboxes & selection ── */
+.th-cb,.td-cb{width:28px;min-width:28px;padding:4px 6px!important;text-align:center;user-select:none}
+.td-cb input[type=checkbox]{cursor:pointer;accent-color:#6366f1;width:13px;height:13px;margin:0;display:block}
+tr.row-sel>td{background:#eff6ff!important}
+tr.row-sel>td:hover{background:#dbeafe!important}
+
+/* ── Frozen row number ── */
+.td-rn{position:sticky;left:0;z-index:2;background:#fff}
+#main-tbl thead .th-rn{position:sticky;left:0;z-index:4}
+
+/* ── Search + selection bar ── */
+#tbl-search-bar{display:flex;align-items:center;gap:8px;padding:5px 12px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
+#tbl-search{border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;font-size:12px;outline:none;width:220px;transition:border-color .15s}
+#tbl-search:focus{border-color:#6366f1;box-shadow:0 0 0 2px #eff6ff}
+#tbl-search-count{font-size:11px;color:#94a3b8;white-space:nowrap}
+#tbl-sel-info{font-size:12px;font-weight:600;color:#6366f1;white-space:nowrap}
+
+/* ── Right-click context menu ── */
+#ctx-menu{position:fixed;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:600;padding:4px 0;min-width:170px;display:none}
+.ctx-item{padding:8px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:9px;color:#374151;user-select:none;white-space:nowrap}
+.ctx-item:hover{background:#f8fafc}
+.ctx-item.danger{color:#dc2626}
+.ctx-sep{height:1px;background:#e2e8f0;margin:4px 0}
+
+/* ── Row side panel (Clay-style detail view) ── */
+#side-panel{position:fixed;top:0;right:-460px;width:440px;height:100vh;background:#fff;border-left:1px solid #e2e8f0;z-index:400;display:flex;flex-direction:column;transition:right .2s ease;box-shadow:-8px 0 32px rgba(0,0,0,.08)}
+#side-panel.sp-open{right:0}
+#sp-overlay{position:fixed;inset:0;z-index:399;display:none;cursor:default}
+#side-panel.sp-open~#sp-overlay{display:block}
+.sp-hd{padding:11px 14px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.sp-title{font-weight:600;font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-nav button{background:none;border:1px solid #e2e8f0;border-radius:4px;padding:2px 7px;cursor:pointer;font-size:12px}
+.sp-nav button:hover{background:#f8fafc}
+.sp-search{padding:8px 14px;border-bottom:1px solid #f1f5f9;flex-shrink:0}
+.sp-search input{width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:5px 10px;font-size:12px;outline:none;box-sizing:border-box}
+.sp-search input:focus{border-color:#6366f1}
+.sp-body{flex:1;overflow-y:auto}
+.sp-sec{padding:10px 14px;border-bottom:1px solid #f1f5f9}
+.sp-sec:last-child{border-bottom:none}
+.sp-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.sp-copy-btn{background:none;border:1px solid #e2e8f0;border-radius:3px;padding:1px 6px;font-size:10px;cursor:pointer;color:#64748b;opacity:0;transition:opacity .1s}
+.sp-sec:hover .sp-copy-btn{opacity:1}
+.sp-copy-btn:hover{background:#f1f5f9}
+.sp-val{font-size:13px;color:#0f172a;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.sp-val.empty{color:#cbd5e1;font-style:italic}
+.sp-in-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px}
+.sp-in-cell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-in-key{color:#94a3b8;font-size:11px}
+.sp-in-val{color:#374151;font-weight:500}
+.sp-sec-hidden{display:none}
+.sp-sec-hd{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:5px}
+.sp-field{display:grid;grid-template-columns:120px 1fr;gap:6px;font-size:12px;margin-bottom:3px;align-items:start}
+.sp-fk{color:#94a3b8;font-size:11px;padding-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-fv{color:#374151;font-weight:500;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.spinner-sm{display:inline-block;width:10px;height:10px;border:2px solid #e2e8f0;border-top-color:#6366f1;border-radius:50%;animation:spin-c .7s linear infinite;vertical-align:middle}
+
+/* ── Column drag-to-reorder ── */
+.th-en[draggable=true]{cursor:grab}
+.th-en.col-drag-over{outline:2px solid #6366f1;outline-offset:-2px;background:#eff6ff!important}
 
 /* ── Screenshot modal ── */
 .modal-xl{max-width:960px}
@@ -349,6 +423,15 @@ textarea.fi{resize:vertical;line-height:1.5}
             <button id="btn-preview" class="btn bs sm" onclick="previewPrompt()" title="Preview the exact prompt before running">👁 Preview</button>
             <button id="btn-run" class="btn bp sm" onclick="runResearch()">▶ Run</button>
           </div>
+        </div>
+
+        <!-- Search + selection bar -->
+        <div id="tbl-search-bar">
+          <span id="tbl-sel-info" style="display:none"></span>
+          <button id="btn-run-sel" class="btn bp sm hide" onclick="runSelected()">▶ Run Selected</button>
+          <button id="btn-clear-sel" class="btn bs sm hide" onclick="clearSelection()">✕ Clear</button>
+          <input id="tbl-search" type="text" placeholder="Search rows… (Ctrl+F)" oninput="onTableSearch(this.value)" autocomplete="off">
+          <span id="tbl-search-count" style="display:none"></span>
         </div>
 
         <!-- Table -->
@@ -555,6 +638,33 @@ textarea.fi{resize:vertical;line-height:1.5}
   </div>
 </div>
 
+<!-- ── Row Side Panel (Clay-style) ── -->
+<div id="side-panel">
+  <div class="sp-hd">
+    <button class="btn bg sm" onclick="closeSidePanel()" title="Close (Esc)">✕</button>
+    <span class="sp-title" id="sp-title">Row Details</span>
+    <div class="sp-nav" style="display:flex;gap:4px">
+      <button onclick="spNav(-1)" title="Previous row (↑)">↑</button>
+      <button onclick="spNav(1)" title="Next row (↓)">↓</button>
+    </div>
+    <button class="btn bs sm" onclick="copySpRow()" title="Copy all as text">📋</button>
+  </div>
+  <div class="sp-search">
+    <input type="text" id="sp-search" placeholder="Search sections…" oninput="spSearch(this.value)" autocomplete="off">
+  </div>
+  <div class="sp-body" id="sp-body"></div>
+</div>
+<div id="sp-overlay" onclick="closeSidePanel()"></div>
+
+<!-- ── Right-click Context Menu ── -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-run">▶ Run this row</div>
+  <div class="ctx-item" id="ctx-sel">☑ Select row</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-copy">📋 Copy row data</div>
+  <div class="ctx-item" id="ctx-detail">↗ Open detail panel</div>
+</div>
+
 <!-- ── Screenshot Modal ── -->
 <div id="ss-modal" class="modal-wrap hide" onclick="if(event.target===this)closeSSModal()">
   <div class="modal modal-xl">
@@ -614,6 +724,19 @@ let resJobId = null, resSections = [], resSse = null, resFailedRows = 0;
 let currentDetVal = '';
 // Hidden columns (Set of column keys)
 let hiddenCols = new Set();
+// Clay-style sheet mode
+let sheetJobId = null;
+let colRunStatus = {}; // {colKey: 'idle'|'running'|'done'|'error'}
+let colRunCount = {};  // {colKey: {done, total, errors}}
+// Table UX
+let tableFilter = '';
+let sortBy = null; // column name to sort by
+let sortDir = 'asc';
+let selectedRows = new Set(); // Set of csvRows indices
+let lastClickedRow = -1; // for shift-click range
+let spCurrentIdx = -1; // csvRows index currently shown in side panel
+let ctxTargetIdx = -1; // csvRows index for right-click context
+let colDragFromIdx = -1; // enrichment column being dragged
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function x(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -783,7 +906,7 @@ function onDataLoaded(){
   renderTable();
 }
 function resetSheet(){
-  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];hiddenCols=new Set();
+  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];hiddenCols=new Set();sheetJobId=null;colRunStatus={};colRunCount={};tableFilter='';sortBy=null;sortDir='asc';selectedRows=new Set();lastClickedRow=-1;spCurrentIdx=-1;closeSidePanel();if($i('tbl-search'))$i('tbl-search').value='';updateSelInfo();
   if(sse){sse.close();sse=null;}
   $i('upload-zone').classList.remove('hide');$i('fi').value='';
   $i('sheet-view').classList.add('hide');
@@ -793,37 +916,87 @@ function resetSheet(){
 }
 
 // ── Table Rendering ───────────────────────────────────────────────────────────
+function getDisplayRows(){
+  let indices=csvRows.map((_,i)=>i);
+  if(tableFilter){
+    const q=tableFilter.toLowerCase();
+    indices=indices.filter(i=>{
+      const row=csvRows[i];
+      if(row._blank)return false;
+      if(Object.values(row).some(v=>String(v||'').toLowerCase().includes(q)))return true;
+      const res=rowResults[i]||{};
+      return Object.values(res).some(v=>String(v||'').toLowerCase().includes(q));
+    });
+  }
+  if(sortBy){
+    const isCsvHdr=csvHdrs.includes(sortBy);
+    indices.sort((a,b)=>{
+      const va=isCsvHdr?String(csvRows[a][sortBy]||''):String(rowResults[a]?.[sortBy]||'');
+      const vb=isCsvHdr?String(csvRows[b][sortBy]||''):String(rowResults[b]?.[sortBy]||'');
+      const cmp=va.localeCompare(vb,undefined,{numeric:true,sensitivity:'base'});
+      return sortDir==='asc'?cmp:-cmp;
+    });
+  }
+  return indices;
+}
 function renderTable(){
-  const VISIBLE=150;// show first 150 rows for performance
-  // Head
+  const VISIBLE=200;
   const head=$i('tbl-head');
-  head.innerHTML=`<th class="th-rn">#</th>`+
-    csvHdrs.map(h=>`<th class="th-in">${x(h)}</th>`).join('')+
-    enrichCols.map((c,i)=>{const hidden=hiddenCols.has(c.key);const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';return`<th class="th-en${hidden?' col-hidden':''}" id="th-${c.key}" onclick="openDrawer(${i})" title="Click to edit"><div class="th-en-inner">${x(c.label)}${badge}<span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="margin-left:auto;font-size:11px;opacity:0.5;cursor:pointer">⊖</span><span class="th-en-edit">✎</span></div></th>`;}).join('')+
+  // Master checkbox
+  const allSel=csvRows.length>0&&csvRows.every((_,i)=>csvRows[i]._blank||selectedRows.has(i));
+  head.innerHTML=`<th class="th-cb th-rn" style="min-width:28px"><input type="checkbox" title="Select all" ${allSel?'checked':''} onchange="selectAll(this.checked)" style="accent-color:#6366f1;width:13px;height:13px;margin:0"></th>`+
+    csvHdrs.map(h=>{const sa=sortBy===h;const cls='th-in'+(sa?' sort-'+sortDir:'');return`<th class="${cls}" onclick="setSort('${x(h)}')" title="Sort by ${x(h)}">${x(h)}</th>`;}).join('')+
+    enrichCols.map((c,i)=>{
+      const hidden=hiddenCols.has(c.key);
+      const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';
+      const sa=sortBy===c.key;
+      return`<th class="th-en${hidden?' col-hidden':''}${sa?' sort-'+sortDir:''}" id="th-${c.key}" title="${x(c.label)}" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="colDragOver(event)" ondrop="colDrop(event,${i})" ondragleave="colDragLeave(event)"><div class="th-en-inner"><span onclick="openDrawer(${i})" style="cursor:pointer">${x(c.label)}${badge}</span><button class="col-run-btn" onclick="event.stopPropagation();runCol('${c.key}')" title="Run this column for all empty rows">▶</button><span class="col-status-badge" id="cs-${c.key}"></span><span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="font-size:11px;opacity:0.5;cursor:pointer">⊖</span><button class="th-en-edit" onclick="event.stopPropagation();openDrawer(${i})" title="Edit column" style="background:none;border:none;cursor:pointer;font-size:10px;padding:0 2px">✎</button></div></th>`;
+    }).join('')+
     `<th class="th-add" onclick="addBlankCol()" title="Add column">+</th>`;
   // Body
   const tbody=$i('tbl-body');tbody.innerHTML='';
-  const shown=Math.min(VISIBLE,csvRows.length);
-  for(let i=0;i<shown;i++){tbody.appendChild(buildRow(i));}
-  if(csvRows.length>VISIBLE){
+  const displayRows=getDisplayRows();
+  const shown=Math.min(VISIBLE,displayRows.length);
+  for(let d=0;d<shown;d++){tbody.appendChild(buildRow(displayRows[d],d));}
+  // Footer
+  if(displayRows.length>VISIBLE){
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="td-rn"></td><td colspan="${csvHdrs.length+enrichCols.length+1}" style="text-align:center;font-size:12px;color:#94a3b8;padding:12px">${csvRows.length-VISIBLE} more rows (all will be researched)</td>`;
+    tr.innerHTML=`<td></td><td colspan="${csvHdrs.length+enrichCols.length+1}" style="text-align:center;font-size:12px;color:#94a3b8;padding:12px">${displayRows.length-VISIBLE} more rows (all will be researched)</td>`;
     tbody.appendChild(tr);
   }
+  // Update search count
+  const cnt=$i('tbl-search-count');
+  if(tableFilter&&cnt){cnt.textContent=`${displayRows.length} of ${csvRows.filter(r=>!r._blank).length} rows`;cnt.style.display='';}
+  else if(cnt){cnt.style.display='none';}
+  // Attach context menu to tbody
+  tbody.oncontextmenu=e=>{
+    const td=e.target.closest('td');if(!td)return;
+    const tr=td.closest('tr');if(!tr||tr.dataset.idx===undefined)return;
+    e.preventDefault();showCtxMenu(e,parseInt(tr.dataset.idx));
+  };
 }
-function buildRow(i){
-  const row=csvRows[i];
+function buildRow(csvIdx,displayPos){
+  const row=csvRows[csvIdx];
   const tr=document.createElement('tr');
-  let html=`<td class="td-rn">${i+1}</td>`;
+  tr.dataset.idx=csvIdx;
+  const sel=selectedRows.has(csvIdx);
+  if(sel)tr.classList.add('row-sel');
+  let html=`<td class="td-cb"><input type="checkbox" ${sel?'checked':''} onclick="toggleRowSel(${csvIdx},event)" style="accent-color:#6366f1;width:13px;height:13px;margin:0;display:block"></td>`;
+  html+=`<td class="td-rn">${displayPos+1}</td>`;
+  if(row._blank){
+    csvHdrs.forEach(()=>{html+=`<td class="td-in" style="color:#e2e8f0">—</td>`;});
+    enrichCols.forEach(c=>{const hid=hiddenCols.has(c.key)?' col-hidden':'';html+=`<td class="td-en td-empty${hid}"></td>`;});
+    tr.innerHTML=html;return tr;
+  }
   csvHdrs.forEach(h=>{html+=`<td class="td-in" title="${x(row[h]||'')}">${x((row[h]||'').slice(0,80))}</td>`;});
   enrichCols.forEach(c=>{
-    const st=rowStatuses[i]?.[c.key];
-    const val=rowResults[i]?.[c.key];
+    const st=rowStatuses[csvIdx]?.[c.key];
+    const val=rowResults[csvIdx]?.[c.key];
     const hid=hiddenCols.has(c.key)?' col-hidden':'';
-    if(st==='running')html+=`<td class="td-en td-empty${hid}" id="cell-${i}-${c.key}"><span class="spin-cell"></span></td>`;
-    else if(st==='done'&&val)html+=`<td class="td-en${hid}" id="cell-${i}-${c.key}" onclick="openDet(${i})" title="${x(String(val).slice(0,200))}">${x(String(val).slice(0,120))}${String(val).length>120?'…':''}</td>`;
-    else if(st==='error')html+=`<td class="td-en td-err-cell${hid}" id="cell-${i}-${c.key}" title="Error">Error</td>`;
-    else html+=`<td class="td-en td-empty${hid}" id="cell-${i}-${c.key}">—</td>`;
+    if(st==='running')html+=`<td class="td-en td-empty${hid}" id="cell-${csvIdx}-${c.key}"><span class="spin-cell"></span></td>`;
+    else if(st==='done'&&val)html+=`<td class="td-en${hid}" id="cell-${csvIdx}-${c.key}" onclick="openSidePanel(${csvIdx},'${c.key}')" title="${x(String(val).slice(0,200))}">${x(String(val).slice(0,120))}${String(val).length>120?'…':''}</td>`;
+    else if(st==='error')html+=`<td class="td-en td-err-cell${hid}" id="cell-${csvIdx}-${c.key}" onclick="openSidePanel(${csvIdx})" title="Error — click to see details">Error</td>`;
+    else html+=`<td class="td-en td-empty${hid}" id="cell-${csvIdx}-${c.key}" onclick="openSidePanel(${csvIdx})">—</td>`;
   });
   tr.innerHTML=html;
   return tr;
@@ -836,9 +1009,254 @@ function updateCell(idx,key,status,val){
   const el=$i(`cell-${idx}-${key}`);
   if(!el)return;
   if(status==='running'){el.innerHTML='<span class="spin-cell"></span>';el.className='td-en td-empty';}
-  else if(status==='done'&&val){el.innerHTML=x(String(val).slice(0,120))+(String(val).length>120?'…':'');el.className='td-en';el.title=x(String(val).slice(0,300));el.onclick=()=>openDet(idx);}
-  else if(status==='error'){el.innerHTML='Error';el.className='td-en td-err-cell';}
+  else if(status==='done'&&val){el.innerHTML=x(String(val).slice(0,120))+(String(val).length>120?'…':'');el.className='td-en';el.title=x(String(val).slice(0,300));el.onclick=()=>openSidePanel(idx,key);}
+  else if(status==='error'){el.innerHTML='Error';el.className='td-en td-err-cell';el.onclick=()=>openSidePanel(idx);}
+  // Update side panel if open for this row
+  if(spCurrentIdx===idx)renderSidePanel(idx);
 }
+
+function updateColBadge(colKey){
+  const el=$i('cs-'+colKey);if(!el)return;
+  const runSt=colRunStatus[colKey]||'idle';
+  const cnt=colRunCount[colKey]||{done:0,total:0,errors:0};
+  if(runSt==='running'){el.textContent=`${cnt.done}/${cnt.total}`;el.className='col-status-badge csb-running';}
+  else if(runSt==='done'){el.textContent=cnt.errors?`⚠ ${cnt.done-cnt.errors}/${cnt.done}`:`✓ ${cnt.done}`;el.className='col-status-badge csb-'+(cnt.errors?'error':'done');}
+  else if(runSt==='error'){el.textContent='✗';el.className='col-status-badge csb-error';}
+  else{el.textContent='';el.className='col-status-badge';}
+}
+async function runCol(colKey){
+  if(!csvRows.length){toast('Upload a CSV first','err');return;}
+  const col=enrichCols.find(c=>c.key===colKey);
+  if(!col){toast('Column not found','err');return;}
+  if(!colMap.company){toast('Select the company name column','err');return;}
+  const pid=$i('prov-sel').value;
+  if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
+  // Create sheet job lazily on first column run
+  if(!sheetJobId){
+    const selectedHdrs=contextCols.length?contextCols:csvHdrs;
+    const csvEsc=v=>{const s=String(v||'').replace(/"/g,'""');return s.includes(',')||s.includes('"')||s.includes('\n')?`"${s}"`:s;};
+    const csvLines=[selectedHdrs.map(csvEsc).join(',')];
+    for(const r of csvRows)csvLines.push(selectedHdrs.map(h=>csvEsc(r[h])).join(','));
+    const d=await api('POST','/api/create-sheet',{csv:csvLines.join('\n'),provider:pid,useWebSearch:$i('ws-chk').checked,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),colMapOverride:colMap});
+    if(!d||d.error){toast(d?.error||'Failed to create sheet','err');return;}
+    sheetJobId=d.jobId;
+    localStorage.setItem('pr_sheet_job',JSON.stringify({jobId:d.jobId,enrichCols}));
+  }
+  // Show progress in column header
+  colRunStatus[colKey]='running';
+  colRunCount[colKey]={done:0,total:csvRows.length,errors:0};
+  updateColBadge(colKey);
+  // Show spinners in all empty cells for this column
+  for(let i=0;i<Math.min(csvRows.length,150);i++){
+    if(!rowStatuses[i]?.[colKey]||rowStatuses[i][colKey]==='pending'){updateCell(i,colKey,'running',null);}
+  }
+  // Connect SSE if not already open for this sheet job
+  if(!sse||curJobId!==sheetJobId){
+    curJobId=sheetJobId;
+    openSSE(sheetJobId);
+  }
+  // Fire run-col — results stream via SSE
+  const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey});
+  if(!result||result.error){
+    toast(result?.error||'Failed to start column run','err');
+    colRunStatus[colKey]='error';updateColBadge(colKey);
+  }else{
+    colRunCount[colKey].total=result.queued;
+    updateColBadge(colKey);
+    toast(`Running "${col.label}" for ${result.queued} row${result.queued===1?'':'s'}…`,'info');
+  }
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────────
+function setSort(col){
+  if(sortBy===col){sortDir=sortDir==='asc'?'desc':'asc';}else{sortBy=col;sortDir='asc';}
+  renderTable();
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+function onTableSearch(q){tableFilter=q;renderTable();}
+
+// ── Row Selection ─────────────────────────────────────────────────────────────
+function toggleRowSel(csvIdx,evt){
+  const display=getDisplayRows();
+  if(evt&&evt.shiftKey&&lastClickedRow>=0){
+    const from=display.indexOf(lastClickedRow);
+    const to=display.indexOf(csvIdx);
+    if(from>=0&&to>=0){
+      const lo=Math.min(from,to),hi=Math.max(from,to);
+      for(let i=lo;i<=hi;i++)selectedRows.add(display[i]);
+    }
+  }else{
+    if(selectedRows.has(csvIdx))selectedRows.delete(csvIdx);
+    else selectedRows.add(csvIdx);
+  }
+  lastClickedRow=csvIdx;
+  updateSelInfo();
+  // Update just the affected rows visually
+  document.querySelectorAll('#tbl-body tr').forEach(tr=>{
+    const idx=parseInt(tr.dataset.idx);
+    tr.classList.toggle('row-sel',selectedRows.has(idx));
+    const cb=tr.querySelector('.td-cb input');
+    if(cb)cb.checked=selectedRows.has(idx);
+  });
+  const masterCb=document.getElementById('master-cb');
+  if(masterCb)masterCb.indeterminate=selectedRows.size>0&&selectedRows.size<csvRows.length;
+}
+function selectAll(checked){
+  if(checked){getDisplayRows().forEach(i=>selectedRows.add(i));}
+  else{selectedRows.clear();}
+  updateSelInfo();
+  renderTable();
+}
+function clearSelection(){selectedRows.clear();lastClickedRow=-1;updateSelInfo();renderTable();}
+function updateSelInfo(){
+  const n=selectedRows.size;
+  const info=$i('tbl-sel-info'),btnRun=$i('btn-run-sel'),btnClr=$i('btn-clear-sel');
+  if(n>0){
+    info.style.display='';info.textContent=`${n} selected`;
+    btnRun.classList.remove('hide');btnClr.classList.remove('hide');
+  }else{
+    info.style.display='none';
+    btnRun.classList.add('hide');btnClr.classList.add('hide');
+  }
+}
+async function runSelected(){
+  if(!selectedRows.size||!enrichCols.length)return;
+  toast(`Running all columns for ${selectedRows.size} row(s)…`,'info');
+  for(const col of enrichCols)await runCol(col.key);
+}
+
+// ── Side Panel ────────────────────────────────────────────────────────────────
+function openSidePanel(csvIdx,focusKey){
+  spCurrentIdx=csvIdx;
+  $i('side-panel').classList.add('sp-open');
+  $i('sp-search').value='';
+  renderSidePanel(csvIdx,focusKey);
+}
+function closeSidePanel(){
+  $i('side-panel').classList.remove('sp-open');
+  spCurrentIdx=-1;
+}
+function renderSidePanel(csvIdx,focusKey){
+  if(spCurrentIdx<0||spCurrentIdx!==csvIdx)return;
+  const row=csvRows[csvIdx]||{};
+  const research=rowResults[csvIdx]||{};
+  // Title = company name or first CSV value
+  const title=row[colMap.company]||Object.values(row)[0]||`Row ${csvIdx+1}`;
+  $i('sp-title').textContent=title;
+  const q=($i('sp-search').value||'').toLowerCase();
+  const parts=[];
+  // Input data section
+  const inputEntries=Object.entries(row).filter(([k,v])=>v&&String(v).trim());
+  const filteredInput=q?inputEntries.filter(([k,v])=>k.toLowerCase().includes(q)||String(v).toLowerCase().includes(q)):inputEntries;
+  if(filteredInput.length){
+    parts.push(`<div class="sp-sec"><div class="sp-sec-hd">Input Data</div>${
+      filteredInput.map(([k,v])=>`<div class="sp-field"><div class="sp-fk">${x(k)}</div><div class="sp-fv">${x(String(v))}</div></div>`).join('')
+    }</div>`);
+  }
+  // Enrichment columns
+  for(const col of enrichCols){
+    const val=research[col.key];
+    if(q&&!col.label.toLowerCase().includes(q)&&!String(val||'').toLowerCase().includes(q))continue;
+    const st=rowStatuses[csvIdx]?.[col.key]||'pending';
+    let content='';
+    if(st==='running'){content='<div class="sp-fv" style="color:#94a3b8"><span class="spinner-sm"></span> Running…</div>';}
+    else if(st==='error'||st==='failed'){content=`<div class="sp-fv" style="color:#ef4444">${x(String(val||'Error'))}</div>`;}
+    else if(val!=null&&val!==''){
+      const s=String(val);
+      // Try to render as JSON object prettily
+      let rendered=x(s);
+      try{
+        const p=JSON.parse(s);
+        if(typeof p==='object'&&p!==null){
+          rendered=Object.entries(p).map(([pk,pv])=>`<div class="sp-field" style="margin:0"><div class="sp-fk">${x(pk)}</div><div class="sp-fv">${x(String(pv))}</div></div>`).join('');
+        }
+      }catch{}
+      content=`<div class="sp-fv">${rendered}</div>`;
+    }else{
+      content=`<div class="sp-fv" style="color:#94a3b8">Not run yet — <button class="btn bs sm" style="font-size:11px" onclick="runCol('${col.key}')">▶ Run</button></div>`;
+    }
+    const highlight=col.key===focusKey?'border-left:3px solid #6366f1;padding-left:8px;':'';
+    parts.push(`<div class="sp-sec" style="${highlight}"><div class="sp-sec-hd">${x(col.label)}</div>${content}</div>`);
+  }
+  $i('sp-body').innerHTML=parts.join('')||(q?'<div style="color:#94a3b8;padding:14px;font-size:13px">No matches</div>':'<div style="color:#94a3b8;padding:14px;font-size:13px">No data yet</div>');
+  if(focusKey){
+    setTimeout(()=>{
+      const secs=$i('sp-body').querySelectorAll('.sp-sec');
+      for(const s of secs){if(s.style.borderLeft)s.scrollIntoView({behavior:'smooth',block:'nearest'});}
+    },50);
+  }
+}
+function spSearch(q){renderSidePanel(spCurrentIdx);}
+function spNav(dir){
+  const display=getDisplayRows();
+  const pos=display.indexOf(spCurrentIdx);
+  const next=display[pos+dir];
+  if(next!=null)openSidePanel(next);
+}
+function copySpRow(){
+  const row=csvRows[spCurrentIdx]||{};
+  const research=rowResults[spCurrentIdx]||{};
+  const lines=Object.entries(row).map(([k,v])=>`${k}: ${v}`);
+  for(const col of enrichCols){const v=research[col.key];if(v!=null)lines.push(`${col.label}: ${v}`);}
+  navigator.clipboard.writeText(lines.join('\n')).then(()=>toast('Copied!','ok',2000)).catch(()=>toast('Copy failed','err'));
+}
+
+// ── Context Menu ──────────────────────────────────────────────────────────────
+function showCtxMenu(e,csvIdx){
+  e.preventDefault();
+  ctxTargetIdx=csvIdx;
+  const menu=$i('ctx-menu');
+  menu.style.display='block';
+  menu.style.left=Math.min(e.clientX,window.innerWidth-180)+'px';
+  menu.style.top=Math.min(e.clientY,window.innerHeight-160)+'px';
+  $i('ctx-run').onclick=()=>{hideCtxMenu();selectedRows.add(csvIdx);updateSelInfo();for(const col of enrichCols)runCol(col.key);};
+  $i('ctx-sel').onclick=()=>{hideCtxMenu();selectedRows.add(csvIdx);updateSelInfo();renderTable();};
+  $i('ctx-copy').onclick=()=>{hideCtxMenu();spCurrentIdx=csvIdx;copySpRow();};
+  $i('ctx-detail').onclick=()=>{hideCtxMenu();openSidePanel(csvIdx);};
+}
+function hideCtxMenu(){$i('ctx-menu').style.display='none';ctxTargetIdx=-1;}
+
+// ── Column Drag-to-Reorder ────────────────────────────────────────────────────
+function colDragStart(e,i){colDragFromIdx=i;e.dataTransfer.effectAllowed='move';}
+function colDragOver(e){e.preventDefault();e.target.closest('.th-en')?.classList.add('col-drag-over');}
+function colDragLeave(e){e.target.closest('.th-en')?.classList.remove('col-drag-over');}
+function colDrop(e,toIdx){
+  e.preventDefault();
+  e.target.closest('.th-en')?.classList.remove('col-drag-over');
+  if(colDragFromIdx<0||colDragFromIdx===toIdx)return;
+  const[col]=enrichCols.splice(colDragFromIdx,1);
+  enrichCols.splice(toIdx,0,col);
+  colDragFromIdx=-1;
+  renderTable();
+}
+
+// ── Keyboard Shortcuts ────────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  // Ctrl+F → focus search
+  if((e.ctrlKey||e.metaKey)&&e.key==='f'){
+    const search=$i('tbl-search');
+    if(search&&document.getElementById('res-view')&&!document.getElementById('res-view').classList.contains('hide')){
+      e.preventDefault();search.focus();search.select();
+    }
+  }
+  // Escape → close panel / menu / clear search
+  if(e.key==='Escape'){
+    if($i('ctx-menu').style.display==='block'){hideCtxMenu();return;}
+    if(spCurrentIdx>=0){closeSidePanel();return;}
+    const search=$i('tbl-search');
+    if(search&&search.value){search.value='';onTableSearch('');return;}
+  }
+  // Arrow nav in side panel
+  if(spCurrentIdx>=0&&!e.ctrlKey&&!e.metaKey){
+    if(e.key==='ArrowUp'){e.preventDefault();spNav(-1);}
+    if(e.key==='ArrowDown'){e.preventDefault();spNav(1);}
+  }
+});
+// Close context menu on outside click
+document.addEventListener('click',e=>{
+  if($i('ctx-menu').style.display==='block'&&!$i('ctx-menu').contains(e.target))hideCtxMenu();
+});
 
 // ── Column Management ─────────────────────────────────────────────────────────
 function labelToKey(label){return label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40)||'col_'+(enrichCols.length+1);}
@@ -955,7 +1373,7 @@ async function runResearch(limit){
   if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
   const isTest=limit!=null&&limit>0;
   // Reset all result states (cells show as empty dash until results arrive)
-  rowResults={};rowStatuses={};
+  rowResults={};rowStatuses={};sheetJobId=null;colRunStatus={};colRunCount={};
   renderTable();
   const btn=$i('btn-run');btn.disabled=true;btn.textContent='Running…';
   $i('btn-test').disabled=true;
@@ -1064,18 +1482,38 @@ function onSSEMsg(m){
       });
     }
   }else if(m.type==='row-start'){
-    // row just started — show spinner only for this row's cells
     const idx=m.idx;
-    enrichCols.forEach(c=>{
-      if(!rowStatuses[idx]?.[c.key]){updateCell(idx,c.key,'running',null);}
-    });
+    if(m.colKey){
+      // Sheet mode: spinner only for the specific column being run
+      if(!rowStatuses[idx]?.[m.colKey]||rowStatuses[idx][m.colKey]==='pending'){updateCell(idx,m.colKey,'running',null);}
+    }else{
+      // Batch run mode: show spinner for all columns
+      enrichCols.forEach(c=>{if(!rowStatuses[idx]?.[c.key]){updateCell(idx,c.key,'running',null);}});
+    }
   }else if(m.type==='progress'){
     const done=(m.done!=null?m.done:(m.succeeded||0)+(m.failed||0));
     const total=m.total||csvRows.length;
     const pct=m.pct||Math.round(done/total*100);
     $i('prog-fill').style.width=pct+'%';
     $i('prog-txt').textContent=done+' / '+total+(m.current?' — '+m.current:'');
+  }else if(m.type==='col-start'){
+    colRunCount[m.colKey]=colRunCount[m.colKey]||{done:0,total:m.total,errors:0};
+    colRunCount[m.colKey].total=m.total;colRunCount[m.colKey].done=0;
+    updateColBadge(m.colKey);
+  }else if(m.type==='cell-result'){
+    colRunCount[m.colKey]=colRunCount[m.colKey]||{done:0,total:0,errors:0};
+    colRunCount[m.colKey].done++;
+    if(m.status==='error')colRunCount[m.colKey].errors++;
+    updateCell(m.rowIdx,m.colKey,m.status==='success'?'done':'error',m.value);
+    updateColBadge(m.colKey);
+  }else if(m.type==='col-done'){
+    colRunStatus[m.colKey]=m.failed>0?'error':'done';
+    updateColBadge(m.colKey);
+    const lbl=enrichCols.find(c=>c.key===m.colKey)?.label||m.colKey;
+    toast(`"${lbl}" done — ${m.succeeded} succeeded${m.failed?' · '+m.failed+' failed':''}`,'ok',4000);
   }else if(m.type==='done'){
+    // In sheet mode (paused), keep SSE open for future column runs
+    if(m.status==='paused')return;
     if(sse){sse.close();sse=null;}
     if(sseRetryTimer){clearTimeout(sseRetryTimer);sseRetryTimer=null;}
     localStorage.removeItem('pr_active_job');

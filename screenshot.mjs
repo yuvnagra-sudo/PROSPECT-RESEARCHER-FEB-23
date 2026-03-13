@@ -61,7 +61,7 @@ export async function takeScreenshot(rawUrl) {
     });
     const page = await context.newPage();
 
-    await page.goto(url, { waitUntil: 'networkidle', timeout: TIMEOUT_MS });
+    await page.goto(url, { waitUntil: 'load', timeout: TIMEOUT_MS });
 
     const buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
     await writeFile(filepath, buf);

@@ -77,6 +77,8 @@ const S={
   adminListUsers:db.prepare(`SELECT id,email,name,is_admin,created_at FROM users ORDER BY created_at`),
   adminListJobs:db.prepare(`SELECT j.*,u.email as user_email,u.name as user_name FROM jobs j LEFT JOIN users u ON j.user_id=u.id ORDER BY j.created_at DESC LIMIT 200`),
   adminKeyCount:db.prepare(`SELECT COUNT(*) as cnt FROM user_keys WHERE user_id=?`),
+  gAllRows:db.prepare(`SELECT * FROM rows WHERE job_id=? AND status!='skipped' ORDER BY idx`),
+  uRMerge:db.prepare(`UPDATE rows SET research=?,status=?,input_tokens=input_tokens+?,output_tokens=output_tokens+? WHERE job_id=? AND idx=?`),
 };
 function userKey(uid,keyName){const r=S.getUserKey.get(uid,keyName);return r?.key_value||'';}
 function isAdmin(uid){const u=db.prepare('SELECT is_admin FROM users WHERE id=?').get(uid);return u?.is_admin===1;}
@@ -889,7 +891,7 @@ async function runBulkAudit(jid){
   if(!job||job.provider!=='pagespeed')return;
   activeBulkAudits.add(jid);
   const psKey=userKey(job.user_id,'PAGESPEED_API_KEY');
-  const CONC=psKey?5:2;
+  const CONC=psKey?10:3;
   // Only process rows not yet completed — safe to restart anytime
   const pending=S.gAuditPending.all(jid);
   if(!pending.length){
@@ -906,8 +908,10 @@ async function runBulkAudit(jid){
       const row=pending[qi++];
       const url=row.url||row.company||'';
       try{
-        const result=await auditWebsite(url,psKey||undefined);
-        const ss=await takeScreenshot(result.finalUrl||url);
+        const [result,ss]=await Promise.all([
+          auditWebsite(url,psKey||undefined),
+          takeScreenshot(url),
+        ]);
         ssAttempt++;if(ss.status==='success')ssOk++;else ssFail++;
         result.screenshot_status=ss.status;result.screenshot_path=ss.path;
         // Gemini visual analysis of screenshot
@@ -1109,6 +1113,66 @@ async function runJob(jobId){
   actv.delete(jobId);
 }
 
+// ─── Per-Column Runner (Clay-style sheet mode) ───────────────────────────────
+async function runColJob(jobId,colKey){
+  const job=S.gJ.get(jobId);if(!job)return;
+  const prov=PROVDEFS[job.provider];if(!prov)return;
+  const apiKey=userKey(job.user_id,prov.envName);if(!apiKey)return;
+  // Attach to or create ctx for this sheet job
+  let ctx=actv.get(jobId);
+  if(!ctx){ctx={cancelled:false,listeners:new Set(),abort:new AbortController()};actv.set(jobId,ctx);}
+  ctx._running=true;
+  const emit=d=>{const msg=`data: ${JSON.stringify(d)}\n\n`;for(const l of ctx.listeners){try{l.write(msg);}catch{}}};
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  // Get column definition
+  let sections=[];if(job.sections_json){try{sections=JSON.parse(job.sections_json);}catch{}}
+  const colSection=sections.find(s=>s.key===colKey);
+  if(!colSection){emit({type:'col-done',colKey,succeeded:0,failed:0,error:'Column not found'});ctx._running=false;return;}
+  const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
+  // Find rows missing this column
+  const allRows=S.gAllRows.all(jobId);
+  const needsCol=allRows.filter(r=>{if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}});
+  emit({type:'col-start',colKey,total:needsCol.length});
+  if(!needsCol.length){emit({type:'col-done',colKey,succeeded:0,failed:0});ctx._running=false;return;}
+  const queue=[...needsCol];let ok=0,fail=0;
+  const concurrency=Math.min(CONCURRENCY[job.provider]||3,5);
+  async function colWorker(){
+    while(queue.length>0&&!ctx.cancelled){
+      const row=queue.shift();if(!row)break;
+      let existing={};try{existing=JSON.parse(row.research||'{}');}catch{}
+      // Interpolate dep col values into column description
+      let colDesc=colSection.desc||'';
+      colDesc=colDesc.replace(/\{(\w+)\}/g,(_,k)=>existing[k]?String(existing[k]):`[${k}]`);
+      const fullPrompt=row.prompt+(colDesc?`\n\nFor this specific research task, focus on: ${colDesc}`:'');
+      emit({type:'row-start',idx:row.idx,company:row.company,colKey});
+      let retries=0,done=false,lastErr='';
+      while(!done&&retries<3&&!ctx.cancelled){
+        try{
+          const r=await callLLM(fullPrompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,[colSection]);
+          const structured=parseStructuredResponse(r.research,[colSection]);
+          const value=structured[colKey]!==undefined?structured[colKey]:(structured._raw||null);
+          const merged={...existing,[colKey]:value,_parsed:true};
+          const allComplete=sections.length>0&&sections.every(s=>merged[s.key]!==undefined&&merged[s.key]!=='');
+          S.uRMerge.run(JSON.stringify(merged),allComplete?'success':'partial',r.inputTokens,r.outputTokens,jobId,row.idx);
+          ok++;done=true;rlOk(job.provider);
+          emit({type:'cell-result',rowIdx:row.idx,colKey,status:'success',value});
+        }catch(err){
+          lastErr=err.message||String(err);
+          if(err.type==='rate_limit'){retries++;const w=rlHit(job.provider,err.wait);await sleep(w);}
+          else{fail++;done=true;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr});}
+        }
+      }
+      if(!done){fail++;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr||'Max retries'});}
+    }
+  }
+  await Promise.all(Array.from({length:concurrency},()=>colWorker()));
+  // Keep job status as paused (sheet mode stays open)
+  const rj=S.gJ.get(jobId);
+  S.uJ.run(rj.succeeded+ok,rj.failed+fail,'paused',rj.total_in,rj.total_out,rj.total_cr,rj.total_cw,rj.cost,rj.elapsed,jobId);
+  ctx._running=false;
+  emit({type:'col-done',colKey,succeeded:ok,failed:fail});
+}
+
 const PORT=parseInt(process.env.PORT||'3000');
 const MAX_BODY=50*1024*1024; // 50 MB hard limit
 function readB(req){return new Promise((resolve,reject)=>{let b='';let size=0;let tooLarge=false;
@@ -1304,6 +1368,51 @@ Return ONLY valid JSON (no markdown, no code fences):
     runJob(jobId);json(res,{jobId,total:rows.length,provider:prov.name});
   }catch(e){json(res,{error:e.message},400);}return;}
 
+  // ─── Clay-style: create sheet without running ─────────────────────────────
+  if(req.method==='POST'&&p==='/api/create-sheet'){const b=await readB(req);try{
+    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,explicitSections,jobName}=JSON.parse(b);
+    const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
+    const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key in Settings.`},400);
+    const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
+    const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
+    const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
+    const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=1?JSON.stringify(explicitSections):null;
+    const result=S.iJ.run(uid,jobName||`Sheet: ${rows.length} rows via ${prov.name}`,pid,'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
+    const jobId=Number(result.lastInsertRowid);
+    db.prepare("UPDATE jobs SET status='paused' WHERE id=?").run(jobId);
+    const CHUNK=500;
+    try{
+      for(let start=0;start<rows.length;start+=CHUNK){
+        const chunk=rows.slice(start,start+CHUNK);
+        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const row=chunk[i];if(row._blank){S.iRS.run(jobId,start+i,'','','{}');}else{const{company,prompt}=buildPrompt(row,cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt,JSON.stringify(row));}}})();
+        if(start+CHUNK<rows.length)await new Promise(r=>setImmediate(r));
+      }
+    }catch(txErr){try{S.dR.run(jobId);db.prepare('DELETE FROM jobs WHERE id=?').run(jobId);}catch{}return json(res,{error:'Failed to create sheet: '+txErr.message},500);}
+    json(res,{jobId,total:rows.length,headers,colMap:cm});
+  }catch(e){json(res,{error:e.message},400);}return;}
+
+  // ─── Clay-style: run one column for all rows missing it ───────────────────
+  if(req.method==='POST'&&p==='/api/run-col'){const b=await readB(req);try{
+    const{jobId,colKey}=JSON.parse(b);
+    const job=S.gJ.get(jobId);if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
+    const prov=PROVDEFS[job.provider];if(!prov||!userKey(uid,prov.envName))return json(res,{error:'No API key for this provider'},400);
+    if(!colKey)return json(res,{error:'colKey required'},400);
+    const allRows=S.gAllRows.all(jobId);
+    const needsCol=allRows.filter(r=>{if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}});
+    runColJob(jobId,colKey); // non-blocking
+    json(res,{queued:needsCol.length});
+  }catch(e){json(res,{error:e.message},400);}return;}
+
+  // ─── Clay-style: load sheet data for page refresh ─────────────────────────
+  if(req.method==='GET'&&p.match(/^\/api\/sheet\/\d+$/)){
+    const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
+    if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
+    let sections=[];if(job.sections_json){try{sections=JSON.parse(job.sections_json);}catch{}}
+    const colMap2=(() =>{try{return JSON.parse(job.col_map||'{}');}catch{return{};}})();
+    const allRows=S.gR.all(jid).slice(0,500).map(r=>({idx:r.idx,original:r.status==='skipped'?{}:(()=>{try{return JSON.parse(r.original_row||'{}');}catch{return{};}})(),research:safeParseResearch(r.research),status:r.status}));
+    json(res,{job:{id:job.id,name:job.name,provider:job.provider,status:job.status,total_rows:job.total_rows},columns:sections,colMap:colMap2,rows:allRows});
+    return;}
+
   if(req.method==='POST'&&p.match(/^\/api\/resume\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
     if(actv.has(jid))return json(res,{error:'Already running'},400);
@@ -1336,10 +1445,30 @@ Return ONLY valid JSON (no markdown, no code fences):
       if(i+REPLAY_BATCH<completedRows.length)await new Promise(r=>setImmediate(r));
     }
     if(clientClosed){clearInterval(ping);return;}
-    if(job.status==='complete'||job.status==='cancelled'||job.status==='paused'||job.status==='error'){
+    if(job.status==='complete'||job.status==='cancelled'||job.status==='error'){
+      // Terminal state — send done and let client close
       res.write('data: '+JSON.stringify({type:'done',status:job.status,succeeded:job.succeeded,failed:job.failed,elapsed:String(job.elapsed),cost:String(job.cost),totalTokens:job.total_in+job.total_out,cacheRead:job.total_cr,cacheWrite:job.total_cw})+'\n\n');
     }else{
-      const a2=actv.get(jid);if(a2){a2.listeners.add(res);req.on('close',()=>a2.listeners.delete(res));}
+      // Running or paused (sheet mode) — register as listener for future events
+      // For paused sheet jobs, replay existing cell results so reconnecting clients restore state
+      if(job.status==='paused'){
+        const sheetRows=S.gAllRows.all(jid);
+        const sheetSections=resolveSections(job,[]);
+        for(const r of sheetRows){
+          if(!r.research)continue;
+          const parsed=safeParseResearch(r.research);
+          if(!parsed||!parsed._parsed)continue;
+          for(const s of sheetSections){
+            if(parsed[s.key]!==undefined&&parsed[s.key]!==''){
+              res.write('data: '+JSON.stringify({type:'cell-result',rowIdx:r.idx,colKey:s.key,status:'success',value:parsed[s.key]})+'\n\n');
+            }
+          }
+        }
+      }
+      let a2=actv.get(jid);
+      if(!a2){a2={cancelled:false,listeners:new Set(),abort:new AbortController()};actv.set(jid,a2);}
+      a2.listeners.add(res);
+      req.on('close',()=>{a2.listeners.delete(res);if(a2.listeners.size===0&&!a2._running)actv.delete(jid);});
     }
     return;}
 

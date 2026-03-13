@@ -219,7 +219,7 @@ const PAGESPEED_BACKOFF_MS = 15000; // pause on 429 before retrying
 async function fetchPageSpeedStrategy(url, strategy, apiKey) {
   const key = apiKey || PAGESPEED_API_KEY;
   const psUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance&category=seo&category=accessibility&category=best-practices${key ? '&key=' + key : ''}`;
-  const TIMEOUTS = [55000, 65000, 75000];
+  const TIMEOUTS = [40000, 55000, 70000];
   let lastError = '';
   for (let attempt = 0; attempt < TIMEOUTS.length; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
