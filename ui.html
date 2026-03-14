@@ -1141,11 +1141,13 @@ async function runCol(colKey,limit=0){
   if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
   // Create sheet job lazily on first column run
   if(!sheetJobId){
-    const selectedHdrs=contextCols.length?contextCols:csvHdrs;
+    // Always send the FULL unfiltered CSV so original_row stores all columns for export
     const csvEsc=v=>{const s=String(v||'').replace(/"/g,'""');return s.includes(',')||s.includes('"')||s.includes('\n')?`"${s}"`:s;};
-    const csvLines=[selectedHdrs.map(csvEsc).join(',')];
-    for(const r of csvRows)csvLines.push(selectedHdrs.map(h=>csvEsc(r[h])).join(','));
-    const d=await api('POST','/api/create-sheet',{csv:csvLines.join('\n'),provider:pid,useWebSearch:$i('ws-chk').checked,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),colMapOverride:colMap});
+    const fullLines=[csvHdrs.map(csvEsc).join(',')];
+    for(const r of csvRows)fullLines.push(csvHdrs.map(h=>csvEsc(r[h])).join(','));
+    // Tell server which columns to use for the LLM prompt (the user's contextCols selection)
+    const contextColHeaders=contextCols.length?contextCols:csvHdrs;
+    const d=await api('POST','/api/create-sheet',{csv:fullLines.join('\n'),contextColHeaders,provider:pid,useWebSearch:$i('ws-chk').checked,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),colMapOverride:colMap});
     if(!d||d.error){toast(d?.error||'Failed to create sheet','err');return;}
     sheetJobId=d.jobId;
     localStorage.setItem('pr_sheet_job',JSON.stringify({jobId:d.jobId,enrichCols}));

@@ -1429,7 +1429,7 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   // ─── Clay-style: create sheet without running ─────────────────────────────
   if(req.method==='POST'&&p==='/api/create-sheet'){const b=await readB(req);try{
-    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,explicitSections,jobName}=JSON.parse(b);
+    const{csv,contextColHeaders,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,explicitSections,jobName}=JSON.parse(b);
     const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
     const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key in Settings.`},400);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
@@ -1439,11 +1439,23 @@ Return ONLY valid JSON (no markdown, no code fences):
     const result=S.iJ.run(uid,jobName||`Sheet: ${rows.length} rows via ${prov.name}`,pid,'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
     const jobId=Number(result.lastInsertRowid);
     db.prepare("UPDATE jobs SET status='paused' WHERE id=?").run(jobId);
+    // contextColHeaders: columns to use for the LLM prompt (user's selection)
+    // The full row is always stored in original_row for complete exports
+    const ctxSet=Array.isArray(contextColHeaders)&&contextColHeaders.length?new Set(contextColHeaders):null;
     const CHUNK=500;
     try{
       for(let start=0;start<rows.length;start+=CHUNK){
         const chunk=rows.slice(start,start+CHUNK);
-        db.transaction(()=>{for(let i=0;i<chunk.length;i++){const row=chunk[i];if(row._blank){S.iRS.run(jobId,start+i,'','','{}');}else{const{company,prompt}=buildPrompt(row,cm,start+i,actualWeb);S.iR.run(jobId,start+i,company,prompt,JSON.stringify(row));}}})();
+        db.transaction(()=>{for(let i=0;i<chunk.length;i++){
+          const row=chunk[i]; // full row — all original columns
+          if(row._blank){S.iRS.run(jobId,start+i,'','','{}');}
+          else{
+            // Build LLM prompt from only the context-selected columns
+            const promptRow=ctxSet?Object.fromEntries(Object.entries(row).filter(([k])=>ctxSet.has(k))):row;
+            const{company,prompt}=buildPrompt(promptRow,cm,start+i,actualWeb);
+            S.iR.run(jobId,start+i,company,prompt,JSON.stringify(row)); // store FULL row
+          }
+        }})();
         if(start+CHUNK<rows.length)await new Promise(r=>setImmediate(r));
       }
     }catch(txErr){try{S.dR.run(jobId);db.prepare('DELETE FROM jobs WHERE id=?').run(jobId);}catch{}return json(res,{error:'Failed to create sheet: '+txErr.message},500);}
