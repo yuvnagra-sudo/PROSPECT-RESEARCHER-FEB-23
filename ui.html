@@ -260,14 +260,23 @@ textarea.fi{resize:vertical;line-height:1.5}
 .sort-desc::after{content:' ↓';font-size:9px;color:#6366f1}
 
 /* ── Row checkboxes & selection ── */
-.th-cb,.td-cb{width:28px;min-width:28px;padding:4px 6px!important;text-align:center;user-select:none}
-.td-cb input[type=checkbox]{cursor:pointer;accent-color:#6366f1;width:13px;height:13px;margin:0;display:block}
+.th-cb,.td-cb{width:44px;min-width:44px;padding:4px 6px!important;text-align:center;user-select:none;position:sticky;left:0;z-index:2;background:#f8fafc}
+.td-cb{background:#fff;z-index:2}
+.td-cb-inner{display:flex;align-items:center;justify-content:center;gap:4px}
+.td-cb .row-num{font-size:10px;color:#94a3b8;min-width:18px;text-align:right;display:block}
+.td-cb input[type=checkbox]{cursor:pointer;accent-color:#6366f1;width:13px;height:13px;margin:0;flex-shrink:0}
 tr.row-sel>td{background:#eff6ff!important}
 tr.row-sel>td:hover{background:#dbeafe!important}
+#main-tbl thead .th-cb{z-index:4;background:#f8fafc}
 
-/* ── Frozen row number ── */
-.td-rn{position:sticky;left:0;z-index:2;background:#fff}
-#main-tbl thead .th-rn{position:sticky;left:0;z-index:4}
+/* ── Input column delete button ── */
+th:hover .th-del-btn{opacity:1!important}
+.th-del-btn:hover{background:#fee2e2!important;color:#ef4444!important}
+/* ── Editable cell ── */
+.td-in{cursor:default}
+.td-in:hover{background:#fafafa}
+.td-in.editing{padding:0!important}
+.td-in.editing input{width:100%;height:100%;border:2px solid #6366f1;border-radius:0;padding:4px 6px;font-size:12px;font-family:inherit;outline:none;background:#fff;box-sizing:border-box}
 
 /* ── Search + selection bar ── */
 #tbl-search-bar{display:flex;align-items:center;gap:8px;padding:5px 12px;background:#fff;border-bottom:1px solid #e2e8f0;flex-shrink:0}
@@ -724,6 +733,7 @@ let resJobId = null, resSections = [], resSse = null, resFailedRows = 0;
 let currentDetVal = '';
 // Hidden columns (Set of column keys)
 let hiddenCols = new Set();
+let hiddenInputCols = new Set(); // CSV input columns removed from view
 // Clay-style sheet mode
 let sheetJobId = null;
 let colRunStatus = {}; // {colKey: 'idle'|'running'|'done'|'error'}
@@ -906,7 +916,7 @@ function onDataLoaded(){
   renderTable();
 }
 function resetSheet(){
-  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];hiddenCols=new Set();sheetJobId=null;colRunStatus={};colRunCount={};tableFilter='';sortBy=null;sortDir='asc';selectedRows=new Set();lastClickedRow=-1;spCurrentIdx=-1;closeSidePanel();if($i('tbl-search'))$i('tbl-search').value='';updateSelInfo();
+  csvRows=[];csvHdrs=[];colMap={};enrichCols=[];rowResults={};rowStatuses={};curJobId=null;contextCols=[];hiddenCols=new Set();hiddenInputCols=new Set();sheetJobId=null;colRunStatus={};colRunCount={};tableFilter='';sortBy=null;sortDir='asc';selectedRows=new Set();lastClickedRow=-1;spCurrentIdx=-1;closeSidePanel();if($i('tbl-search'))$i('tbl-search').value='';updateSelInfo();
   if(sse){sse.close();sse=null;}
   $i('upload-zone').classList.remove('hide');$i('fi').value='';
   $i('sheet-view').classList.add('hide');
@@ -945,7 +955,7 @@ function renderTable(){
   // Master checkbox
   const allSel=csvRows.length>0&&csvRows.every((_,i)=>csvRows[i]._blank||selectedRows.has(i));
   head.innerHTML=`<th class="th-cb th-rn" style="min-width:28px"><input type="checkbox" title="Select all" ${allSel?'checked':''} onchange="selectAll(this.checked)" style="accent-color:#6366f1;width:13px;height:13px;margin:0"></th>`+
-    csvHdrs.map(h=>{const sa=sortBy===h;const cls='th-in'+(sa?' sort-'+sortDir:'');return`<th class="${cls}" onclick="setSort('${x(h)}')" title="Sort by ${x(h)}">${x(h)}</th>`;}).join('')+
+    csvHdrs.filter(h=>!hiddenInputCols.has(h)).map(h=>{const sa=sortBy===h;const cls='th-in'+(sa?' sort-'+sortDir:'');return`<th class="${cls}" style="position:relative" onclick="setSort('${x(h)}')" title="Sort by ${x(h)}">${x(h)}<button onclick="event.stopPropagation();removeInputCol('${x(h)}')" title="Remove column" class="th-del-btn">✕</button></th>`;}).join('')+
     enrichCols.map((c,i)=>{
       const hidden=hiddenCols.has(c.key);
       const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';
@@ -981,14 +991,13 @@ function buildRow(csvIdx,displayPos){
   tr.dataset.idx=csvIdx;
   const sel=selectedRows.has(csvIdx);
   if(sel)tr.classList.add('row-sel');
-  let html=`<td class="td-cb"><input type="checkbox" ${sel?'checked':''} onclick="toggleRowSel(${csvIdx},event)" style="accent-color:#6366f1;width:13px;height:13px;margin:0;display:block"></td>`;
-  html+=`<td class="td-rn">${displayPos+1}</td>`;
+  let html=`<td class="td-cb"><div class="td-cb-inner"><span class="row-num">${displayPos+1}</span><input type="checkbox" ${sel?'checked':''} onclick="toggleRowSel(${csvIdx},event)"></div></td>`;
   if(row._blank){
-    csvHdrs.forEach(()=>{html+=`<td class="td-in" style="color:#e2e8f0">—</td>`;});
+    csvHdrs.filter(h=>!hiddenInputCols.has(h)).forEach(()=>{html+=`<td class="td-in" style="color:#e2e8f0">—</td>`;});
     enrichCols.forEach(c=>{const hid=hiddenCols.has(c.key)?' col-hidden':'';html+=`<td class="td-en td-empty${hid}"></td>`;});
     tr.innerHTML=html;return tr;
   }
-  csvHdrs.forEach(h=>{html+=`<td class="td-in" title="${x(row[h]||'')}">${x((row[h]||'').slice(0,80))}</td>`;});
+  csvHdrs.filter(h=>!hiddenInputCols.has(h)).forEach(h=>{const v=row[h]||'';html+=`<td class="td-in" title="${x(v)}" ondblclick="editCell(this,${csvIdx},'${x(h)}')">${x(v.slice(0,80))}</td>`;});
   enrichCols.forEach(c=>{
     const st=rowStatuses[csvIdx]?.[c.key];
     const val=rowResults[csvIdx]?.[c.key];
@@ -1075,6 +1084,31 @@ function setSort(col){
 
 // ── Search ────────────────────────────────────────────────────────────────────
 function onTableSearch(q){tableFilter=q;renderTable();}
+
+// ── Remove / restore input column ────────────────────────────────────────────
+function removeInputCol(h){
+  hiddenInputCols.add(h);
+  renderTable();
+  toast(`"${h}" hidden — refresh page to restore`,'info',3000);
+}
+
+// ── Editable CSV cells ────────────────────────────────────────────────────────
+function editCell(td,csvIdx,header){
+  if(td.classList.contains('editing'))return;
+  const orig=csvRows[csvIdx][header]||'';
+  td.classList.add('editing');
+  td.innerHTML=`<input type="text" value="${x(orig)}" onclick="event.stopPropagation()" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}if(event.key==='Escape'){this._cancel=true;this.blur();}">`;
+  const inp=td.querySelector('input');
+  inp.focus();inp.select();
+  inp.addEventListener('blur',()=>{
+    if(!inp._cancel){
+      csvRows[csvIdx][header]=inp.value;
+    }
+    td.classList.remove('editing');
+    td.innerHTML=x((csvRows[csvIdx][header]||'').slice(0,80));
+    td.title=csvRows[csvIdx][header]||'';
+  });
+}
 
 // ── Row Selection ─────────────────────────────────────────────────────────────
 function toggleRowSel(csvIdx,evt){
