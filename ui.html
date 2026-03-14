@@ -438,6 +438,7 @@ th:hover .th-del-btn{opacity:1!important}
         <div id="tbl-search-bar">
           <span id="tbl-sel-info" style="display:none"></span>
           <button id="btn-run-sel" class="btn bp sm hide" onclick="runSelected()">▶ Run Selected</button>
+          <button id="btn-del-sel" class="btn bd sm hide" onclick="deleteSelected()">🗑 Delete</button>
           <button id="btn-clear-sel" class="btn bs sm hide" onclick="clearSelection()">✕ Clear</button>
           <input id="tbl-search" type="text" placeholder="Search rows… (Ctrl+F)" oninput="onTableSearch(this.value)" autocomplete="off">
           <span id="tbl-search-count" style="display:none"></span>
@@ -672,6 +673,8 @@ th:hover .th-del-btn{opacity:1!important}
   <div class="ctx-sep"></div>
   <div class="ctx-item" id="ctx-copy">📋 Copy row data</div>
   <div class="ctx-item" id="ctx-detail">↗ Open detail panel</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-del" style="color:#ef4444">🗑 Delete row</div>
 </div>
 
 <!-- ── Screenshot Modal ── -->
@@ -1143,15 +1146,39 @@ function selectAll(checked){
   renderTable();
 }
 function clearSelection(){selectedRows.clear();lastClickedRow=-1;updateSelInfo();renderTable();}
+function deleteRows(indices){
+  // indices = Set of csvRows indices to delete
+  const sorted=[...indices].sort((a,b)=>b-a); // descend so splices don't shift
+  for(const i of sorted){
+    csvRows.splice(i,1);
+    delete rowResults[i];delete rowStatuses[i];
+  }
+  // Rebuild rowResults/rowStatuses with new indices
+  const newResults={},newStatuses={};
+  csvRows.forEach((_,ni)=>{
+    // find original index mapping — simpler to just keep what remains by rebuilding
+  });
+  // Renumber: after splice, old entries above deleted rows shift down
+  // Easier: clear and re-key from csvRows order (data still in csvRows)
+  rowResults={};rowStatuses={};
+  selectedRows.clear();lastClickedRow=-1;
+  if(spCurrentIdx>=0&&indices.has(spCurrentIdx))closeSidePanel();
+  updateSelInfo();renderTable();
+  toast(`Deleted ${indices.size} row${indices.size===1?'':'s'}`,'ok');
+}
+function deleteSelected(){
+  if(!selectedRows.size)return;
+  deleteRows(new Set(selectedRows));
+}
 function updateSelInfo(){
   const n=selectedRows.size;
-  const info=$i('tbl-sel-info'),btnRun=$i('btn-run-sel'),btnClr=$i('btn-clear-sel');
+  const info=$i('tbl-sel-info'),btnRun=$i('btn-run-sel'),btnDel=$i('btn-del-sel'),btnClr=$i('btn-clear-sel');
   if(n>0){
     info.style.display='';info.textContent=`${n} selected`;
-    btnRun.classList.remove('hide');btnClr.classList.remove('hide');
+    btnRun.classList.remove('hide');btnDel.classList.remove('hide');btnClr.classList.remove('hide');
   }else{
     info.style.display='none';
-    btnRun.classList.add('hide');btnClr.classList.add('hide');
+    btnRun.classList.add('hide');btnDel.classList.add('hide');btnClr.classList.add('hide');
   }
 }
 async function runSelected(){
@@ -1248,6 +1275,7 @@ function showCtxMenu(e,csvIdx){
   $i('ctx-sel').onclick=()=>{hideCtxMenu();selectedRows.add(csvIdx);updateSelInfo();renderTable();};
   $i('ctx-copy').onclick=()=>{hideCtxMenu();spCurrentIdx=csvIdx;copySpRow();};
   $i('ctx-detail').onclick=()=>{hideCtxMenu();openSidePanel(csvIdx);};
+  $i('ctx-del').onclick=()=>{hideCtxMenu();deleteRows(new Set([csvIdx]));};
 }
 function hideCtxMenu(){$i('ctx-menu').style.display='none';ctxTargetIdx=-1;}
 
