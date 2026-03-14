@@ -578,13 +578,41 @@ th:hover .th-del-btn{opacity:1!important}
       <div class="drw-key" id="drw-key-preview"></div>
     </div>
     <div>
-      <label class="fi-l">Research Instruction <span style="font-size:11px;color:#94a3b8;font-weight:400">(what should AI find?)</span></label>
-      <textarea class="fi" id="drw-desc" rows="5" placeholder="e.g. Find the company's top 3 pain points and business challenges they face"></textarea>
+      <label class="fi-l">Type</label>
+      <div style="display:flex;gap:8px">
+        <button id="drw-type-ai" class="btn bp sm" onclick="setDrwType('ai')" style="flex:1;justify-content:center">🤖 AI Research</button>
+        <button id="drw-type-fx" class="btn bs sm" onclick="setDrwType('formula')" style="flex:1;justify-content:center">fx Formula</button>
+      </div>
     </div>
-    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px">
-      <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:8px">✨ Generate with AI</div>
-      <textarea class="fi" id="formula-gen-desc" rows="2" placeholder="e.g. Combine first name and last name with a space between them" style="font-size:12px;margin-bottom:8px"></textarea>
-      <button class="btn bs sm" id="formula-gen-btn" onclick="generateFormula()" style="width:100%;justify-content:center">Generate Instruction</button>
+    <!-- AI instruction panel -->
+    <div id="drw-ai-panel">
+      <label class="fi-l">Research Instruction <span style="font-size:11px;color:#94a3b8;font-weight:400">(what should AI find?)</span></label>
+      <textarea class="fi" id="drw-desc" rows="4" placeholder="e.g. Find the company's top 3 pain points and business challenges they face"></textarea>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px">
+        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">✨ Generate with AI</div>
+        <textarea class="fi" id="formula-gen-desc" rows="2" placeholder="e.g. Combine first name and last name with a space between them" style="font-size:12px;margin-bottom:6px"></textarea>
+        <button class="btn bs sm" id="formula-gen-btn" onclick="generateFormula()" style="width:100%;justify-content:center">Generate Instruction</button>
+      </div>
+    </div>
+    <!-- Formula panel -->
+    <div id="drw-fx-panel" class="hide">
+      <label class="fi-l">Formula <span style="font-size:11px;color:#94a3b8;font-weight:400">use {column_name} for values</span></label>
+      <input class="fi" id="drw-formula" type="text" placeholder='=IF(CONTAINS({email},"gmail"),"Consumer","Business")' style="font-family:monospace;font-size:12px">
+      <div id="drw-fx-preview" style="margin-top:6px;font-size:11px;color:#64748b;min-height:18px"></div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:10px">
+        <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:6px">Available functions</div>
+        <div style="font-size:11px;color:#374151;line-height:1.8;font-family:monospace">
+          IF(cond, yes, no)<br>
+          CONTAINS(text, substr)<br>
+          REGEX(text, pattern)<br>
+          REGEX_REPLACE(text, pattern, repl)<br>
+          CONCAT(a, b, …)<br>
+          TRIM(text) · UPPER(text) · LOWER(text)<br>
+          LEFT(text,n) · RIGHT(text,n) · MID(text,s,n)<br>
+          LEN(text) · SPLIT(text, delim, n)<br>
+          NUMBER(v) · ISBLANK(v) · ISNUMBER(v)
+        </div>
+      </div>
     </div>
   </div>
   <div class="drw-ft">
@@ -963,7 +991,8 @@ function renderTable(){
       const hidden=hiddenCols.has(c.key);
       const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';
       const sa=sortBy===c.key;
-      return`<th class="th-en${hidden?' col-hidden':''}${sa?' sort-'+sortDir:''}" id="th-${c.key}" title="${x(c.label)}" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="colDragOver(event)" ondrop="colDrop(event,${i})" ondragleave="colDragLeave(event)"><div class="th-en-inner"><span onclick="openDrawer(${i})" style="cursor:pointer">${x(c.label)}${badge}</span><button class="col-run-btn" onclick="event.stopPropagation();runCol('${c.key}')" title="Run this column for all empty rows">▶</button><span class="col-status-badge" id="cs-${c.key}"></span><span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="font-size:11px;opacity:0.5;cursor:pointer">⊖</span><button class="th-en-edit" onclick="event.stopPropagation();openDrawer(${i})" title="Edit column" style="background:none;border:none;cursor:pointer;font-size:10px;padding:0 2px">✎</button></div></th>`;
+      const runBtn=c.type==='formula'?'':`<button class="col-run-btn" onclick="event.stopPropagation();runCol('${c.key}')" title="Run this column for all empty rows">▶</button><span class="col-status-badge" id="cs-${c.key}"></span>`;
+      return`<th class="th-en${hidden?' col-hidden':''}${sa?' sort-'+sortDir:''}" id="th-${c.key}" title="${x(c.label)}" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="colDragOver(event)" ondrop="colDrop(event,${i})" ondragleave="colDragLeave(event)"><div class="th-en-inner"><span onclick="openDrawer(${i})" style="cursor:pointer">${x(c.label)}${badge}</span>${runBtn}<span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="font-size:11px;opacity:0.5;cursor:pointer">⊖</span><button class="th-en-edit" onclick="event.stopPropagation();openDrawer(${i})" title="Edit column" style="background:none;border:none;cursor:pointer;font-size:10px;padding:0 2px">✎</button></div></th>`;
     }).join('')+
     `<th class="th-add" onclick="addBlankCol()" title="Add column">+</th>`;
   // Body
@@ -1002,9 +1031,15 @@ function buildRow(csvIdx,displayPos){
   }
   csvHdrs.filter(h=>!hiddenInputCols.has(h)).forEach(h=>{const v=row[h]||'';html+=`<td class="td-in" title="${x(v)}" ondblclick="editCell(this,${csvIdx},'${x(h)}')">${x(v.slice(0,80))}</td>`;});
   enrichCols.forEach(c=>{
+    const hid=hiddenCols.has(c.key)?' col-hidden':'';
+    if(c.type==='formula'&&c.formula){
+      let fval='';let ferr=false;
+      try{fval=String(evalFormula(c.formula,row,rowResults[csvIdx]||{}));}catch(e){fval='#ERR: '+e.message;ferr=true;}
+      html+=`<td class="td-en${ferr?' td-err-cell':''}${hid}" id="cell-${csvIdx}-${c.key}" title="${x(fval)}">${x(fval.slice(0,120))}${fval.length>120?'…':''}</td>`;
+      return;
+    }
     const st=rowStatuses[csvIdx]?.[c.key];
     const val=rowResults[csvIdx]?.[c.key];
-    const hid=hiddenCols.has(c.key)?' col-hidden':'';
     if(st==='running')html+=`<td class="td-en td-empty${hid}" id="cell-${csvIdx}-${c.key}"><span class="spin-cell"></span></td>`;
     else if(st==='done'&&val)html+=`<td class="td-en${hid}" id="cell-${csvIdx}-${c.key}" onclick="openSidePanel(${csvIdx},'${c.key}')" title="${x(String(val).slice(0,200))}">${x(String(val).slice(0,120))}${String(val).length>120?'…':''}</td>`;
     else if(st==='error')html+=`<td class="td-en td-err-cell${hid}" id="cell-${csvIdx}-${c.key}" onclick="openSidePanel(${csvIdx})" title="Error — click to see details">Error</td>`;
@@ -1320,6 +1355,71 @@ document.addEventListener('click',e=>{
   if($i('ctx-menu').style.display==='block'&&!$i('ctx-menu').contains(e.target))hideCtxMenu();
 });
 
+// ── Formula Engine ────────────────────────────────────────────────────────────
+function evalFormula(expr, row, research){
+  // Merge all available data into one flat object
+  const data={...row,...research};
+  // Strip leading = if present
+  let e=expr.trim();if(e.startsWith('='))e=e.slice(1);
+  // Replace {col_name} references with quoted string values
+  e=e.replace(/\{([^}]+)\}/g,(_,k)=>{
+    const v=data[k]!=null?String(data[k]):'';
+    return JSON.stringify(v);
+  });
+  // Build safe function context
+  const fns={
+    IF:(c,t,f)=>c?t:f,
+    IFS:(...args)=>{for(let i=0;i<args.length-1;i+=2)if(args[i])return args[i+1];return args[args.length-1]||''},
+    CONTAINS:(s,sub)=>String(s).toLowerCase().includes(String(sub).toLowerCase()),
+    STARTS_WITH:(s,sub)=>String(s).toLowerCase().startsWith(String(sub).toLowerCase()),
+    ENDS_WITH:(s,sub)=>String(s).toLowerCase().endsWith(String(sub).toLowerCase()),
+    REGEX:(s,pat)=>{const m=String(s).match(new RegExp(pat,'i'));return m?m[0]:'';},
+    REGEX_TEST:(s,pat)=>new RegExp(pat,'i').test(String(s)),
+    REGEX_REPLACE:(s,pat,repl)=>String(s).replace(new RegExp(pat,'gi'),repl),
+    CONCAT:(...args)=>args.map(a=>a??'').join(''),
+    JOIN:(delim,...args)=>args.map(a=>a??'').join(delim),
+    TRIM:s=>String(s).trim(),
+    UPPER:s=>String(s).toUpperCase(),
+    LOWER:s=>String(s).toLowerCase(),
+    LEN:s=>String(s).length,
+    LEFT:(s,n)=>String(s).slice(0,n),
+    RIGHT:(s,n)=>String(s).slice(-n),
+    MID:(s,start,len)=>String(s).slice(start-1,start-1+len),
+    SPLIT:(s,delim,n)=>(String(s).split(delim)[n-1])||'',
+    REPLACE:(s,old,nw)=>String(s).split(old).join(nw),
+    NUMBER:v=>Number(v),
+    TEXT:(v,fmt)=>String(v),
+    ROUND:(v,n=0)=>Number(Number(v).toFixed(n)),
+    ABS:v=>Math.abs(Number(v)),
+    MOD:(a,b)=>a%b,
+    NOT:v=>!v,
+    AND:(...args)=>args.every(Boolean),
+    OR:(...args)=>args.some(Boolean),
+    ISBLANK:v=>v==null||String(v).trim()==='',
+    ISNUMBER:v=>!isNaN(Number(v))&&String(v).trim()!=='',
+    TRUE:true,FALSE:false,
+  };
+  // Replace function names with fns.FUNCNAME references
+  // so they work in the evaluated scope
+  const body=`with(fns){return (${e})}`;
+  // eslint-disable-next-line no-new-func
+  return new Function('fns',body)(fns);
+}
+function updateFxPreview(){
+  const expr=$i('drw-formula').value.trim();
+  const prev=$i('drw-fx-preview');
+  if(!expr||!csvRows.length){prev.textContent='';return;}
+  try{
+    const row=csvRows.find(r=>!r._blank)||csvRows[0]||{};
+    const res=evalFormula(expr,row,{});
+    prev.style.color='#16a34a';
+    prev.textContent=`Preview (row 1): ${res}`;
+  }catch(e){
+    prev.style.color='#ef4444';
+    prev.textContent='Error: '+e.message;
+  }
+}
+
 // ── Column Management ─────────────────────────────────────────────────────────
 function labelToKey(label){return label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40)||'col_'+(enrichCols.length+1);}
 function addBlankCol(){
@@ -1332,10 +1432,24 @@ function openDrawer(idx){
   const c=enrichCols[idx];
   $i('drw-name').value=c.label;
   $i('drw-desc').value=c.desc||'';
+  $i('drw-formula').value=c.formula||'';
   $i('drw-key-preview').textContent='key: '+c.key;
+  setDrwType(c.type==='formula'?'formula':'ai');
   $i('drawer-bg').classList.remove('hide');
   $i('col-drawer').classList.remove('hide');
   $i('drw-name').focus();$i('drw-name').select();
+}
+function setDrwType(t){
+  const isFormula=t==='formula';
+  $i('drw-ai-panel').classList.toggle('hide',isFormula);
+  $i('drw-fx-panel').classList.toggle('hide',!isFormula);
+  $i('drw-type-ai').className=isFormula?'btn bs sm':'btn bp sm';
+  $i('drw-type-fx').className=isFormula?'btn bp sm':'btn bs sm';
+  $i('drw-type-ai').style.flex='1';$i('drw-type-ai').style.justifyContent='center';
+  $i('drw-type-fx').style.flex='1';$i('drw-type-fx').style.justifyContent='center';
+  if(isFormula)$i('drw-formula').focus();
+  // Live preview on formula input
+  $i('drw-formula').oninput=()=>updateFxPreview();
 }
 function drwUpdateKey(){
   const key=labelToKey($i('drw-name').value);
@@ -1345,7 +1459,10 @@ function closeDrawer(){$i('drawer-bg').classList.add('hide');$i('col-drawer').cl
 function saveDrawerCol(){
   if(drawerIdx<0)return;
   const label=$i('drw-name').value.trim()||'Column';
-  enrichCols[drawerIdx]={key:labelToKey(label),label,desc:$i('drw-desc').value.trim()};
+  const isFormula=!$i('drw-fx-panel').classList.contains('hide');
+  const col={key:labelToKey(label),label,desc:$i('drw-desc').value.trim()};
+  if(isFormula){col.type='formula';col.formula=$i('drw-formula').value.trim();}
+  enrichCols[drawerIdx]=col;
   closeDrawer();renderTable();updateCostEst();
 }
 function deleteDrawerCol(){
