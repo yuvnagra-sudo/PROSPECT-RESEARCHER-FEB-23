@@ -1,7 +1,7 @@
 // audit.mjs — Website audit pipeline for Prospect Researcher
 // Uses only Node 18+ built-ins (fetch, AbortSignal.timeout). No extra deps.
 
-const TIMEOUT_HTTP = 12000;
+const TIMEOUT_HTTP = 18000; // increased from 12s — handles slower sites
 const TIMEOUT_PAGESPEED = 30000;
 const PAGESPEED_API_KEY = process.env.PAGESPEED_API_KEY || '';
 
@@ -141,18 +141,36 @@ function parsePageTextSnippet(html) {
   return text.slice(0, 500);
 }
 
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const FETCH_HEADERS = {
+  'user-agent': BROWSER_UA,
+  'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'accept-language': 'en-US,en;q=0.9',
+};
+
 // ─── Check: HTTP + HTML ───────────────────────────────────────────────────────
 async function checkHTTP(url) {
   const t0 = Date.now();
   let res;
+  // Try https first, fall back to http:// if connection refused or SSL error
+  const tryFetch = async (u) => fetch(u, {
+    signal: AbortSignal.timeout(TIMEOUT_HTTP),
+    redirect: 'follow',
+    headers: FETCH_HEADERS,
+  });
   try {
-    res = await fetch(url, {
-      signal: AbortSignal.timeout(TIMEOUT_HTTP),
-      redirect: 'follow',
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; ProspectResearcher/1.0; +https://github.com)' },
-    });
+    res = await tryFetch(url);
   } catch (e) {
-    return { ok: false, error: e.message };
+    // If https failed, try http://
+    if (url.startsWith('https://')) {
+      try {
+        res = await tryFetch(url.replace('https://', 'http://'));
+      } catch (e2) {
+        return { ok: false, error: e2.message };
+      }
+    } else {
+      return { ok: false, error: e.message };
+    }
   }
   const responseMs = Date.now() - t0;
   const hdrs = {};
@@ -397,7 +415,7 @@ async function checkSSL(url) {
       signal: AbortSignal.timeout(TIMEOUT_HTTP),
       redirect: 'follow',
       method: 'HEAD',
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; ProspectResearcher/1.0)' },
+      headers: { 'user-agent': BROWSER_UA },
     });
     result.httpsWorks = r.status < 400;
   } catch {}
@@ -408,7 +426,7 @@ async function checkSSL(url) {
       signal: AbortSignal.timeout(TIMEOUT_HTTP),
       redirect: 'manual',
       method: 'HEAD',
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; ProspectResearcher/1.0)' },
+      headers: { 'user-agent': BROWSER_UA },
     });
     const loc = r.headers.get('location') || '';
     if ([301, 302, 307, 308].includes(r.status) && loc.startsWith('https://')) {
@@ -431,7 +449,7 @@ async function checkRobots(url) {
     const r = await fetch(origin + '/robots.txt', {
       signal: AbortSignal.timeout(TIMEOUT_HTTP),
       redirect: 'follow',
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; ProspectResearcher/1.0)' },
+      headers: { 'user-agent': BROWSER_UA },
     });
     if (r.ok && r.headers.get('content-type')?.includes('text')) {
       result.robotsTxtExists = true;
@@ -446,7 +464,7 @@ async function checkRobots(url) {
       signal: AbortSignal.timeout(TIMEOUT_HTTP),
       redirect: 'follow',
       method: 'HEAD',
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; ProspectResearcher/1.0)' },
+      headers: { 'user-agent': BROWSER_UA },
     });
     result.sitemapXmlExists = r.ok;
   } catch {}

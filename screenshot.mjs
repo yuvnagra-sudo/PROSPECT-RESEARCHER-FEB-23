@@ -9,9 +9,9 @@ import { join, resolve } from 'path';
 const SCREENSHOT_DIR = resolve(process.cwd(), 'screenshots');
 if (!existsSync(SCREENSHOT_DIR)) mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const VIEWPORT   = { width: 1280, height: 900 };
-const TIMEOUT_MS = 15000;
+const TIMEOUT_MS = 25000; // up from 15s — handles slow sites
 const MAX_SLOTS  = 5;
 
 // ─── Semaphore ────────────────────────────────────────────────────────────────
@@ -43,6 +43,12 @@ function normalizeUrl(url) {
   return /^https?:\/\//i.test(url) ? url : 'https://' + url;
 }
 
+// ─── Single attempt ───────────────────────────────────────────────────────────
+async function attemptScreenshot(page, url, waitMode) {
+  await page.goto(url, { waitUntil: waitMode, timeout: TIMEOUT_MS });
+  return await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function takeScreenshot(rawUrl) {
   const url = normalizeUrl(rawUrl);
@@ -58,15 +64,57 @@ export async function takeScreenshot(rawUrl) {
     const context = await browser.newContext({
       userAgent: USER_AGENT,
       viewport: VIEWPORT,
+      ignoreHTTPSErrors: true,  // don't fail on bad SSL certs
+      extraHTTPHeaders: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
     });
     const page = await context.newPage();
 
-    await page.goto(url, { waitUntil: 'load', timeout: TIMEOUT_MS });
+    // Block heavy third-party resources that slow loading without affecting visuals
+    await page.route('**/*', route => {
+      const type = route.request().resourceType();
+      const url = route.request().url();
+      // Block analytics/tracking but allow everything visual
+      if (type === 'media' || (type === 'other' && /\.(woff2?|ttf|otf)(\?|$)/i.test(url))) {
+        return route.abort();
+      }
+      return route.continue();
+    });
 
-    const buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
+    let buf = null;
+
+    // Strategy 1: load (page + CSS + images ready)
+    try {
+      buf = await attemptScreenshot(page, url, 'load');
+    } catch (e1) {
+      // Strategy 2: domcontentloaded (HTML parsed, scripts not yet run)
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+        await page.waitForTimeout(2000); // let CSS paint
+        buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
+      } catch (e2) {
+        // Strategy 3: http:// fallback (some sites redirect oddly on https)
+        if (url.startsWith('https://')) {
+          const httpUrl = url.replace('https://', 'http://');
+          try {
+            await page.goto(httpUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+            await page.waitForTimeout(2000);
+            buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
+          } catch {}
+        }
+      }
+    }
+
+    if (!buf) {
+      console.error(`[screenshot] All strategies failed for ${url}`);
+      return { status: 'screenshot_failed', path: '' };
+    }
+
     await writeFile(filepath, buf);
-
     return { status: 'success', path: 'screenshots/' + filename };
+
   } catch (e) {
     console.error(`[screenshot] Failed for ${url}: ${e.message}`);
     return { status: 'screenshot_failed', path: '' };
