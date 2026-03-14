@@ -1629,6 +1629,49 @@ Rules:
     json(res,{result});
   }catch(e){json(res,{error:e.message||'Python error'},500);}return;}
 
+  // ── AI Python code chat ───────────────────────────────────────────────────
+  if(req.method==='POST'&&p==='/api/python-chat'){const b=await readB(req);try{
+    const{message,history=[],columns=[],sampleRow={}}=JSON.parse(b);
+    if(!message?.trim())return json(res,{error:'Message required'},400);
+    const provOrder=['gemini3flash','gemini','haiku','claude','openai','gpt5','deepseek'];
+    const uk=S.getUserKeys.all(uid).map(r=>r.key_name);
+    let pid=null;for(const id of provOrder){const pv=PROVDEFS[id];if(pv&&uk.includes(pv.envName)){pid=id;break;}}
+    if(!pid)return json(res,{error:'No API key configured. Add a key in Settings first.'},400);
+    const prov=PROVDEFS[pid];const ak=userKey(uid,prov.envName);
+    const colList=columns.slice(0,60).join(', ');
+    const sampleStr=JSON.stringify(sampleRow,null,2).slice(0,600);
+    const sysPrompt=`You are a Python code assistant for a data enrichment spreadsheet tool. Help users write Python snippets that process a single row of data.
+
+Context:
+- Each snippet runs once per row
+- The variable "row" is a dict containing all column values
+- The snippet must set "result = ..." with the final value (always a string or number)
+- Available built-in modules: re, math, json, datetime, string
+- No external libraries (no requests, pandas, etc.) — pure Python stdlib only
+- Keep code concise and readable
+
+Available column keys in "row": ${colList||'(none yet)'}
+
+Sample row data:
+${sampleStr}
+
+Rules:
+- Respond conversationally, then provide the code
+- When providing code, put it between CODE_START and CODE_END markers on their own lines
+- Always end the code with "result = ..."
+- Handle missing/None values with .get() and defaults
+- Keep explanations brief (1-3 sentences)
+- If user asks for something requiring external libraries or network calls, explain that is not available and suggest an alternative`;
+    const histStr=history.slice(-8).map(h=>`${h.role==='user'?'User':'Assistant'}: ${h.content}`).join('\n');
+    const fullPrompt=histStr?`${histStr}\nUser: ${message.trim()}`:message.trim();
+    const result=await callLLM(fullPrompt,prov,sysPrompt,false,ak,null,null);
+    const reply=(result.research||'').trim();
+    const codeMatch=reply.match(/CODE_START\n?([\s\S]*?)\nCODE_END/i);
+    const code=codeMatch?codeMatch[1].trim():null;
+    const cleanReply=reply.replace(/CODE_START[\s\S]*?CODE_END/gi,'').trim();
+    json(res,{reply:cleanReply||reply,code});
+  }catch(e){json(res,{error:e.message||'Failed'},500);}return;}
+
   // ── AI formula/instruction generation ────────────────────────────────────
   if(req.method==='POST'&&p==='/api/generate-formula'){const b=await readB(req);try{
     const{description,columns}=JSON.parse(b);
