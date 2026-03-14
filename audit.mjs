@@ -44,12 +44,16 @@ function parseOGTags(html) {
   return result;
 }
 function parseJsonLD(html) {
-  return /<script[^>]+type=["']application\/ld\+json["'][^>]*>/i.test(html);
+  // Check JSON-LD, Microdata (itemscope/itemtype), and RDFa — all accepted by Google
+  return /<script[^>]+type=["']application\/ld\+json["'][^>]*>/i.test(html)
+    || /\bitemscope\b[^>]*\bitemtype\s*=/i.test(html)
+    || /\bvocab\s*=\s*["']https?:\/\/schema\.org/i.test(html);
 }
 function parseImageAltCoverage(html) {
   const allImgs = [...html.matchAll(/<img\b[^>]*>/gi)];
   if (!allImgs.length) return { total: 0, withAlt: 0, coverage: 1 };
-  const withAlt = allImgs.filter(m => /\balt\s*=\s*["'][^"']+["']/i.test(m[0])).length;
+  // alt="" is correct for decorative images (WCAG) — only flag truly missing alt attributes
+  const withAlt = allImgs.filter(m => /\balt\s*=/i.test(m[0])).length;
   return { total: allImgs.length, withAlt, coverage: withAlt / allImgs.length };
 }
 function parseCanonical(html) {
@@ -60,16 +64,17 @@ function parseRobotsNoindex(html) {
 }
 function parseMixedContent(html, pageUrl) {
   if (!pageUrl.startsWith('https')) return [];
+  // Strip scripts, styles, comments, and JSON-LD blocks — http:// in JS/CSS/data is not mixed content
+  const stripped = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '');
   const refs = [];
-  const pats = [
-    /(?:src|href)=["'](http:\/\/[^"'\s>]{4,})/gi,
-    /url\(["']?(http:\/\/[^"'\s)]{4,})/gi,
-  ];
-  for (const pat of pats) {
-    let m;
-    while ((m = pat.exec(html)) !== null) {
-      if (!m[1].startsWith('http://localhost')) refs.push(m[1].slice(0, 100));
-    }
+  // Only match actual resource-loading HTML attributes on tags that matter
+  const pat = /<(?:img|link|script|source|video|audio|iframe)\b[^>]*\s(?:src|href)=["'](http:\/\/[^"'\s>]{4,})/gi;
+  let m;
+  while ((m = pat.exec(stripped)) !== null) {
+    if (!m[1].startsWith('http://localhost')) refs.push(m[1].slice(0, 100));
   }
   return [...new Set(refs)].slice(0, 5);
 }
@@ -417,7 +422,9 @@ async function checkSSL(url) {
       method: 'HEAD',
       headers: { 'user-agent': BROWSER_UA },
     });
-    result.httpsWorks = r.status < 400;
+    // 4xx from WAF/auth (403, 401, 429) means HTTPS is working — server responded
+    // Only 5xx or connection failure means HTTPS is truly broken
+    result.httpsWorks = r.status < 500;
   } catch {}
 
   const httpUrl = url.replace(/^https:\/\//i, 'http://');
@@ -459,15 +466,19 @@ async function checkRobots(url) {
     }
   } catch {}
 
-  try {
-    const r = await fetch(origin + '/sitemap.xml', {
-      signal: AbortSignal.timeout(TIMEOUT_HTTP),
-      redirect: 'follow',
-      method: 'HEAD',
-      headers: { 'user-agent': BROWSER_UA },
-    });
-    result.sitemapXmlExists = r.ok;
-  } catch {}
+  // Try /sitemap.xml and /sitemap_index.xml — either counts
+  for (const path of ['/sitemap.xml', '/sitemap_index.xml']) {
+    if (result.sitemapXmlExists) break;
+    try {
+      const r = await fetch(origin + path, {
+        signal: AbortSignal.timeout(TIMEOUT_HTTP),
+        redirect: 'follow',
+        method: 'HEAD',
+        headers: { 'user-agent': BROWSER_UA },
+      });
+      if (r.ok) result.sitemapXmlExists = true;
+    } catch {}
+  }
 
   return result;
 }
@@ -483,95 +494,105 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
     const h = httpData;
     const html = h.html;
 
-    // Performance
-    if (h.responseMs > 3000) add('high', 'Performance', 'Slow server response time',
-      `Server took ${h.responseMs}ms to respond. Visitors abandon pages that take more than 3 seconds to load, directly reducing conversions and lead capture.`);
-    else if (h.responseMs > 1500) add('medium', 'Performance', 'Above-average server response time',
-      `Server response is ${h.responseMs}ms. Faster servers (under 500ms) improve both user experience and Google rankings.`);
+    // Guard: if the HTML body is very small it's likely a JS shell, error page, or
+    // Cloudflare challenge — skip HTML-derived checks to avoid false positives
+    const htmlBodyValid = html.docSizeKB >= 2;
 
-    if (html.docSizeKB > 500) add('medium', 'Performance', `Large page size (${html.docSizeKB}KB HTML)`,
+    // Performance — response time includes body download so only flag clear outliers
+    if (h.responseMs > 5000) add('high', 'Performance', 'Very slow server response time',
+      `Server took ${h.responseMs}ms to load. This includes page download time, but even so this is unusually slow. Visitors abandon pages that take more than 3 seconds, directly reducing conversions.`);
+    else if (h.responseMs > 3000) add('medium', 'Performance', 'Slow server response time',
+      `Server took ${h.responseMs}ms to respond. Faster servers (under 500ms TTFB) improve both user experience and Google rankings.`);
+
+    if (htmlBodyValid && html.docSizeKB > 500) add('medium', 'Performance', `Large page size (${html.docSizeKB}KB HTML)`,
       `Page HTML alone is ${html.docSizeKB}KB. Large pages load slowly on mobile networks, losing prospects before the page finishes rendering.`);
 
-    // SEO
-    if (!html.title) add('critical', 'SEO', 'Missing title tag',
-      'No title tag found. The title is the single most important on-page SEO element — search engines use it as the primary ranking signal and display it in search results. Missing it means Google auto-generates a title, often resulting in low click-through rates.');
-    else if (html.titleLength < 30) add('medium', 'SEO', `Title tag too short (${html.titleLength} chars)`,
-      `Title is only ${html.titleLength} characters. Short titles miss opportunities to target keywords. Optimal range is 50–60 characters.`);
-    else if (html.titleLength > 70) add('low', 'SEO', `Title tag too long (${html.titleLength} chars)`,
-      `Title is ${html.titleLength} characters — Google truncates titles over ~60 characters in search results, hiding important keywords and reducing click-through rates.`);
+    // SEO — only flag if we got real HTML (not a JS shell or error page)
+    if (htmlBodyValid) {
+      if (!html.title) add('critical', 'SEO', 'Missing title tag',
+        'No title tag found in page HTML. The title is the single most important on-page SEO element — search engines use it as the primary ranking signal and display it in search results.');
+      else if (html.titleLength < 20) add('medium', 'SEO', `Title tag very short (${html.titleLength} chars)`,
+        `Title is only ${html.titleLength} characters. Very short titles miss opportunities to target keywords. Optimal range is 50–60 characters.`);
+      else if (html.titleLength > 70) add('low', 'SEO', `Title tag too long (${html.titleLength} chars)`,
+        `Title is ${html.titleLength} characters — Google truncates titles over ~60 characters in search results, hiding important keywords and reducing click-through rates.`);
 
-    if (!html.metaDesc) add('high', 'SEO', 'Missing meta description',
-      'No meta description found. Google uses this text in search results. Without one, Google auto-generates descriptions that often look unprofessional and reduce click-through rates by 5–10%.');
-    else if (html.metaDescLength < 80) add('low', 'SEO', `Meta description too short (${html.metaDescLength} chars)`,
-      `Meta description is only ${html.metaDescLength} characters. Short descriptions fail to give searchers context to click. Aim for 140–160 characters with a clear call-to-action.`);
-    else if (html.metaDescLength > 165) add('low', 'SEO', `Meta description too long (${html.metaDescLength} chars)`,
-      `Meta description is ${html.metaDescLength} characters — Google truncates at ~160 characters, cutting off the call-to-action.`);
+      if (!html.metaDesc) add('high', 'SEO', 'Missing meta description',
+        'No meta description found. Google uses this text in search results. Without one, Google auto-generates descriptions that often look unprofessional and reduce click-through rates.');
+      else if (html.metaDescLength < 80) add('low', 'SEO', `Meta description too short (${html.metaDescLength} chars)`,
+        `Meta description is only ${html.metaDescLength} characters. Short descriptions fail to give searchers context to click. Aim for 140–160 characters with a clear call-to-action.`);
+      else if (html.metaDescLength > 165) add('low', 'SEO', `Meta description too long (${html.metaDescLength} chars)`,
+        `Meta description is ${html.metaDescLength} characters — Google truncates at ~160 characters, cutting off the call-to-action.`);
 
-    if (html.h1Count === 0) add('high', 'SEO', 'No H1 tag on page',
-      'The page has no H1 heading, forcing Google to guess the page\'s primary topic. This weakens rankings for target keywords and creates poor user experience for screen readers.');
-    else if (html.h1Count > 1) add('medium', 'SEO', `Multiple H1 tags (${html.h1Count} found)`,
-      `The page has ${html.h1Count} H1 tags. Multiple H1s dilute SEO authority and confuse search engines about the page's main topic. Only one H1 is recommended.`);
+      if (html.h1Count === 0) add('high', 'SEO', 'No H1 tag on page',
+        'The page has no H1 heading, forcing Google to guess the page\'s primary topic. This weakens rankings for target keywords and creates poor user experience for screen readers.');
+      else if (html.h1Count > 1) add('medium', 'SEO', `Multiple H1 tags (${html.h1Count} found)`,
+        `The page has ${html.h1Count} H1 tags. Multiple H1s dilute SEO authority and confuse search engines about the page's main topic. Only one H1 is recommended.`);
 
-    if (!html.hasCanonical) add('low', 'SEO', 'No canonical tag',
-      'Missing canonical tag means duplicate content (www vs non-www, http vs https, trailing slash) splits SEO authority across multiple URL variations, weakening rankings.');
+      if (!html.hasCanonical) add('low', 'SEO', 'No canonical tag',
+        'Missing canonical tag means duplicate content (www vs non-www, http vs https, trailing slash) may split SEO authority across multiple URL variations.');
 
-    if (html.isNoindex) add('critical', 'SEO', 'Page is set to noindex',
-      'The page has a noindex directive — it will NOT appear in Google search results at all. This is almost always a configuration error that costs all organic search traffic.');
+      if (html.isNoindex) add('critical', 'SEO', 'Page is set to noindex',
+        'The page has a noindex directive — it will NOT appear in Google search results at all. This is almost always a configuration error that costs all organic search traffic.');
 
-    if (!html.hasJsonLD) add('low', 'SEO', 'No structured data (JSON-LD)',
-      'Missing structured data makes the site ineligible for rich results (star ratings, FAQs, breadcrumbs) in Google Search, reducing click-through rates vs competitors with them.');
+      if (!html.hasJsonLD) add('low', 'SEO', 'No structured data detected',
+        'No JSON-LD, Microdata, or RDFa structured data found. Structured data makes the site eligible for rich results (star ratings, FAQs, breadcrumbs) in Google Search.');
 
-    // Mobile / UX
-    if (!html.viewport) add('high', 'UX', 'No viewport meta tag — not mobile-optimized',
-      'Missing viewport meta tag means the site is not mobile-optimized. Google uses mobile-first indexing, so non-mobile-friendly sites rank significantly lower. 60%+ of web traffic is on mobile.');
+      // Mobile / UX
+      if (!html.viewport) add('high', 'UX', 'No viewport meta tag — not mobile-optimized',
+        'Missing viewport meta tag means the site is not mobile-optimized. Google uses mobile-first indexing, so non-mobile-friendly sites rank significantly lower. 60%+ of web traffic is on mobile.');
 
-    // Social
-    const missingOG = ['og:title', 'og:description', 'og:image'].filter(p => !html.ogTags[p]);
-    if (missingOG.length === 3) add('medium', 'Social', 'No Open Graph tags for social sharing',
-      'Missing all Open Graph tags means shared links on LinkedIn, Twitter, or Facebook show as bare links with no image or custom description — reducing click-through rates by 3x vs rich link previews.');
-    else if (missingOG.includes('og:image')) add('low', 'Social', 'Missing og:image for social sharing',
-      'No og:image tag means shared links have no thumbnail, reducing engagement when the site is shared on social media.');
+      // Social
+      const missingOG = ['og:title', 'og:description', 'og:image'].filter(p => !html.ogTags[p]);
+      if (missingOG.length === 3) add('medium', 'Social', 'No Open Graph tags for social sharing',
+        'Missing all Open Graph tags means shared links on LinkedIn, Twitter, or Facebook show as bare links with no image or custom description — reducing click-through rates vs rich link previews.');
+      else if (missingOG.includes('og:image')) add('low', 'Social', 'Missing og:image for social sharing',
+        'No og:image tag means shared links have no thumbnail, reducing engagement when the site is shared on social media.');
 
-    // Security
+      // Accessibility — only flag if many images are missing alt (not just decorative ones)
+      if (html.altCoverage.total > 5 && html.altCoverage.coverage < 0.5) add('medium', 'Accessibility', `Low image alt text coverage (${Math.round(html.altCoverage.coverage * 100)}%)`,
+        `${Math.round((1 - html.altCoverage.coverage) * html.altCoverage.total)} of ${html.altCoverage.total} images have no alt attribute at all. This harms accessibility for visually impaired users and prevents Google Images from indexing content.`);
+
+      // Analytics — note this only detects HTML-visible scripts
+      if (!html.analytics.hasGA && !html.analytics.hasGTM && !html.analytics.hasOther) add('low', 'Analytics', 'No analytics tracking detected in HTML',
+        'No analytics platform (Google Analytics, GTM, Plausible, etc.) detected in page HTML. Note: server-side or tag-manager-proxied analytics may not be visible here. If analytics are confirmed present, disregard this item.');
+
+      // Favicon
+      if (!html.hasFavicon) add('low', 'Branding', 'No favicon configured',
+        'No favicon found. Missing favicons appear as broken icons in browser tabs and bookmarks, reducing perceived professionalism for first-time visitors.');
+
+      // Mixed content — only flag resources embedded in HTML markup (not JS data)
+      if (html.mixedContent.length > 0) add('high', 'Security', `Mixed content: ${html.mixedContent.length} HTTP resource(s) on HTTPS page`,
+        `The HTTPS page loads ${html.mixedContent.length} resource(s) over insecure HTTP. Browsers block or warn about mixed content, breaking functionality and showing security warnings.`);
+    }
+
+    // Security headers
     if (ssl && !ssl.httpsWorks) add('critical', 'Security', 'HTTPS not working',
-      'The site\'s HTTPS version is inaccessible. Modern browsers display "Not Secure" warnings to all visitors, destroying trust and causing immediate exits. Google also penalizes non-HTTPS sites in rankings.');
+      'The site\'s HTTPS version is inaccessible. Modern browsers display "Not Secure" warnings to all visitors, destroying trust and causing immediate exits.');
 
-    if (ssl?.httpsWorks && !ssl?.httpRedirects) add('high', 'Security', 'HTTP does not redirect to HTTPS',
-      'Visitors who type the domain without https:// land on an insecure HTTP version. This exposes user data, triggers browser security warnings, and splits SEO authority between http and https versions.');
+    if (ssl?.httpsWorks && !ssl?.httpRedirects) add('medium', 'Security', 'HTTP may not redirect to HTTPS',
+      'HTTP-to-HTTPS redirect not detected via HEAD request. Visitors who type the domain without https:// may land on an insecure version. Verify this manually — some CDNs handle this transparently.');
 
-    if (!h.headers.hsts && ssl?.httpsWorks) add('medium', 'Security', 'Missing HSTS header',
-      'No HTTP Strict Transport Security header means browsers won\'t enforce HTTPS connections, leaving users vulnerable to SSL stripping attacks on public networks.');
+    // HSTS: CDNs inject this for browsers but not API responses — LOW only
+    if (!h.headers.hsts && ssl?.httpsWorks) add('low', 'Security', 'HSTS header not detected',
+      'HTTP Strict Transport Security header not found in server response. Note: many CDNs (Cloudflare, Fastly) inject HSTS for browsers but not API requests — verify manually before flagging.');
 
     if (!h.headers.xContentType) add('low', 'Security', 'Missing X-Content-Type-Options header',
-      'Missing security header allows MIME-type sniffing attacks. Also signals the server configuration hasn\'t been security-hardened, which sophisticated buyers notice.');
+      'Missing security header allows MIME-type sniffing attacks. May already be set by CDN for browser requests.');
 
-    if (!h.headers.xFrame) add('low', 'Security', 'Missing X-Frame-Options header',
-      'Without X-Frame-Options, the site can be embedded in iframes on other domains, enabling clickjacking attacks where users are tricked into taking unintended actions.');
-
-    if (html.mixedContent.length > 0) add('high', 'Security', `Mixed content: ${html.mixedContent.length} HTTP resource(s) on HTTPS page`,
-      `The HTTPS page loads ${html.mixedContent.length} resource(s) over insecure HTTP. Browsers block or warn about mixed content, breaking functionality and showing security warnings that reduce visitor trust.`);
-
-    // Accessibility
-    if (html.altCoverage.total > 3 && html.altCoverage.coverage < 0.5) add('medium', 'Accessibility', `Low image alt text coverage (${Math.round(html.altCoverage.coverage * 100)}%)`,
-      `Only ${Math.round(html.altCoverage.coverage * 100)}% of ${html.altCoverage.total} images have descriptive alt text. This harms accessibility for visually impaired users, risks ADA compliance issues, and prevents Google Images from indexing content.`);
-
-    // Analytics
-    if (!html.analytics.hasGA && !html.analytics.hasGTM && !html.analytics.hasOther) add('medium', 'Analytics', 'No analytics tracking detected',
-      'No analytics platform detected (Google Analytics, GTM, etc.). The business is making marketing decisions without data on visitor behavior, traffic sources, or conversion rates.');
+    // X-Frame-Options: only flag if CSP frame-ancestors is also absent
+    const hasFrameAncestors = h.headers.csp && /frame-ancestors/i.test(h.headers.csp);
+    if (!h.headers.xFrame && !hasFrameAncestors) add('low', 'Security', 'Missing clickjacking protection',
+      'Neither X-Frame-Options nor CSP frame-ancestors directive detected. Without these, the site can be embedded in iframes on other domains, enabling clickjacking attacks.');
 
     // Robots / Crawlability
     if (robots?.allDisallowed) add('critical', 'SEO', 'robots.txt blocks all search engines',
-      '"Disallow: /" in robots.txt tells Google and all search engines not to crawl any page. The site will not appear in search results. Almost certainly a configuration error that costs all organic traffic.');
+      '"Disallow: /" in robots.txt tells Google and all search engines not to crawl any page. The site will not appear in search results. Almost certainly a configuration error.');
 
     if (!robots?.robotsTxtExists) add('low', 'SEO', 'No robots.txt file',
       'Missing robots.txt means search engines crawl without guidance. While not critical, it\'s a basic technical signal that the site lacks professional web configuration.');
 
     if (!robots?.sitemapInRobots && !robots?.sitemapXmlExists) add('low', 'SEO', 'No XML sitemap found',
-      'No sitemap.xml detected. Sitemaps tell search engines what pages exist. Without one, deep or new pages may take months to be discovered and indexed.');
-
-    // Favicon
-    if (!html.hasFavicon) add('low', 'Branding', 'No favicon configured',
-      'No favicon found. Missing favicons appear as broken icons in browser tabs and bookmarks, reducing perceived professionalism for first-time visitors.');
+      'No sitemap.xml or sitemap_index.xml detected. Sitemaps tell search engines what pages exist — without one, deep or new pages may take months to be discovered.');
   }
 
   // PageSpeed issues
