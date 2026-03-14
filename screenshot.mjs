@@ -11,7 +11,7 @@ if (!existsSync(SCREENSHOT_DIR)) mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const VIEWPORT   = { width: 1280, height: 900 };
-const TIMEOUT_MS = 25000; // up from 15s — handles slow sites
+const TIMEOUT_MS = 20000;
 const MAX_SLOTS  = 5;
 
 // ─── Semaphore ────────────────────────────────────────────────────────────────
@@ -43,12 +43,6 @@ function normalizeUrl(url) {
   return /^https?:\/\//i.test(url) ? url : 'https://' + url;
 }
 
-// ─── Single attempt ───────────────────────────────────────────────────────────
-async function attemptScreenshot(page, url, waitMode) {
-  await page.goto(url, { waitUntil: waitMode, timeout: TIMEOUT_MS });
-  return await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
-}
-
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function takeScreenshot(rawUrl) {
   const url = normalizeUrl(rawUrl);
@@ -64,7 +58,7 @@ export async function takeScreenshot(rawUrl) {
     const context = await browser.newContext({
       userAgent: USER_AGENT,
       viewport: VIEWPORT,
-      ignoreHTTPSErrors: true,  // don't fail on bad SSL certs
+      ignoreHTTPSErrors: true,
       extraHTTPHeaders: {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
@@ -72,35 +66,25 @@ export async function takeScreenshot(rawUrl) {
     });
     const page = await context.newPage();
 
-    // Block heavy third-party resources that slow loading without affecting visuals
-    await page.route('**/*', route => {
-      const type = route.request().resourceType();
-      const url = route.request().url();
-      // Block analytics/tracking but allow everything visual
-      if (type === 'media' || (type === 'other' && /\.(woff2?|ttf|otf)(\?|$)/i.test(url))) {
-        return route.abort();
-      }
-      return route.continue();
-    });
-
     let buf = null;
 
-    // Strategy 1: load (page + CSS + images ready)
+    // Strategy 1: domcontentloaded + 3s wait (most reliable across all sites)
     try {
-      buf = await attemptScreenshot(page, url, 'load');
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+      await page.waitForTimeout(3000);
+      buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
     } catch (e1) {
-      // Strategy 2: domcontentloaded (HTML parsed, scripts not yet run)
+      // Strategy 2: load event (works for simpler/faster sites)
       try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
-        await page.waitForTimeout(2000); // let CSS paint
+        await page.goto(url, { waitUntil: 'load', timeout: TIMEOUT_MS });
         buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
       } catch (e2) {
-        // Strategy 3: http:// fallback (some sites redirect oddly on https)
+        // Strategy 3: http:// fallback (some sites reject https in headless browsers)
         if (url.startsWith('https://')) {
           const httpUrl = url.replace('https://', 'http://');
           try {
             await page.goto(httpUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
-            await page.waitForTimeout(2000);
+            await page.waitForTimeout(3000);
             buf = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 900 } });
           } catch {}
         }
