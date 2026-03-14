@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from 'http';
+import { spawn } from 'child_process';
 import { readFileSync, existsSync, mkdirSync, statSync, createReadStream } from 'fs';
 import { resolve, join } from 'path';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
@@ -1113,6 +1114,30 @@ async function runJob(jobId){
   actv.delete(jobId);
 }
 
+// ─── Python cell evaluator ────────────────────────────────────────────────────
+function runPython(code,rowData){
+  return new Promise((resolve,reject)=>{
+    const wrapper=`
+import json,sys,re,math,datetime
+row=${JSON.stringify(JSON.stringify(rowData))}
+row=json.loads(row)
+_out=''
+try:
+${code.trim().split('\n').map(l=>'    '+l).join('\n')}
+    _out=str(result) if 'result' in dir() else ''
+    print(json.dumps(_out))
+except Exception as _e:
+    print(json.dumps('#ERR: '+str(_e)))
+`;
+    const py=spawn('python3',['-c',wrapper],{timeout:8000});
+    let out='',err='';
+    py.stdout.on('data',d=>{out+=d;});
+    py.stderr.on('data',d=>{err+=d;});
+    py.on('error',e=>reject(new Error('Python not available: '+e.message)));
+    py.on('close',()=>{try{resolve(JSON.parse(out.trim()));}catch{resolve(out.trim()||('#ERR: '+(err||'unknown').slice(0,200)));}});
+  });
+}
+
 // ─── Per-Column Runner (Clay-style sheet mode) ───────────────────────────────
 async function runColJob(jobId,colKey){
   const job=S.gJ.get(jobId);if(!job)return;
@@ -1128,19 +1153,44 @@ async function runColJob(jobId,colKey){
   let sections=[];if(job.sections_json){try{sections=JSON.parse(job.sections_json);}catch{}}
   const colSection=sections.find(s=>s.key===colKey);
   if(!colSection){emit({type:'col-done',colKey,succeeded:0,failed:0,error:'Column not found'});ctx._running=false;return;}
-  const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
   // Find rows missing this column
   const allRows=S.gAllRows.all(jobId);
   const needsCol=allRows.filter(r=>{if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}});
   emit({type:'col-start',colKey,total:needsCol.length});
   if(!needsCol.length){emit({type:'col-done',colKey,succeeded:0,failed:0});ctx._running=false;return;}
   const queue=[...needsCol];let ok=0,fail=0;
+
+  // ── Python column ──────────────────────────────────────────────────────────
+  if(colSection.type==='python'){
+    const code=colSection.code||'result=""';
+    const concurrency=4;
+    async function pyWorker(){
+      while(queue.length>0&&!ctx.cancelled){
+        const row=queue.shift();if(!row)break;
+        let existing={};try{existing=JSON.parse(row.research||'{}');}catch{}
+        let originalRow={};try{originalRow=JSON.parse(row.original_row||'{}');}catch{}
+        emit({type:'row-start',idx:row.idx,company:row.company,colKey});
+        try{
+          const rowData={...originalRow,...existing};
+          const value=await runPython(code,rowData);
+          const merged={...existing,[colKey]:value};
+          const allComplete=sections.length>0&&sections.every(s=>s.type==='python'||s.type==='formula'||merged[s.key]!==undefined);
+          S.uRMerge.run(JSON.stringify(merged),allComplete?'success':'partial',0,0,jobId,row.idx);
+          ok++;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'success',value});
+        }catch(err){
+          fail++;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:err.message});
+        }
+      }
+    }
+    await Promise.all(Array.from({length:concurrency},()=>pyWorker()));
+  } else {
+  // ── AI (LLM) column ───────────────────────────────────────────────────────
+  const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
   const concurrency=Math.min(CONCURRENCY[job.provider]||3,5);
   async function colWorker(){
     while(queue.length>0&&!ctx.cancelled){
       const row=queue.shift();if(!row)break;
       let existing={};try{existing=JSON.parse(row.research||'{}');}catch{}
-      // Interpolate dep col values into column description
       let colDesc=colSection.desc||'';
       colDesc=colDesc.replace(/\{(\w+)\}/g,(_,k)=>existing[k]?String(existing[k]):`[${k}]`);
       const fullPrompt=row.prompt+(colDesc?`\n\nFor this specific research task, focus on: ${colDesc}`:'');
@@ -1152,7 +1202,7 @@ async function runColJob(jobId,colKey){
           const structured=parseStructuredResponse(r.research,[colSection]);
           const value=structured[colKey]!==undefined?structured[colKey]:(structured._raw||null);
           const merged={...existing,[colKey]:value,_parsed:true};
-          const allComplete=sections.length>0&&sections.every(s=>merged[s.key]!==undefined&&merged[s.key]!=='');
+          const allComplete=sections.length>0&&sections.every(s=>s.type==='python'||s.type==='formula'||merged[s.key]!==undefined&&merged[s.key]!=='');
           S.uRMerge.run(JSON.stringify(merged),allComplete?'success':'partial',r.inputTokens,r.outputTokens,jobId,row.idx);
           ok++;done=true;rlOk(job.provider);
           emit({type:'cell-result',rowIdx:row.idx,colKey,status:'success',value});
@@ -1166,6 +1216,7 @@ async function runColJob(jobId,colKey){
     }
   }
   await Promise.all(Array.from({length:concurrency},()=>colWorker()));
+  } // end if python/ai
   // Keep job status as paused (sheet mode stays open)
   const rj=S.gJ.get(jobId);
   S.uJ.run(rj.succeeded+ok,rj.failed+fail,'paused',rj.total_in,rj.total_out,rj.total_cr,rj.total_cw,rj.cost,rj.elapsed,jobId);
@@ -1393,10 +1444,19 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   // ─── Clay-style: run one column for all rows missing it ───────────────────
   if(req.method==='POST'&&p==='/api/run-col'){const b=await readB(req);try{
-    const{jobId,colKey}=JSON.parse(b);
+    const{jobId,colKey,colDef}=JSON.parse(b);
     const job=S.gJ.get(jobId);if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
-    const prov=PROVDEFS[job.provider];if(!prov||!userKey(uid,prov.envName))return json(res,{error:'No API key for this provider'},400);
+    const prov=PROVDEFS[job.provider];
+    // Python columns don't need an LLM key
+    if((!prov||!userKey(uid,prov.envName))&&colDef?.type!=='python')return json(res,{error:'No API key for this provider'},400);
     if(!colKey)return json(res,{error:'colKey required'},400);
+    // Sync colDef into sections_json so runColJob can find it
+    if(colDef){
+      let sections=[];try{sections=JSON.parse(job.sections_json||'[]');}catch{}
+      const idx=sections.findIndex(s=>s.key===colKey);
+      if(idx>=0)sections[idx]={...sections[idx],...colDef};else sections.push(colDef);
+      db.prepare('UPDATE jobs SET sections_json=? WHERE id=?').run(JSON.stringify(sections),jobId);
+    }
     const allRows=S.gAllRows.all(jobId);
     const needsCol=allRows.filter(r=>{if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}});
     runColJob(jobId,colKey); // non-blocking
@@ -1522,6 +1582,52 @@ Return ONLY valid JSON (no markdown, no code fences):
     })().catch(()=>{});
     json(res,{retried:failedRows.length});
     return;}
+
+  // ── AI formula chat (builds formula expressions) ──────────────────────────
+  if(req.method==='POST'&&p==='/api/formula-chat'){const b=await readB(req);try{
+    const{message,history=[],columns=[]}=JSON.parse(b);
+    if(!message?.trim())return json(res,{error:'Message required'},400);
+    const provOrder=['gemini3flash','gemini','haiku','claude','openai','gpt5','deepseek'];
+    const uk=S.getUserKeys.all(uid).map(r=>r.key_name);
+    let pid=null;for(const id of provOrder){const pv=PROVDEFS[id];if(pv&&uk.includes(pv.envName)){pid=id;break;}}
+    if(!pid)return json(res,{error:'No API key configured. Add a key in Settings first.'},400);
+    const prov=PROVDEFS[pid];const ak=userKey(uid,prov.envName);
+    const colList=columns.slice(0,60).join(', ');
+    const sysPrompt=`You are a formula assistant for a spreadsheet enrichment tool. Help users build formula expressions.
+
+Available formula functions:
+IF(cond, yes, no), IFS(c1,v1,c2,v2,...), CONTAINS(text, sub), STARTS_WITH(text, sub), ENDS_WITH(text, sub)
+REGEX(text, pattern), REGEX_TEST(text, pattern), REGEX_REPLACE(text, pattern, repl)
+CONCAT(a, b, ...), JOIN(delim, a, b, ...), TRIM(text), UPPER(text), LOWER(text)
+LEN(text), LEFT(text, n), RIGHT(text, n), MID(text, start, n), SPLIT(text, delim, n)
+REPLACE(text, old, new), NUMBER(v), ROUND(v, n), ABS(v), MOD(a, b)
+AND(...), OR(...), NOT(v), ISBLANK(v), ISNUMBER(v)
+
+Available columns (reference with {column_name}): ${colList||'(none yet)'}
+
+Rules:
+- Be conversational and helpful
+- When you have a formula to suggest, put it on its own line as: FORMULA: =...
+- Formulas must start with =
+- Keep explanations brief (1-3 sentences)
+- If user wants something complex (loops, API calls, etc), suggest the Python column type instead`;
+    const histStr=history.slice(-8).map(h=>`${h.role==='user'?'User':'Assistant'}: ${h.content}`).join('\n');
+    const fullPrompt=histStr?`${histStr}\nUser: ${message.trim()}`:message.trim();
+    const result=await callLLM(fullPrompt,prov,sysPrompt,false,ak,null,null);
+    const reply=(result.research||'').trim();
+    const formulaMatch=reply.match(/FORMULA:\s*(=[^\n]+)/i);
+    const formula=formulaMatch?formulaMatch[1].trim():null;
+    const cleanReply=reply.replace(/FORMULA:\s*=[^\n]*/gi,'').trim();
+    json(res,{reply:cleanReply||reply,formula});
+  }catch(e){json(res,{error:e.message||'Failed'},500);}return;}
+
+  // ── Python single-cell test ───────────────────────────────────────────────
+  if(req.method==='POST'&&p==='/api/run-python-cell'){const b=await readB(req);try{
+    const{code,rowData}=JSON.parse(b);
+    if(!code)return json(res,{error:'code required'},400);
+    const result=await runPython(code,rowData||{});
+    json(res,{result});
+  }catch(e){json(res,{error:e.message||'Python error'},500);}return;}
 
   // ── AI formula/instruction generation ────────────────────────────────────
   if(req.method==='POST'&&p==='/api/generate-formula'){const b=await readB(req);try{

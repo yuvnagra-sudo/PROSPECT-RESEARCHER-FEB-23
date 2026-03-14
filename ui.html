@@ -579,9 +579,10 @@ th:hover .th-del-btn{opacity:1!important}
     </div>
     <div>
       <label class="fi-l">Type</label>
-      <div style="display:flex;gap:8px">
-        <button id="drw-type-ai" class="btn bp sm" onclick="setDrwType('ai')" style="flex:1;justify-content:center">🤖 AI Research</button>
+      <div style="display:flex;gap:6px">
+        <button id="drw-type-ai" class="btn bp sm" onclick="setDrwType('ai')" style="flex:1;justify-content:center">🤖 AI</button>
         <button id="drw-type-fx" class="btn bs sm" onclick="setDrwType('formula')" style="flex:1;justify-content:center">fx Formula</button>
+        <button id="drw-type-py" class="btn bs sm" onclick="setDrwType('python')" style="flex:1;justify-content:center">🐍 Python</button>
       </div>
     </div>
     <!-- AI instruction panel -->
@@ -596,23 +597,26 @@ th:hover .th-del-btn{opacity:1!important}
     </div>
     <!-- Formula panel -->
     <div id="drw-fx-panel" class="hide">
-      <label class="fi-l">Formula <span style="font-size:11px;color:#94a3b8;font-weight:400">use {column_name} for values</span></label>
+      <label class="fi-l">Formula <span style="font-size:11px;color:#94a3b8;font-weight:400">use {column_name} for values · computes instantly</span></label>
       <input class="fi" id="drw-formula" type="text" placeholder='=IF(CONTAINS({email},"gmail"),"Consumer","Business")' style="font-family:monospace;font-size:12px">
-      <div id="drw-fx-preview" style="margin-top:6px;font-size:11px;color:#64748b;min-height:18px"></div>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:10px">
-        <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:6px">Available functions</div>
-        <div style="font-size:11px;color:#374151;line-height:1.8;font-family:monospace">
-          IF(cond, yes, no)<br>
-          CONTAINS(text, substr)<br>
-          REGEX(text, pattern)<br>
-          REGEX_REPLACE(text, pattern, repl)<br>
-          CONCAT(a, b, …)<br>
-          TRIM(text) · UPPER(text) · LOWER(text)<br>
-          LEFT(text,n) · RIGHT(text,n) · MID(text,s,n)<br>
-          LEN(text) · SPLIT(text, delim, n)<br>
-          NUMBER(v) · ISBLANK(v) · ISNUMBER(v)
+      <div id="drw-fx-preview" style="margin-top:4px;font-size:11px;color:#64748b;min-height:16px"></div>
+      <div style="margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+        <div style="padding:7px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;font-weight:600;color:#64748b">💬 Ask AI to write the formula</div>
+        <div id="drw-fx-chat-msgs" style="max-height:160px;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px">
+          <div style="color:#94a3b8;font-size:11px;text-align:center;padding:6px 0">Describe what you want — AI will write it</div>
+        </div>
+        <div style="display:flex;gap:6px;padding:6px 8px;border-top:1px solid #e2e8f0">
+          <input id="drw-fx-chat-input" class="fi" type="text" placeholder="e.g. check if email is from gmail…" style="flex:1;margin:0;font-size:12px;padding:5px 8px" onkeydown="if(event.key==='Enter'){event.preventDefault();sendFxChat();}">
+          <button class="btn bp sm" id="drw-fx-chat-btn" onclick="sendFxChat()">Ask</button>
         </div>
       </div>
+    </div>
+    <!-- Python panel -->
+    <div id="drw-py-panel" class="hide">
+      <label class="fi-l">Python Code <span style="font-size:11px;color:#94a3b8;font-weight:400">set <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">result = ...</code> · <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">row</code> has all columns</span></label>
+      <textarea class="fi" id="drw-code" rows="7" placeholder="# row dict contains all input + enrichment columns&#10;domain = row.get('website','').replace('https://','').split('/')[0]&#10;result = domain" style="font-family:monospace;font-size:12px;tab-size:2"></textarea>
+      <div id="drw-py-preview" style="margin-top:4px;font-size:11px;min-height:16px"></div>
+      <button class="btn bs sm" style="margin-top:6px;font-size:11px" onclick="testPyCode()">▶ Test on first row</button>
     </div>
   </div>
   <div class="drw-ft">
@@ -1103,7 +1107,7 @@ async function runCol(colKey){
     openSSE(sheetJobId);
   }
   // Fire run-col — results stream via SSE
-  const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey});
+  const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey,colDef:col});
   if(!result||result.error){
     toast(result?.error||'Failed to start column run','err');
     colRunStatus[colKey]='error';updateColBadge(colKey);
@@ -1420,6 +1424,55 @@ function updateFxPreview(){
   }
 }
 
+// ── AI Formula Chat ───────────────────────────────────────────────────────────
+let fxChatHistory=[];
+async function sendFxChat(){
+  const input=$i('drw-fx-chat-input');
+  const msg=input.value.trim();if(!msg)return;
+  input.value='';
+  fxChatHistory.push({role:'user',content:msg});
+  appendFxMsg('user',msg);
+  const btn=$i('drw-fx-chat-btn');btn.disabled=true;btn.textContent='…';
+  const columns=csvHdrs.concat(enrichCols.map(c=>c.key));
+  const d=await api('POST','/api/formula-chat',{message:msg,history:fxChatHistory.slice(-8),columns});
+  btn.disabled=false;btn.textContent='Ask';
+  if(!d||d.error){appendFxMsg('ai','Error: '+(d?.error||'Failed'));return;}
+  fxChatHistory.push({role:'assistant',content:d.reply+(d.formula?'\nFORMULA: '+d.formula:'')});
+  appendFxMsg('ai',d.reply,d.formula);
+}
+function appendFxMsg(role,text,formula){
+  const msgs=$i('drw-fx-chat-msgs');
+  // Remove placeholder
+  const placeholder=msgs.querySelector('[data-placeholder]');if(placeholder)placeholder.remove();
+  const div=document.createElement('div');
+  div.style.cssText=role==='user'
+    ?'background:#eff6ff;border-radius:8px 8px 2px 8px;padding:6px 10px;align-self:flex-end;max-width:90%;font-size:12px'
+    :'background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px 8px 8px 8px;padding:6px 10px;align-self:flex-start;max-width:95%;font-size:12px';
+  div.innerHTML=x(text).replace(/\n/g,'<br>');
+  if(formula){
+    const btn=document.createElement('button');
+    btn.className='btn bp sm';btn.style.cssText='margin-top:6px;display:block;font-size:11px;font-family:monospace';
+    btn.textContent='↑ '+formula.slice(0,50)+(formula.length>50?'…':'');
+    btn.onclick=()=>{$i('drw-formula').value=formula;updateFxPreview();toast('Formula inserted','ok',2000);};
+    div.appendChild(btn);
+  }
+  msgs.appendChild(div);
+  msgs.scrollTop=msgs.scrollHeight;
+}
+
+// ── Python Code Test ──────────────────────────────────────────────────────────
+async function testPyCode(){
+  const code=$i('drw-code').value.trim();
+  if(!code){toast('Write some code first','err');return;}
+  const row=csvRows.find(r=>!r._blank)||csvRows[0]||{};
+  const prev=$i('drw-py-preview');
+  prev.style.color='#94a3b8';prev.textContent='Running…';
+  const d=await api('POST','/api/run-python-cell',{code,rowData:{...row,...(rowResults[csvRows.indexOf(row)]||{})}});
+  if(!d||d.error){prev.style.color='#ef4444';prev.textContent='Error: '+(d?.error||'Failed');return;}
+  prev.style.color=String(d.result).startsWith('#ERR')?'#ef4444':'#16a34a';
+  prev.textContent='Result (row 1): '+d.result;
+}
+
 // ── Column Management ─────────────────────────────────────────────────────────
 function labelToKey(label){return label.trim().toLowerCase().replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,'_').slice(0,40)||'col_'+(enrichCols.length+1);}
 function addBlankCol(){
@@ -1433,23 +1486,27 @@ function openDrawer(idx){
   $i('drw-name').value=c.label;
   $i('drw-desc').value=c.desc||'';
   $i('drw-formula').value=c.formula||'';
+  $i('drw-code').value=c.code||'';
+  $i('drw-py-preview').textContent='';
   $i('drw-key-preview').textContent='key: '+c.key;
-  setDrwType(c.type==='formula'?'formula':'ai');
+  // Reset formula chat
+  fxChatHistory=[];
+  $i('drw-fx-chat-msgs').innerHTML='<div data-placeholder style="color:#94a3b8;font-size:11px;text-align:center;padding:6px 0">Describe what you want — AI will write it</div>';
+  setDrwType(c.type==='formula'?'formula':c.type==='python'?'python':'ai');
   $i('drawer-bg').classList.remove('hide');
   $i('col-drawer').classList.remove('hide');
   $i('drw-name').focus();$i('drw-name').select();
 }
 function setDrwType(t){
-  const isFormula=t==='formula';
-  $i('drw-ai-panel').classList.toggle('hide',isFormula);
-  $i('drw-fx-panel').classList.toggle('hide',!isFormula);
-  $i('drw-type-ai').className=isFormula?'btn bs sm':'btn bp sm';
-  $i('drw-type-fx').className=isFormula?'btn bp sm':'btn bs sm';
-  $i('drw-type-ai').style.flex='1';$i('drw-type-ai').style.justifyContent='center';
-  $i('drw-type-fx').style.flex='1';$i('drw-type-fx').style.justifyContent='center';
-  if(isFormula)$i('drw-formula').focus();
-  // Live preview on formula input
-  $i('drw-formula').oninput=()=>updateFxPreview();
+  $i('drw-ai-panel').classList.toggle('hide',t!=='ai');
+  $i('drw-fx-panel').classList.toggle('hide',t!=='formula');
+  $i('drw-py-panel').classList.toggle('hide',t!=='python');
+  $i('drw-type-ai').className=t==='ai'?'btn bp sm':'btn bs sm';
+  $i('drw-type-fx').className=t==='formula'?'btn bp sm':'btn bs sm';
+  $i('drw-type-py').className=t==='python'?'btn bp sm':'btn bs sm';
+  ['drw-type-ai','drw-type-fx','drw-type-py'].forEach(id=>{$i(id).style.flex='1';$i(id).style.justifyContent='center';});
+  if(t==='formula'){$i('drw-formula').focus();$i('drw-formula').oninput=()=>updateFxPreview();}
+  if(t==='python')$i('drw-code').focus();
 }
 function drwUpdateKey(){
   const key=labelToKey($i('drw-name').value);
@@ -1459,9 +1516,9 @@ function closeDrawer(){$i('drawer-bg').classList.add('hide');$i('col-drawer').cl
 function saveDrawerCol(){
   if(drawerIdx<0)return;
   const label=$i('drw-name').value.trim()||'Column';
-  const isFormula=!$i('drw-fx-panel').classList.contains('hide');
   const col={key:labelToKey(label),label,desc:$i('drw-desc').value.trim()};
-  if(isFormula){col.type='formula';col.formula=$i('drw-formula').value.trim();}
+  if(!$i('drw-fx-panel').classList.contains('hide')){col.type='formula';col.formula=$i('drw-formula').value.trim();}
+  else if(!$i('drw-py-panel').classList.contains('hide')){col.type='python';col.code=$i('drw-code').value.trim();}
   enrichCols[drawerIdx]=col;
   closeDrawer();renderTable();updateCostEst();
 }
