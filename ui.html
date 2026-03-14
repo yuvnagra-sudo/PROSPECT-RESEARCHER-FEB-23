@@ -244,6 +244,8 @@ textarea.fi{resize:vertical;line-height:1.5}
 /* ── Per-column run button & status badge ── */
 .col-run-btn{background:#6366f1;color:#fff;border:none;border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;flex-shrink:0;line-height:1.4;transition:background .15s}
 .col-run-btn:hover{background:#4f46e5}
+.col-test-btn{background:#8b5cf6;margin-left:2px}
+.col-test-btn:hover{background:#7c3aed}
 .col-status-badge{font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0}
 .csb-running{background:#eff6ff;color:#3b82f6}
 .csb-done{background:#f0fdf4;color:#16a34a}
@@ -710,7 +712,8 @@ th:hover .th-del-btn{opacity:1!important}
 
 <!-- ── Right-click Context Menu ── -->
 <div id="ctx-menu">
-  <div class="ctx-item" id="ctx-run">▶ Run this row</div>
+  <div class="ctx-item" id="ctx-run-col" style="display:none;color:#6366f1;font-weight:500">▶ Run column for this row</div>
+  <div class="ctx-item" id="ctx-run">▶ Run all columns for this row</div>
   <div class="ctx-item" id="ctx-sel">☑ Select row</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" id="ctx-copy">📋 Copy row data</div>
@@ -1005,7 +1008,7 @@ function renderTable(){
       const hidden=hiddenCols.has(c.key);
       const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';
       const sa=sortBy===c.key;
-      const runBtn=c.type==='formula'?'':`<button class="col-run-btn" onclick="event.stopPropagation();runCol('${c.key}')" title="Run this column for all empty rows">▶</button><span class="col-status-badge" id="cs-${c.key}"></span>`;
+      const runBtn=c.type==='formula'?'':`<button class="col-run-btn" onclick="event.stopPropagation();runCol('${c.key}')" title="Run all empty rows for this column">▶ All</button><button class="col-run-btn col-test-btn" onclick="event.stopPropagation();runCol('${c.key}',10)" title="Test: run first 10 rows only">▶ 10</button><span class="col-status-badge" id="cs-${c.key}"></span>`;
       return`<th class="th-en${hidden?' col-hidden':''}${sa?' sort-'+sortDir:''}" id="th-${c.key}" title="${x(c.label)}" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="colDragOver(event)" ondrop="colDrop(event,${i})" ondragleave="colDragLeave(event)"><div class="th-en-inner"><span onclick="openDrawer(${i})" style="cursor:pointer">${x(c.label)}${badge}</span>${runBtn}<span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="font-size:11px;opacity:0.5;cursor:pointer">⊖</span><button class="th-en-edit" onclick="event.stopPropagation();openDrawer(${i})" title="Edit column" style="background:none;border:none;cursor:pointer;font-size:10px;padding:0 2px">✎</button></div></th>`;
     }).join('')+
     `<th class="th-add" onclick="addBlankCol()" title="Add column">+</th>`;
@@ -1028,7 +1031,11 @@ function renderTable(){
   tbody.oncontextmenu=e=>{
     const td=e.target.closest('td');if(!td)return;
     const tr=td.closest('tr');if(!tr||tr.dataset.idx===undefined)return;
-    e.preventDefault();showCtxMenu(e,parseInt(tr.dataset.idx));
+    e.preventDefault();
+    // Detect which enrichment column cell was right-clicked (id="cell-{idx}-{key}")
+    const cellId=td.id||'';const colKeyMatch=cellId.match(/^cell-\d+-(.+)$/);
+    const clickedColKey=colKeyMatch?colKeyMatch[1]:null;
+    showCtxMenu(e,parseInt(tr.dataset.idx),clickedColKey);
   };
 }
 function buildRow(csvIdx,displayPos){
@@ -1085,7 +1092,7 @@ function updateColBadge(colKey){
   else if(runSt==='error'){el.textContent='✗';el.className='col-status-badge csb-error';}
   else{el.textContent='';el.className='col-status-badge';}
 }
-async function runCol(colKey){
+async function runCol(colKey,limit=0){
   if(!csvRows.length){toast('Upload a CSV first','err');return;}
   const col=enrichCols.find(c=>c.key===colKey);
   if(!col){toast('Column not found','err');return;}
@@ -1117,7 +1124,7 @@ async function runCol(colKey){
     openSSE(sheetJobId);
   }
   // Fire run-col — results stream via SSE
-  const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey,colDef:col});
+  const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey,colDef:col,limit});
   if(!result||result.error){
     toast(result?.error||'Failed to start column run','err');
     colRunStatus[colKey]='error';updateColBadge(colKey);
@@ -1313,18 +1320,39 @@ function copySpRow(){
 }
 
 // ── Context Menu ──────────────────────────────────────────────────────────────
-function showCtxMenu(e,csvIdx){
+function showCtxMenu(e,csvIdx,clickedColKey){
   e.preventDefault();
   ctxTargetIdx=csvIdx;
   const menu=$i('ctx-menu');
   menu.style.display='block';
-  menu.style.left=Math.min(e.clientX,window.innerWidth-180)+'px';
-  menu.style.top=Math.min(e.clientY,window.innerHeight-160)+'px';
-  $i('ctx-run').onclick=()=>{hideCtxMenu();selectedRows.add(csvIdx);updateSelInfo();for(const col of enrichCols)runCol(col.key);};
+  menu.style.left=Math.min(e.clientX,window.innerWidth-200)+'px';
+  menu.style.top=Math.min(e.clientY,window.innerHeight-180)+'px';
+  // If right-clicked on a specific enrichment column cell, show "Run this column" as first option
+  const clickedCol=clickedColKey?enrichCols.find(c=>c.key===clickedColKey):null;
+  const runColItem=$i('ctx-run-col');
+  if(clickedCol&&clickedCol.type!=='formula'){
+    runColItem.textContent=`▶ Run "${clickedCol.label}" for this row`;
+    runColItem.style.display='flex';
+    runColItem.onclick=()=>{hideCtxMenu();runColForRow(csvIdx,clickedColKey);};
+  }else{
+    runColItem.style.display='none';
+  }
+  $i('ctx-run').onclick=()=>{hideCtxMenu();for(const col of enrichCols.filter(c=>c.type!=='formula'))runColForRow(csvIdx,col.key);};
   $i('ctx-sel').onclick=()=>{hideCtxMenu();selectedRows.add(csvIdx);updateSelInfo();renderTable();};
   $i('ctx-copy').onclick=()=>{hideCtxMenu();spCurrentIdx=csvIdx;copySpRow();};
   $i('ctx-detail').onclick=()=>{hideCtxMenu();openSidePanel(csvIdx);};
   $i('ctx-del').onclick=()=>{hideCtxMenu();deleteRows(new Set([csvIdx]));};
+}
+// Run a single column for a single specific row
+async function runColForRow(csvIdx,colKey){
+  const col=enrichCols.find(c=>c.key===colKey);if(!col)return;
+  const pid=$i('prov-sel').value;if(!pid){toast('Select a provider','err');return;}
+  if(!sheetJobId){await runCol(colKey,1);return;} // will create sheet + run 1 row
+  updateCell(csvIdx,colKey,'running',null);
+  // POST with rowIdx so server runs only that row
+  const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey,colDef:col,rowIdx:csvIdx});
+  if(!result||result.error)toast(result?.error||'Failed','err');
+  else toast(`Running "${col.label}" for row ${csvIdx+1}…`,'info');
 }
 function hideCtxMenu(){$i('ctx-menu').style.display='none';ctxTargetIdx=-1;}
 

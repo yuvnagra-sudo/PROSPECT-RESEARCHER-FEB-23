@@ -1139,7 +1139,7 @@ except Exception as _e:
 }
 
 // ─── Per-Column Runner (Clay-style sheet mode) ───────────────────────────────
-async function runColJob(jobId,colKey){
+async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
   const job=S.gJ.get(jobId);if(!job)return;
   const prov=PROVDEFS[job.provider];if(!prov)return;
   const apiKey=userKey(job.user_id,prov.envName);if(!apiKey)return;
@@ -1153,12 +1153,17 @@ async function runColJob(jobId,colKey){
   let sections=[];if(job.sections_json){try{sections=JSON.parse(job.sections_json);}catch{}}
   const colSection=sections.find(s=>s.key===colKey);
   if(!colSection){emit({type:'col-done',colKey,succeeded:0,failed:0,error:'Column not found'});ctx._running=false;return;}
-  // Find rows missing this column
+  // Find rows missing this column; optionally filter to specific rows or cap by limit
   const allRows=S.gAllRows.all(jobId);
-  const needsCol=allRows.filter(r=>{if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}});
-  emit({type:'col-start',colKey,total:needsCol.length});
-  if(!needsCol.length){emit({type:'col-done',colKey,succeeded:0,failed:0});ctx._running=false;return;}
-  const queue=[...needsCol];let ok=0,fail=0;
+  const idxSet=rowIdxFilter?new Set(rowIdxFilter):null;
+  const needsCol=allRows.filter(r=>{
+    if(idxSet&&!idxSet.has(r.idx))return false;
+    if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}
+  });
+  const toProcess=limit>0?needsCol.slice(0,limit):needsCol;
+  emit({type:'col-start',colKey,total:toProcess.length});
+  if(!toProcess.length){emit({type:'col-done',colKey,succeeded:0,failed:0});ctx._running=false;return;}
+  const queue=[...toProcess];let ok=0,fail=0;
 
   // ── Python column ──────────────────────────────────────────────────────────
   if(colSection.type==='python'){
@@ -1193,7 +1198,10 @@ async function runColJob(jobId,colKey){
       let existing={};try{existing=JSON.parse(row.research||'{}');}catch{}
       let colDesc=colSection.desc||'';
       colDesc=colDesc.replace(/\{(\w+)\}/g,(_,k)=>existing[k]?String(existing[k]):`[${k}]`);
-      const fullPrompt=row.prompt+(colDesc?`\n\nFor this specific research task, focus on: ${colDesc}`:'');
+      // Include output from previously-run columns as context so this column can reference them
+      const prevData=sections.filter(s=>s.key!==colKey&&existing[s.key]!=null&&String(existing[s.key]).trim().length>1);
+      const prevCtx=prevData.length?'\n\n--- DATA FROM PREVIOUSLY ENRICHED COLUMNS ---\n'+prevData.map(s=>`**${s.label}:** ${String(existing[s.key]).slice(0,800)}`).join('\n'):'';
+      const fullPrompt=row.prompt+prevCtx+(colDesc?`\n\nFor this specific research task, focus on: ${colDesc}`:'');
       emit({type:'row-start',idx:row.idx,company:row.company,colKey});
       let retries=0,done=false,lastErr='';
       while(!done&&retries<3&&!ctx.cancelled){
@@ -1444,7 +1452,7 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   // ─── Clay-style: run one column for all rows missing it ───────────────────
   if(req.method==='POST'&&p==='/api/run-col'){const b=await readB(req);try{
-    const{jobId,colKey,colDef}=JSON.parse(b);
+    const{jobId,colKey,colDef,limit,rowIdx}=JSON.parse(b);
     const job=S.gJ.get(jobId);if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
     const prov=PROVDEFS[job.provider];
     // Python columns don't need an LLM key
@@ -1458,9 +1466,14 @@ Return ONLY valid JSON (no markdown, no code fences):
       db.prepare('UPDATE jobs SET sections_json=? WHERE id=?').run(JSON.stringify(sections),jobId);
     }
     const allRows=S.gAllRows.all(jobId);
-    const needsCol=allRows.filter(r=>{if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}});
-    runColJob(jobId,colKey); // non-blocking
-    json(res,{queued:needsCol.length});
+    const needsCol=allRows.filter(r=>{
+      // If a specific rowIdx is requested, only include that row
+      if(rowIdx!=null&&r.idx!==rowIdx)return false;
+      if(!r.research)return true;try{return JSON.parse(r.research)[colKey]===undefined;}catch{return true;}
+    });
+    const queued=limit>0?Math.min(needsCol.length,limit):needsCol.length;
+    runColJob(jobId,colKey,rowIdx!=null?0:limit||0,rowIdx!=null?[rowIdx]:null); // non-blocking
+    json(res,{queued});
   }catch(e){json(res,{error:e.message},400);}return;}
 
   // ─── Clay-style: load sheet data for page refresh ─────────────────────────
