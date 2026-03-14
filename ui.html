@@ -432,6 +432,7 @@ th:hover .th-del-btn{opacity:1!important}
             <button id="btn-cancel" class="btn bs sm hide" onclick="cancelResearch()">■ Cancel</button>
             <button id="btn-test" class="btn bs sm" onclick="runResearch(10)" title="Run on first 10 rows only">⚡ Test (10)</button>
             <button id="btn-preview" class="btn bs sm" onclick="previewPrompt()" title="Preview the exact prompt before running">👁 Preview</button>
+            <button class="btn bs sm" onclick="exportSheet()" title="Export full table as Excel">⬇ Export</button>
             <button id="btn-run" class="btn bp sm" onclick="runResearch()">▶ Run</button>
           </div>
         </div>
@@ -879,6 +880,45 @@ function renderProvSelect(){
   sel.innerHTML=avail.map(id=>`<option value="${id}">${x(providers[id].name)}</option>`).join('');
   if(!sel.value&&avail[0])sel.value=avail[0];
   updateCostEst();
+}
+function exportSheet(){
+  if(!csvRows.length){toast('Upload a CSV first','err');return;}
+  // Build header row: all original input columns + all enrichment columns
+  const inputHdrs=csvHdrs; // full original headers — client always has them all
+  const enrichHdrs=enrichCols.filter(c=>c.type!=='formula').map(c=>c.label);
+  const fxHdrs=enrichCols.filter(c=>c.type==='formula').map(c=>c.label);
+  const allHdrs=[...inputHdrs,...enrichHdrs,...fxHdrs];
+
+  // Build data rows
+  const aoa=[allHdrs];
+  for(let i=0;i<csvRows.length;i++){
+    const orig=csvRows[i];
+    const row=inputHdrs.map(h=>orig[h]??'');
+    // AI/Python enrichment columns
+    for(const c of enrichCols.filter(c=>c.type!=='formula')){
+      const val=rowResults[i]?.[c.key];
+      row.push(val!=null?String(val):'');
+    }
+    // Formula columns (evaluated client-side)
+    for(const c of enrichCols.filter(c=>c.type==='formula')){
+      let val='';
+      try{val=String(evalFormula(c.formula,orig,rowResults[i]||{}));}catch{}
+      row.push(val==='undefined'?'':val);
+    }
+    aoa.push(row);
+  }
+
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  // Auto column widths (cap at 60)
+  ws['!cols']=allHdrs.map((_,ci)=>{
+    const max=aoa.reduce((m,r)=>Math.max(m,String(r[ci]??'').length),0);
+    return{wch:Math.min(Math.max(max,8),60)};
+  });
+  XLSX.utils.book_append_sheet(wb,ws,'Sheet1');
+  const date=new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb,`prospect_research_${date}.xlsx`);
+  toast('Exported!','ok',2000);
 }
 function updateCostEst(){
   const pid=$i('prov-sel').value,p=providers[pid];
