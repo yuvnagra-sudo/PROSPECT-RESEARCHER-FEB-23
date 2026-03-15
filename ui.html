@@ -78,8 +78,6 @@ textarea.fi{resize:vertical;line-height:1.5}
 .prog-wrap{display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b}
 .prog-bar{width:100px;height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden}
 .prog-fill{height:100%;background:#6366f1;transition:width .3s;border-radius:3px}
-#no-company-banner{background:#fefce8;border:1px solid #fde68a;border-radius:6px;padding:6px 12px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:8px}
-#no-company-banner select{padding:3px 6px;font-size:12px;border:1px solid #fde68a;border-radius:4px;background:#fff}
 
 /* ── Spreadsheet Table ── */
 #table-scroll{flex:1;overflow:auto}
@@ -241,6 +239,55 @@ textarea.fi{resize:vertical;line-height:1.5}
 /* ── Column badges ── */
 .col-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle}
 .cb-llm{background:#eff6ff;color:#3b82f6}.cb-api{background:#f0fdf4;color:#16a34a}.cb-fx{background:#fefce8;color:#ca8a04}
+
+/* ── CSV Column Role System ── */
+.th-in{cursor:pointer;user-select:none;transition:background .1s}
+.th-in:hover{background:#f1f5f9!important}
+.th-in.is-context{background:#eff6ff!important;color:#3b82f6!important}
+.th-in.is-context:hover{background:#dbeafe!important}
+.th-in.is-hidden-col{opacity:0.45}
+.th-role-dot{width:6px;height:6px;border-radius:50%;background:#3b82f6;display:inline-block;flex-shrink:0}
+.th-role-icon{font-size:10px;line-height:1}
+.th-in-label{display:flex;align-items:center;justify-content:space-between;gap:4px;width:100%}
+.th-in-name{overflow:hidden;text-overflow:ellipsis;flex:1}
+.th-sort-btn{opacity:0;transition:opacity .1s}
+.th-in:hover .th-sort-btn{opacity:1!important}
+
+/* ── Column Role Popover ── */
+#col-role-popover{position:fixed;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:500;width:220px;padding:0;overflow:hidden}
+.crp-hd{padding:10px 14px;background:#f8fafc;border-bottom:1px solid #f1f5f9;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#64748b;display:flex;align-items:center;justify-content:space-between}
+.crp-hd button{background:none;border:none;cursor:pointer;color:#94a3b8;font-size:13px;padding:0 2px;line-height:1}
+.crp-hd button:hover{color:#0f172a}
+.crp-section{padding:8px 14px;border-bottom:1px solid #f8fafc}
+.crp-section:last-child{border-bottom:none}
+.crp-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:6px}
+.crp-toggle{display:flex;align-items:center;justify-content:space-between;padding:5px 0;cursor:pointer}
+.crp-toggle-label{font-size:13px;color:#0f172a;display:flex;align-items:center;gap:6px}
+.crp-toggle-label .dot{width:8px;height:8px;border-radius:50%;background:#3b82f6;flex-shrink:0}
+.crp-chips{display:flex;flex-wrap:wrap;gap:5px;padding:2px 0 4px}
+.crp-chip{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:500;cursor:pointer;border:1.5px solid #e2e8f0;background:#f8fafc;color:#374151;transition:all .12s}
+.crp-chip:hover{border-color:#6366f1;color:#6366f1;background:#eff6ff}
+.crp-chip.active{background:#6366f1;color:#fff;border-color:#6366f1}
+.crp-chip.active-green{background:#16a34a;color:#fff;border-color:#16a34a}
+/* toggle switch */
+.toggle-sw{position:relative;width:32px;height:18px;flex-shrink:0}
+.toggle-sw input{opacity:0;width:0;height:0;position:absolute}
+.toggle-track{position:absolute;inset:0;background:#e2e8f0;border-radius:9px;cursor:pointer;transition:background .15s}
+.toggle-track::after{content:'';position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+input:checked+.toggle-track{background:#3b82f6}
+input:checked+.toggle-track::after{transform:translateX(14px)}
+
+/* ── Hide col-run-btn by default, show on hover ── */
+.col-run-btn{display:none!important}
+.th-en:hover .col-run-btn{display:inline-flex!important}
+
+/* ── Drawer context preview ── */
+.drw-ctx-preview{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px}
+.drw-ctx-preview-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:5px}
+.ctx-prev-row{display:flex;gap:6px;padding:3px 0;border-bottom:1px solid #f1f5f9;font-size:11px}
+.ctx-prev-row:last-child{border-bottom:none}
+.ctx-prev-hdr{font-weight:600;color:#64748b;min-width:90px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctx-prev-val{color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 
 /* ── Per-column run button & status badge ── */
 .col-run-btn{background:#6366f1;color:#fff;border:none;border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;flex-shrink:0;line-height:1.4;transition:background .15s}
@@ -415,12 +462,7 @@ th:hover .th-del-btn{opacity:1!important}
             <button class="btn bs sm" onclick="resetSheet()">× Reset</button>
             <button class="btn bs sm" onclick="openTmplModal()">📋 Template</button>
             <button class="btn bs sm" onclick="openAIModal()">✨ AI Columns</button>
-            <button class="btn bs sm" id="btn-ctx" onclick="openCtxModal()">📋 Context Columns</button>
             <button id="hidden-badge" class="hide" onclick="showHiddenCols()"></button>
-            <div id="no-company-banner" class="hide">
-              ⚠️ Company column:
-              <select id="company-sel" onchange="colMap.company=this.value;updateCostEst()"></select>
-            </div>
           </div>
           <div class="tb-right">
             <div id="run-progress" class="prog-wrap hide">
@@ -633,6 +675,13 @@ th:hover .th-del-btn{opacity:1!important}
       </div>
     </div>
   </div>
+  <!-- Context preview strip (shown at bottom of drawer body for AI columns) -->
+  <div id="drw-ctx-preview-wrap" class="hide" style="padding:0 20px 12px">
+    <div class="drw-ctx-preview">
+      <div class="drw-ctx-preview-title">📋 Data available to AI<span style="font-weight:400;font-size:10px;color:#94a3b8;margin-left:4px">(from context columns)</span></div>
+      <div id="drw-ctx-rows"></div>
+    </div>
+  </div>
   <div class="drw-ft">
     <button class="btn bd sm" onclick="deleteDrawerCol()">Delete Column</button>
     <button class="btn bp" onclick="saveDrawerCol()">Save</button>
@@ -666,24 +715,8 @@ th:hover .th-del-btn{opacity:1!important}
   </div>
 </div>
 
-<!-- ── Context Columns Modal ── -->
-<div id="ctx-modal" class="modal-wrap hide" onclick="if(event.target===this)closeCtxModal()">
-  <div class="modal">
-    <div class="modal-hd"><span>Select Context Columns</span><button class="btn bg sm" onclick="closeCtxModal()">✕</button></div>
-    <div class="modal-bd">
-      <p style="font-size:13px;color:#64748b;margin-bottom:12px">Choose which CSV columns the AI will see when researching each company.</p>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <button class="btn bs sm" onclick="ctxSelectAll()">Select All</button>
-        <button class="btn bs sm" onclick="ctxClearAll()">Clear All</button>
-      </div>
-      <div id="ctx-col-list" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:300px;overflow-y:auto"></div>
-    </div>
-    <div class="modal-ft">
-      <button class="btn bs sm" onclick="closeCtxModal()">Cancel</button>
-      <button class="btn bp" onclick="saveCtxCols()">Done</button>
-    </div>
-  </div>
-</div>
+<!-- ── Column Role Popover ── -->
+<div id="col-role-popover" class="hide" onclick="event.stopPropagation()"></div>
 
 <!-- ── Row Detail Modal ── -->
 <div id="det-modal" class="modal-wrap hide" onclick="if(event.target===this)closeDetModal()">
@@ -995,17 +1028,11 @@ function autoGuess(){
 function onDataLoaded(){
   colMap=autoGuess();rowResults={};rowStatuses={};
   contextCols=[...csvHdrs]; // default: all columns selected
-  // Show company selector if not detected
-  if(!colMap.company){
-    $i('no-company-banner').classList.remove('hide');
-    $i('company-sel').innerHTML=csvHdrs.map(h=>`<option value="${x(h)}">${x(h)}</option>`).join('');
-    colMap.company=csvHdrs[0]||'';
-    $i('company-sel').value=colMap.company;
-  }else{$i('no-company-banner').classList.add('hide');}
+  // If company not detected, default to first column (user can reassign via header popover)
+  if(!colMap.company)colMap.company=csvHdrs[0]||'';
   $i('upload-zone').classList.add('hide');
   $i('sheet-view').classList.remove('hide');
   $i('row-count').textContent=csvRows.length+' rows';
-  updateCtxBadge();
   updateCostEst();
   // Attach virtual scroll listener once
   const scr=$i('table-scroll');
@@ -1050,7 +1077,21 @@ function renderTableHead(){
   const head=$i('tbl-head');
   const allSel=csvRows.length>0&&csvRows.every((_,i)=>csvRows[i]._blank||selectedRows.has(i));
   head.innerHTML=`<th class="th-cb th-rn" style="min-width:28px"><input type="checkbox" title="Select all" ${allSel?'checked':''} onchange="selectAll(this.checked)" style="accent-color:#6366f1;width:13px;height:13px;margin:0"></th>`+
-    csvHdrs.filter(h=>!hiddenInputCols.has(h)).map(h=>{const sa=sortBy===h;const cls='th-in'+(sa?' sort-'+sortDir:'');return`<th class="${cls}" style="position:relative" onclick="setSort('${x(h)}')" title="Sort by ${x(h)}">${x(h)}<button onclick="event.stopPropagation();removeInputCol('${x(h)}')" title="Remove column" class="th-del-btn">✕</button></th>`;}).join('')+
+    csvHdrs.filter(h=>!hiddenInputCols.has(h)).map(h=>{
+      const sa=sortBy===h;
+      const isCtx=contextCols.includes(h);
+      const isComp=colMap.company===h;
+      const isWeb=colMap.website===h;
+      const isEmail=colMap.email===h;
+      let roleCls=isCtx?' is-context':'';
+      let roleIcons='';
+      if(isComp)roleIcons+=`<span class="th-role-icon" title="Company column">🏢</span>`;
+      if(isWeb)roleIcons+=`<span class="th-role-icon" title="Website column">🌐</span>`;
+      if(isEmail)roleIcons+=`<span class="th-role-icon" title="Email column">✉️</span>`;
+      if(isCtx&&!isComp&&!isWeb&&!isEmail)roleIcons+=`<span class="th-role-dot"></span>`;
+      const cls='th-in'+roleCls+(sa?' sort-'+sortDir:'');
+      return`<th class="${cls}" style="position:relative" title="Click to configure · Sort: ${x(h)}" onclick="event.stopPropagation();openColRolePopover('${x(h)}',this)"><div class="th-in-label"><span class="th-in-name">${x(h)}</span><span style="display:flex;align-items:center;gap:2px">${roleIcons}</span></div><button onclick="event.stopPropagation();setSort('${x(h)}')" title="Sort" style="position:absolute;top:2px;right:18px;background:none;border:none;cursor:pointer;font-size:9px;color:#94a3b8;padding:0;opacity:0" class="th-sort-btn">${sa?(sortDir==='asc'?'▲':'▼'):'⇅'}</button><button onclick="event.stopPropagation();removeInputCol('${x(h)}')" title="Remove column" class="th-del-btn">✕</button></th>`;
+    }).join('')+
     enrichCols.map((c,i)=>{
       const hidden=hiddenCols.has(c.key);
       const badge=c.type==='api'?'<span class="col-badge cb-api">API</span>':c.type==='formula'?'<span class="col-badge cb-fx">fx</span>':'<span class="col-badge cb-llm">AI</span>';
@@ -1641,6 +1682,8 @@ function openDrawer(idx){
   $i('drw-fx-chat-msgs').innerHTML='<div data-placeholder style="color:#94a3b8;font-size:11px;text-align:center;padding:6px 0">Describe what you want — AI will write it</div>';
   $i('drw-py-chat-msgs').innerHTML='<div data-placeholder style="color:#94a3b8;font-size:11px;text-align:center;padding:6px 0">Describe what you want — AI will write Python code for it</div>';
   setDrwType(c.type==='formula'?'formula':c.type==='python'?'python':'ai');
+  // Context preview (AI columns only)
+  updateDrawerCtxPreview(c);
   $i('drawer-bg').classList.remove('hide');
   $i('col-drawer').classList.remove('hide');
   $i('drw-name').focus();$i('drw-name').select();
@@ -1661,6 +1704,18 @@ function drwUpdateKey(){
   $i('drw-key-preview').textContent='key: '+key;
 }
 function closeDrawer(){$i('drawer-bg').classList.add('hide');$i('col-drawer').classList.add('hide');drawerIdx=-1;}
+function updateDrawerCtxPreview(col){
+  const wrap=$i('drw-ctx-preview-wrap');const rows=$i('drw-ctx-rows');
+  if(!wrap||!rows)return;
+  const isAI=!col.type||col.type==='ai';
+  if(!isAI||!contextCols.length){wrap.classList.add('hide');return;}
+  const sampleRow=csvRows.find(r=>!r._blank)||{};
+  rows.innerHTML=contextCols.slice(0,8).map(h=>{
+    const v=String(sampleRow[h]||'—').slice(0,60);
+    return`<div class="ctx-prev-row"><span class="ctx-prev-hdr">${x(h)}</span><span class="ctx-prev-val">${x(v)}</span></div>`;
+  }).join('')+(contextCols.length>8?`<div style="font-size:10px;color:#94a3b8;padding-top:4px">+${contextCols.length-8} more columns…</div>`:'');
+  wrap.classList.remove('hide');
+}
 function saveDrawerCol(){
   if(drawerIdx<0)return;
   const label=$i('drw-name').value.trim()||'Column';
@@ -1722,26 +1777,69 @@ function applyAICols(){
   toast(`Added ${aiSuggestedCols.length} columns`,'ok');
 }
 
-// ── Context Columns Modal ─────────────────────────────────────────────────────
-function updateCtxBadge(){
-  const btn=$i('btn-ctx');if(!btn)return;
-  const total=csvHdrs.length,sel=contextCols.length;
-  btn.textContent=`📋 Context Columns (${sel}/${total})`;
+// ── Column Role Popover ───────────────────────────────────────────────────────
+let _crpOpen=null; // currently open header name
+function openColRolePopover(headerName, thEl){
+  const pop=$i('col-role-popover');
+  // Toggle off if same header
+  if(_crpOpen===headerName){closeColRolePopover();return;}
+  _crpOpen=headerName;
+  const isCtx=contextCols.includes(headerName);
+  const isComp=colMap.company===headerName;
+  const isWeb=colMap.website===headerName;
+  const isEmail=colMap.email===headerName;
+  function chip(role,label,activeClass){
+    const active=(role==='company'&&isComp)||(role==='website'&&isWeb)||(role==='email'&&isEmail);
+    return`<span class="crp-chip${active?' '+activeClass:''}" onclick="crpSetRole('${x(headerName)}','${role}')">${label}</span>`;
+  }
+  pop.innerHTML=`
+    <div class="crp-hd"><span>${x(headerName)}</span><button onclick="closeColRolePopover()">✕</button></div>
+    <div class="crp-section">
+      <div class="crp-label">AI Context</div>
+      <label class="crp-toggle">
+        <span class="crp-toggle-label"><span class="dot"></span> Include in AI prompts</span>
+        <label class="toggle-sw"><input type="checkbox" id="crp-ctx-chk" ${isCtx?'checked':''} onchange="crpToggleCtx('${x(headerName)}',this.checked)"><span class="toggle-track"></span></label>
+      </label>
+    </div>
+    <div class="crp-section">
+      <div class="crp-label">Map as</div>
+      <div class="crp-chips">
+        ${chip('company','🏢 Company','active')}
+        ${chip('website','🌐 Website','active-green')}
+        ${chip('email','✉️ Email','active-green')}
+      </div>
+    </div>`;
+  pop.classList.remove('hide');
+  // Position anchored to th
+  const rect=thEl.getBoundingClientRect();
+  pop.style.top=(rect.bottom+4)+'px';
+  pop.style.left=Math.min(rect.left,window.innerWidth-228)+'px';
 }
-function openCtxModal(){
-  const list=$i('ctx-col-list');
-  list.innerHTML=csvHdrs.map(h=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0"><input type="checkbox" value="${x(h)}" ${contextCols.includes(h)?'checked':''} style="cursor:pointer"> ${x(h)}</label>`).join('');
-  $i('ctx-modal').classList.remove('hide');
+function closeColRolePopover(){
+  $i('col-role-popover').classList.add('hide');
+  _crpOpen=null;
 }
-function closeCtxModal(){$i('ctx-modal').classList.add('hide');}
-function saveCtxCols(){
-  contextCols=Array.from($i('ctx-col-list').querySelectorAll('input:checked')).map(i=>i.value);
-  if(!contextCols.length){toast('Select at least one column','err');return;}
-  closeCtxModal();updateCtxBadge();
-  toast(`${contextCols.length} context columns selected`,'ok');
+function crpToggleCtx(headerName, checked){
+  if(checked){if(!contextCols.includes(headerName))contextCols.push(headerName);}
+  else{contextCols=contextCols.filter(h=>h!==headerName);if(!contextCols.length){contextCols=[headerName];toast('At least one context column required','err');const chk=$i('crp-ctx-chk');if(chk)chk.checked=true;return;}}
+  renderTableHead();
 }
-function ctxSelectAll(){$i('ctx-col-list').querySelectorAll('input').forEach(i=>i.checked=true);}
-function ctxClearAll(){$i('ctx-col-list').querySelectorAll('input').forEach(i=>i.checked=false);}
+function crpSetRole(headerName, role){
+  if(role==='company'){const was=colMap.company===headerName;colMap.company=was?'':headerName;}
+  else if(role==='website'){const was=colMap.website===headerName;colMap.website=was?'':headerName;}
+  else if(role==='email'){const was=colMap.email===headerName;colMap.email=was?'':headerName;}
+  updateCostEst();renderTableHead();
+  // Re-open popover on same element to refresh chip state
+  const thEl=document.querySelector(`#tbl-head th[onclick*="${CSS.escape(headerName)}"]`);
+  _crpOpen=null;
+  if(thEl)openColRolePopover(headerName,thEl);
+  else closeColRolePopover();
+}
+// Close popover when clicking outside
+document.addEventListener('click',()=>closeColRolePopover());
+// Legacy no-op stubs (called from onDataLoaded which we kept)
+function updateCtxBadge(){}
+
 
 // ── Run Research ──────────────────────────────────────────────────────────────
 function buildSystemPrompt(){
