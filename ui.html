@@ -96,8 +96,9 @@ textarea.fi{resize:vertical;line-height:1.5}
 .th-add{background:#f8fafc!important;width:48px;text-align:center;cursor:pointer;color:#94a3b8;font-size:18px;font-weight:300}
 .th-add:hover{color:#6366f1;background:#eff6ff!important}
 .td-rn{color:#94a3b8;font-size:11px;text-align:right;user-select:none;min-width:40px}
-.td-in{font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis}
-.td-en{font-size:12px;color:#0f172a;max-width:260px;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.td-in{font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;height:38px;max-height:38px}
+.td-en{font-size:12px;color:#0f172a;max-width:260px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;height:38px;max-height:38px}
+#main-tbl tr{height:38px}
 .td-en:hover{background:#fafafe}
 .td-empty{color:#cbd5e1}
 .td-err-cell{color:#ef4444;font-size:11px}
@@ -787,6 +788,11 @@ let hiddenInputCols = new Set(); // CSV input columns removed from view
 let sheetJobId = null;
 let colRunStatus = {}; // {colKey: 'idle'|'running'|'done'|'error'}
 let colRunCount = {};  // {colKey: {done, total, errors}}
+// Virtual scrolling
+const ROW_H = 38; // px — fixed row height for virtual scroll
+const VBUF  = 30; // rows to render above/below viewport
+let vStart = 0, vEnd = 80; // currently rendered window into displayRows
+let vDisplayRows = []; // cached output of getDisplayRows() for scroll handler
 // Table UX
 let tableFilter = '';
 let sortBy = null; // column name to sort by
@@ -1001,6 +1007,9 @@ function onDataLoaded(){
   $i('row-count').textContent=csvRows.length+' rows';
   updateCtxBadge();
   updateCostEst();
+  // Attach virtual scroll listener once
+  const scr=$i('table-scroll');
+  scr.onscroll=onTableScroll;
   renderTable();
 }
 function resetSheet(){
@@ -1037,10 +1046,8 @@ function getDisplayRows(){
   }
   return indices;
 }
-function renderTable(){
-  const VISIBLE=200;
+function renderTableHead(){
   const head=$i('tbl-head');
-  // Master checkbox
   const allSel=csvRows.length>0&&csvRows.every((_,i)=>csvRows[i]._blank||selectedRows.has(i));
   head.innerHTML=`<th class="th-cb th-rn" style="min-width:28px"><input type="checkbox" title="Select all" ${allSel?'checked':''} onchange="selectAll(this.checked)" style="accent-color:#6366f1;width:13px;height:13px;margin:0"></th>`+
     csvHdrs.filter(h=>!hiddenInputCols.has(h)).map(h=>{const sa=sortBy===h;const cls='th-in'+(sa?' sort-'+sortDir:'');return`<th class="${cls}" style="position:relative" onclick="setSort('${x(h)}')" title="Sort by ${x(h)}">${x(h)}<button onclick="event.stopPropagation();removeInputCol('${x(h)}')" title="Remove column" class="th-del-btn">✕</button></th>`;}).join('')+
@@ -1052,31 +1059,49 @@ function renderTable(){
       return`<th class="th-en${hidden?' col-hidden':''}${sa?' sort-'+sortDir:''}" id="th-${c.key}" title="${x(c.label)}" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="colDragOver(event)" ondrop="colDrop(event,${i})" ondragleave="colDragLeave(event)"><div class="th-en-inner"><span onclick="openDrawer(${i})" style="cursor:pointer">${x(c.label)}${badge}</span>${runBtn}<span class="col-hide-btn" title="Hide column" onclick="event.stopPropagation();toggleColHide('${c.key}')" style="font-size:11px;opacity:0.5;cursor:pointer">⊖</span><button class="th-en-edit" onclick="event.stopPropagation();openDrawer(${i})" title="Edit column" style="background:none;border:none;cursor:pointer;font-size:10px;padding:0 2px">✎</button></div></th>`;
     }).join('')+
     `<th class="th-add" onclick="addBlankCol()" title="Add column">+</th>`;
-  // Body
+}
+function renderVirtualBody(){
   const tbody=$i('tbl-body');tbody.innerHTML='';
-  const displayRows=getDisplayRows();
-  const shown=Math.min(VISIBLE,displayRows.length);
-  for(let d=0;d<shown;d++){tbody.appendChild(buildRow(displayRows[d],d));}
-  // Footer
-  if(displayRows.length>VISIBLE){
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td></td><td colspan="${csvHdrs.length+enrichCols.length+1}" style="text-align:center;font-size:12px;color:#94a3b8;padding:12px">${displayRows.length-VISIBLE} more rows (all will be researched)</td>`;
-    tbody.appendChild(tr);
-  }
-  // Update search count
-  const cnt=$i('tbl-search-count');
-  if(tableFilter&&cnt){cnt.textContent=`${displayRows.length} of ${csvRows.filter(r=>!r._blank).length} rows`;cnt.style.display='';}
-  else if(cnt){cnt.style.display='none';}
-  // Attach context menu to tbody
+  const total=vDisplayRows.length;
+  if(!total)return;
+  const colSpan=csvHdrs.filter(h=>!hiddenInputCols.has(h)).length+enrichCols.length+2;
+  // Top spacer
+  if(vStart>0){const sp=document.createElement('tr');sp.style.height=(vStart*ROW_H)+'px';sp.innerHTML=`<td colspan="${colSpan}" style="padding:0;border:none"></td>`;tbody.appendChild(sp);}
+  // Visible rows
+  for(let d=vStart;d<Math.min(vEnd,total);d++)tbody.appendChild(buildRow(vDisplayRows[d],d));
+  // Bottom spacer
+  const remain=total-Math.min(vEnd,total);
+  if(remain>0){const sp=document.createElement('tr');sp.style.height=(remain*ROW_H)+'px';sp.innerHTML=`<td colspan="${colSpan}" style="padding:0;border:none"></td>`;tbody.appendChild(sp);}
+  // Context menu
   tbody.oncontextmenu=e=>{
     const td=e.target.closest('td');if(!td)return;
     const tr=td.closest('tr');if(!tr||tr.dataset.idx===undefined)return;
     e.preventDefault();
-    // Detect which enrichment column cell was right-clicked (id="cell-{idx}-{key}")
     const cellId=td.id||'';const colKeyMatch=cellId.match(/^cell-\d+-(.+)$/);
-    const clickedColKey=colKeyMatch?colKeyMatch[1]:null;
-    showCtxMenu(e,parseInt(tr.dataset.idx),clickedColKey);
+    showCtxMenu(e,parseInt(tr.dataset.idx),colKeyMatch?colKeyMatch[1]:null);
   };
+}
+function onTableScroll(){
+  const scr=$i('table-scroll');if(!scr||!vDisplayRows.length)return;
+  const scrollTop=scr.scrollTop,vpH=scr.clientHeight;
+  const first=Math.floor(scrollTop/ROW_H);
+  const last=Math.ceil((scrollTop+vpH)/ROW_H);
+  const newStart=Math.max(0,first-VBUF);
+  const newEnd=Math.min(vDisplayRows.length,last+VBUF);
+  if(newStart!==vStart||newEnd!==vEnd){vStart=newStart;vEnd=newEnd;renderVirtualBody();}
+}
+function renderTable(){
+  vDisplayRows=getDisplayRows();
+  // Reset virtual window to top (unless we're just refreshing a running table)
+  const scr=$i('table-scroll');
+  vStart=scr?Math.max(0,Math.floor(scr.scrollTop/ROW_H)-VBUF):0;
+  vEnd=Math.min(vDisplayRows.length,vStart+(scr?Math.ceil(scr.clientHeight/ROW_H):50)+VBUF*2);
+  renderTableHead();
+  renderVirtualBody();
+  // Update search count
+  const cnt=$i('tbl-search-count');
+  if(tableFilter&&cnt){cnt.textContent=`${vDisplayRows.length} of ${csvRows.filter(r=>!r._blank).length} rows`;cnt.style.display='';}
+  else if(cnt){cnt.style.display='none';}
 }
 function buildRow(csvIdx,displayPos){
   const row=csvRows[csvIdx];
@@ -1204,6 +1229,8 @@ function editCell(td,csvIdx,header){
   inp.addEventListener('blur',()=>{
     if(!inp._cancel){
       csvRows[csvIdx][header]=inp.value;
+      // Persist to DB if this row exists server-side
+      if(sheetJobId)api('POST','/api/update-row-cell',{jobId:sheetJobId,rowIdx:csvIdx,header,value:inp.value}).catch(()=>{});
     }
     td.classList.remove('editing');
     td.innerHTML=x((csvRows[csvIdx][header]||'').slice(0,80));
@@ -1800,8 +1827,58 @@ document.addEventListener('visibilitychange',()=>{
   }
 });
 
-// On page load, check if there was an active job that's still running on the server
+// On page load, restore sheet state from DB (Clay-style persistent table)
 async function checkActiveJob(){
+  // 1. Try to restore a Clay-style sheet (highest priority)
+  const savedSheet=localStorage.getItem('pr_sheet_job');
+  if(savedSheet){
+    try{
+      const {jobId,enrichCols:savedCols}=JSON.parse(savedSheet);
+      const d=await api('GET','/api/sheet/'+jobId);
+      if(d&&!d.error&&d.rows&&d.rows.length){
+        // Restore full table state from DB
+        sheetJobId=jobId;
+        enrichCols=(d.columns&&d.columns.length)?d.columns:(savedCols||[]);
+        colMap=d.colMap||{};
+        // Rebuild csvHdrs from first non-empty original row
+        const firstReal=d.rows.find(r=>r.original&&Object.keys(r.original).length>0);
+        csvHdrs=firstReal?Object.keys(firstReal.original):[];
+        // Populate csvRows indexed by row.idx
+        const maxIdx=d.rows.reduce((m,r)=>Math.max(m,r.idx),0);
+        csvRows=Array.from({length:maxIdx+1},()=>({}));
+        rowResults={};rowStatuses={};colRunStatus={};colRunCount={};
+        for(const row of d.rows){
+          if(row.original&&Object.keys(row.original).length)csvRows[row.idx]={...row.original};
+          if(row.status==='success'||row.status==='partial'){
+            const res=row.research||{};
+            rowResults[row.idx]={};rowStatuses[row.idx]={};
+            for(const col of enrichCols){
+              const val=res[col.key];
+              if(val!==undefined&&val!==null&&val!==''){rowResults[row.idx][col.key]=val;rowStatuses[row.idx][col.key]='done';}
+            }
+            // Mark columns with full coverage as done
+            for(const col of enrichCols){if(rowStatuses[row.idx]?.[col.key]==='done'){colRunStatus[col.key]='done';}}
+          }
+        }
+        contextCols=[...csvHdrs];hiddenCols=new Set();hiddenInputCols=new Set();
+        tableFilter='';sortBy=null;sortDir='asc';selectedRows=new Set();
+        // Show the sheet view
+        $i('upload-zone').classList.add('hide');
+        $i('sheet-view').classList.remove('hide');
+        $i('row-count').textContent=csvRows.length+' rows';
+        updateCtxBadge();updateCostEst();
+        const scr=$i('table-scroll');if(scr)scr.onscroll=onTableScroll;
+        renderTable();
+        // Set provider selector
+        if(d.job?.provider){const sel=$i('prov-sel');if(sel)sel.value=d.job.provider;}
+        // Reconnect SSE so live cell updates still stream in
+        curJobId=jobId;openSSE(jobId);
+        toast(`Restored ${csvRows.filter(r=>!r._blank).length} rows from last session`,'ok',3000);
+        return;
+      }else{localStorage.removeItem('pr_sheet_job');}
+    }catch(e){console.error('Sheet restore failed:',e);localStorage.removeItem('pr_sheet_job');}
+  }
+  // 2. Check for a regular running research job
   const saved=localStorage.getItem('pr_active_job');
   if(!saved)return;
   try{

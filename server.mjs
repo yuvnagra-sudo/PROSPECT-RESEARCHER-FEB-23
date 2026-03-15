@@ -1494,9 +1494,21 @@ Return ONLY valid JSON (no markdown, no code fences):
     if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
     let sections=[];if(job.sections_json){try{sections=JSON.parse(job.sections_json);}catch{}}
     const colMap2=(() =>{try{return JSON.parse(job.col_map||'{}');}catch{return{};}})();
-    const allRows=S.gR.all(jid).slice(0,500).map(r=>({idx:r.idx,original:r.status==='skipped'?{}:(()=>{try{return JSON.parse(r.original_row||'{}');}catch{return{};}})(),research:safeParseResearch(r.research),status:r.status}));
+    const allRows=S.gR.all(jid).map(r=>({idx:r.idx,original:r.status==='skipped'?{}:(()=>{try{return JSON.parse(r.original_row||'{}');}catch{return{};}})(),research:safeParseResearch(r.research),status:r.status}));
     json(res,{job:{id:job.id,name:job.name,provider:job.provider,status:job.status,total_rows:job.total_rows},columns:sections,colMap:colMap2,rows:allRows});
     return;}
+
+  // ─── Update a single original-row cell (persists input-column edits) ────────
+  if(req.method==='POST'&&p==='/api/update-row-cell'){const b=await readB(req);try{
+    const{jobId,rowIdx,header,value}=JSON.parse(b);
+    const job=S.gJ.get(jobId);if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
+    const row=db.prepare('SELECT original_row FROM rows WHERE job_id=? AND idx=?').get(jobId,rowIdx);
+    if(!row)return json(res,{error:'Row not found'},404);
+    let orig={};try{orig=JSON.parse(row.original_row||'{}');}catch{}
+    orig[header]=value;
+    db.prepare('UPDATE rows SET original_row=? WHERE job_id=? AND idx=?').run(JSON.stringify(orig),jobId,rowIdx);
+    json(res,{ok:true});
+  }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p.match(/^\/api\/resume\/\d+$/)){const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
     if(!job||job.user_id!==uid)return json(res,{error:'Not found'},404);
