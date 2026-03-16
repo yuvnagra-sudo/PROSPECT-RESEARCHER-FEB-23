@@ -1190,25 +1190,45 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
     await Promise.all(Array.from({length:concurrency},()=>pyWorker()));
   } else {
   // ── AI (LLM) column ───────────────────────────────────────────────────────
-  const wrappedSys=wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
+  // Custom prompt mode: if desc contains {{variable}} syntax, treat it as a
+  // standalone prompt — substitute variables, skip JSON wrapping, return raw text.
+  const rawDesc=colSection.desc||'';
+  const isCustomPrompt=/\{\{[\w\s]+\}\}/.test(rawDesc);
+  const wrappedSys=isCustomPrompt
+    ?'Follow the user\'s instructions exactly. Output only what is requested — nothing more, no extra commentary.'
+    :wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
   const concurrency=Math.min(CONCURRENCY[job.provider]||3,5);
   async function colWorker(){
     while(queue.length>0&&!ctx.cancelled){
       const row=queue.shift();if(!row)break;
       let existing={};try{existing=JSON.parse(row.research||'{}');}catch{}
-      let colDesc=colSection.desc||'';
-      colDesc=colDesc.replace(/\{(\w+)\}/g,(_,k)=>existing[k]?String(existing[k]):`[${k}]`);
-      // Include output from previously-run columns as context so this column can reference them
-      const prevData=sections.filter(s=>s.key!==colKey&&existing[s.key]!=null&&String(existing[s.key]).trim().length>1);
-      const prevCtx=prevData.length?'\n\n--- DATA FROM PREVIOUSLY ENRICHED COLUMNS ---\n'+prevData.map(s=>`**${s.label}:** ${String(existing[s.key]).slice(0,800)}`).join('\n'):'';
-      const fullPrompt=row.prompt+prevCtx+(colDesc?`\n\nFor this specific research task, focus on: ${colDesc}`:'');
+      let originalRow={};try{originalRow=JSON.parse(row.original_row||'{}');}catch{}
+      // Merge CSV data + enriched data as variable source (CSV takes priority for naming)
+      const varSrc={...existing,...originalRow};
+      let fullPrompt;
+      if(isCustomPrompt){
+        // Substitute {{column_name}} and {column_name} from CSV row + enriched columns
+        fullPrompt=rawDesc.replace(/\{\{([\w\s]+)\}\}/g,(_,k)=>{
+          const key=k.trim();
+          return varSrc[key]!==undefined&&String(varSrc[key]).trim()?String(varSrc[key]):`[${key}]`;
+        }).replace(/\{(\w+)\}/g,(_,k)=>varSrc[k]!==undefined&&String(varSrc[k]).trim()?String(varSrc[k]):`[${k}]`);
+      } else {
+        let colDesc=rawDesc;
+        colDesc=colDesc.replace(/\{(\w+)\}/g,(_,k)=>existing[k]?String(existing[k]):`[${k}]`);
+        // Include output from previously-run columns as context
+        const prevData=sections.filter(s=>s.key!==colKey&&existing[s.key]!=null&&String(existing[s.key]).trim().length>1);
+        const prevCtx=prevData.length?'\n\n--- DATA FROM PREVIOUSLY ENRICHED COLUMNS ---\n'+prevData.map(s=>`**${s.label}:** ${String(existing[s.key]).slice(0,800)}`).join('\n'):'';
+        fullPrompt=row.prompt+prevCtx+(colDesc?`\n\nFor this specific research task, focus on: ${colDesc}`:'');
+      }
       emit({type:'row-start',idx:row.idx,company:row.company,colKey});
       let retries=0,done=false,lastErr='';
       while(!done&&retries<3&&!ctx.cancelled){
         try{
-          const r=await callLLM(fullPrompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,[colSection]);
-          const structured=parseStructuredResponse(r.research,[colSection]);
-          const value=structured[colKey]!==undefined?structured[colKey]:(structured._raw||null);
+          const r=isCustomPrompt
+            ?await callLLM(fullPrompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,[])
+            :await callLLM(fullPrompt,prov,wrappedSys,!!job.use_web_search,apiKey,ctx.abort.signal,[colSection]);
+          const value=isCustomPrompt?(r.research||'').trim()
+            :(()=>{const s=parseStructuredResponse(r.research,[colSection]);return s[colKey]!==undefined?s[colKey]:(s._raw||null);})();
           const merged={...existing,[colKey]:value,_parsed:true};
           const allComplete=sections.length>0&&sections.every(s=>s.type==='python'||s.type==='formula'||merged[s.key]!==undefined&&merged[s.key]!=='');
           S.uRMerge.run(JSON.stringify(merged),allComplete?'success':'partial',r.inputTokens,r.outputTokens,jobId,row.idx);

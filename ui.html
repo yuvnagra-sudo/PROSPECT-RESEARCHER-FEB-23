@@ -281,13 +281,9 @@ input:checked+.toggle-track::after{transform:translateX(14px)}
 .col-run-btn{display:none!important}
 .th-en:hover .col-run-btn{display:inline-flex!important}
 
-/* ── Drawer context preview ── */
-.drw-ctx-preview{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px}
-.drw-ctx-preview-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:5px}
-.ctx-prev-row{display:flex;gap:6px;padding:3px 0;border-bottom:1px solid #f1f5f9;font-size:11px}
-.ctx-prev-row:last-child{border-bottom:none}
-.ctx-prev-hdr{font-weight:600;color:#64748b;min-width:90px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ctx-prev-val{color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+/* ── Variable chips in drawer ── */
+.var-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;background:#eff6ff;color:#3b82f6;border:1px solid #bfdbfe;border-radius:4px;font-size:11px;font-family:monospace;cursor:pointer;transition:all .1s;white-space:nowrap}
+.var-chip:hover{background:#3b82f6;color:#fff;border-color:#3b82f6}
 
 /* ── Per-column run button & status badge ── */
 .col-run-btn{background:#6366f1;color:#fff;border:none;border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;flex-shrink:0;line-height:1.4;transition:background .15s}
@@ -633,11 +629,16 @@ th:hover .th-del-btn{opacity:1!important}
     </div>
     <!-- AI instruction panel -->
     <div id="drw-ai-panel">
-      <label class="fi-l">Research Instruction <span style="font-size:11px;color:#94a3b8;font-weight:400">(what should AI find?)</span></label>
-      <textarea class="fi" id="drw-desc" rows="4" placeholder="e.g. Find the company's top 3 pain points and business challenges they face"></textarea>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px">
+        <label class="fi-l" style="margin:0">Prompt / Instruction</label>
+        <span style="font-size:11px;color:#94a3b8">Use <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:11px">{{column}}</code> to insert row data</span>
+      </div>
+      <textarea class="fi" id="drw-desc" rows="6" placeholder="e.g. Find the company's top 3 pain points.&#10;&#10;Or write a full prompt:&#10;Evaluate {{company_name}} using {{services}} and output: Fit or Not a Fit: one sentence why."></textarea>
+      <!-- Column variable chips -->
+      <div id="drw-var-chips" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"></div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:10px">
         <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">✨ Generate with AI</div>
-        <textarea class="fi" id="formula-gen-desc" rows="2" placeholder="e.g. Combine first name and last name with a space between them" style="font-size:12px;margin-bottom:6px"></textarea>
+        <textarea class="fi" id="formula-gen-desc" rows="2" placeholder="e.g. Evaluate if this agency needs a white-label dev partner" style="font-size:12px;margin-bottom:6px"></textarea>
         <button class="btn bs sm" id="formula-gen-btn" onclick="generateFormula()" style="width:100%;justify-content:center">Generate Instruction</button>
       </div>
     </div>
@@ -673,13 +674,6 @@ th:hover .th-del-btn{opacity:1!important}
           <button class="btn bp sm" id="drw-py-chat-btn" onclick="sendPyChat()">Ask</button>
         </div>
       </div>
-    </div>
-  </div>
-  <!-- Context preview strip (shown at bottom of drawer body for AI columns) -->
-  <div id="drw-ctx-preview-wrap" class="hide" style="padding:0 20px 12px">
-    <div class="drw-ctx-preview">
-      <div class="drw-ctx-preview-title">📋 Data available to AI<span style="font-weight:400;font-size:10px;color:#94a3b8;margin-left:4px">(from context columns)</span></div>
-      <div id="drw-ctx-rows"></div>
     </div>
   </div>
   <div class="drw-ft">
@@ -1079,17 +1073,14 @@ function renderTableHead(){
   head.innerHTML=`<th class="th-cb th-rn" style="min-width:28px"><input type="checkbox" title="Select all" ${allSel?'checked':''} onchange="selectAll(this.checked)" style="accent-color:#6366f1;width:13px;height:13px;margin:0"></th>`+
     csvHdrs.filter(h=>!hiddenInputCols.has(h)).map(h=>{
       const sa=sortBy===h;
-      const isCtx=contextCols.includes(h);
       const isComp=colMap.company===h;
       const isWeb=colMap.website===h;
       const isEmail=colMap.email===h;
-      let roleCls=isCtx?' is-context':'';
       let roleIcons='';
       if(isComp)roleIcons+=`<span class="th-role-icon" title="Company column">🏢</span>`;
       if(isWeb)roleIcons+=`<span class="th-role-icon" title="Website column">🌐</span>`;
       if(isEmail)roleIcons+=`<span class="th-role-icon" title="Email column">✉️</span>`;
-      if(isCtx&&!isComp&&!isWeb&&!isEmail)roleIcons+=`<span class="th-role-dot"></span>`;
-      const cls='th-in'+roleCls+(sa?' sort-'+sortDir:'');
+      const cls='th-in'+(sa?' sort-'+sortDir:'');
       return`<th class="${cls}" style="position:relative" title="Click to configure · Sort: ${x(h)}" onclick="event.stopPropagation();openColRolePopover('${x(h)}',this)"><div class="th-in-label"><span class="th-in-name">${x(h)}</span><span style="display:flex;align-items:center;gap:2px">${roleIcons}</span></div><button onclick="event.stopPropagation();setSort('${x(h)}')" title="Sort" style="position:absolute;top:2px;right:18px;background:none;border:none;cursor:pointer;font-size:9px;color:#94a3b8;padding:0;opacity:0" class="th-sort-btn">${sa?(sortDir==='asc'?'▲':'▼'):'⇅'}</button><button onclick="event.stopPropagation();removeInputCol('${x(h)}')" title="Remove column" class="th-del-btn">✕</button></th>`;
     }).join('')+
     enrichCols.map((c,i)=>{
@@ -1211,9 +1202,7 @@ async function runCol(colKey,limit=0){
     const csvEsc=v=>{const s=String(v||'').replace(/"/g,'""');return s.includes(',')||s.includes('"')||s.includes('\n')?`"${s}"`:s;};
     const fullLines=[csvHdrs.map(csvEsc).join(',')];
     for(const r of csvRows)fullLines.push(csvHdrs.map(h=>csvEsc(r[h])).join(','));
-    // Tell server which columns to use for the LLM prompt (the user's contextCols selection)
-    const contextColHeaders=contextCols.length?contextCols:csvHdrs;
-    const d=await api('POST','/api/create-sheet',{csv:fullLines.join('\n'),contextColHeaders,provider:pid,useWebSearch:$i('ws-chk').checked,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),colMapOverride:colMap});
+    const d=await api('POST','/api/create-sheet',{csv:fullLines.join('\n'),provider:pid,useWebSearch:$i('ws-chk').checked,systemPrompt:buildSystemPrompt(),explicitSections:enrichCols.map(c=>({key:c.key,label:c.label,desc:c.desc||''})),colMapOverride:colMap});
     if(!d||d.error){toast(d?.error||'Failed to create sheet','err');return;}
     sheetJobId=d.jobId;
     localStorage.setItem('pr_sheet_job',JSON.stringify({jobId:d.jobId,enrichCols}));
@@ -1682,8 +1671,7 @@ function openDrawer(idx){
   $i('drw-fx-chat-msgs').innerHTML='<div data-placeholder style="color:#94a3b8;font-size:11px;text-align:center;padding:6px 0">Describe what you want — AI will write it</div>';
   $i('drw-py-chat-msgs').innerHTML='<div data-placeholder style="color:#94a3b8;font-size:11px;text-align:center;padding:6px 0">Describe what you want — AI will write Python code for it</div>';
   setDrwType(c.type==='formula'?'formula':c.type==='python'?'python':'ai');
-  // Context preview (AI columns only)
-  updateDrawerCtxPreview(c);
+  updateDrawerVarChips();
   $i('drawer-bg').classList.remove('hide');
   $i('col-drawer').classList.remove('hide');
   $i('drw-name').focus();$i('drw-name').select();
@@ -1704,17 +1692,22 @@ function drwUpdateKey(){
   $i('drw-key-preview').textContent='key: '+key;
 }
 function closeDrawer(){$i('drawer-bg').classList.add('hide');$i('col-drawer').classList.add('hide');drawerIdx=-1;}
-function updateDrawerCtxPreview(col){
-  const wrap=$i('drw-ctx-preview-wrap');const rows=$i('drw-ctx-rows');
-  if(!wrap||!rows)return;
-  const isAI=!col.type||col.type==='ai';
-  if(!isAI||!contextCols.length){wrap.classList.add('hide');return;}
-  const sampleRow=csvRows.find(r=>!r._blank)||{};
-  rows.innerHTML=contextCols.slice(0,8).map(h=>{
-    const v=String(sampleRow[h]||'—').slice(0,60);
-    return`<div class="ctx-prev-row"><span class="ctx-prev-hdr">${x(h)}</span><span class="ctx-prev-val">${x(v)}</span></div>`;
-  }).join('')+(contextCols.length>8?`<div style="font-size:10px;color:#94a3b8;padding-top:4px">+${contextCols.length-8} more columns…</div>`:'');
-  wrap.classList.remove('hide');
+function updateDrawerVarChips(){
+  const wrap=$i('drw-var-chips');if(!wrap)return;
+  // Show all CSV column headers as insertable {{variable}} chips
+  const allHeaders=[...csvHdrs,...enrichCols.map(c=>c.key)];
+  wrap.innerHTML=allHeaders.length
+    ?'<span style="font-size:10px;color:#94a3b8;align-self:center;white-space:nowrap">Insert:</span>'+
+      allHeaders.map(h=>`<span class="var-chip" onclick="insertVar('${x(h)}')" title="Insert {{${x(h)}}}">${x(h)}</span>`).join('')
+    :'';
+}
+function insertVar(headerName){
+  const ta=$i('drw-desc');if(!ta)return;
+  const s=ta.selectionStart,e=ta.selectionEnd;
+  const v=`{{${headerName}}}`;
+  ta.value=ta.value.slice(0,s)+v+ta.value.slice(e);
+  ta.selectionStart=ta.selectionEnd=s+v.length;
+  ta.focus();
 }
 function saveDrawerCol(){
   if(drawerIdx<0)return;
@@ -1784,7 +1777,6 @@ function openColRolePopover(headerName, thEl){
   // Toggle off if same header
   if(_crpOpen===headerName){closeColRolePopover();return;}
   _crpOpen=headerName;
-  const isCtx=contextCols.includes(headerName);
   const isComp=colMap.company===headerName;
   const isWeb=colMap.website===headerName;
   const isEmail=colMap.email===headerName;
@@ -1795,19 +1787,13 @@ function openColRolePopover(headerName, thEl){
   pop.innerHTML=`
     <div class="crp-hd"><span>${x(headerName)}</span><button onclick="closeColRolePopover()">✕</button></div>
     <div class="crp-section">
-      <div class="crp-label">AI Context</div>
-      <label class="crp-toggle">
-        <span class="crp-toggle-label"><span class="dot"></span> Include in AI prompts</span>
-        <label class="toggle-sw"><input type="checkbox" id="crp-ctx-chk" ${isCtx?'checked':''} onchange="crpToggleCtx('${x(headerName)}',this.checked)"><span class="toggle-track"></span></label>
-      </label>
-    </div>
-    <div class="crp-section">
       <div class="crp-label">Map as</div>
       <div class="crp-chips">
         ${chip('company','🏢 Company','active')}
         ${chip('website','🌐 Website','active-green')}
         ${chip('email','✉️ Email','active-green')}
       </div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:6px">Use <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">{{${x(headerName)}}}</code> in your column prompt to reference this column's data.</div>
     </div>`;
   pop.classList.remove('hide');
   // Position anchored to th
@@ -1818,11 +1804,6 @@ function openColRolePopover(headerName, thEl){
 function closeColRolePopover(){
   $i('col-role-popover').classList.add('hide');
   _crpOpen=null;
-}
-function crpToggleCtx(headerName, checked){
-  if(checked){if(!contextCols.includes(headerName))contextCols.push(headerName);}
-  else{contextCols=contextCols.filter(h=>h!==headerName);if(!contextCols.length){contextCols=[headerName];toast('At least one context column required','err');const chk=$i('crp-ctx-chk');if(chk)chk.checked=true;return;}}
-  renderTableHead();
 }
 function crpSetRole(headerName, role){
   if(role==='company'){const was=colMap.company===headerName;colMap.company=was?'':headerName;}
