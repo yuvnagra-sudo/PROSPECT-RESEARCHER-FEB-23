@@ -275,7 +275,8 @@ function parseLHR(lhr) {
   const cats = lhr.categories || {};
   const audits = lhr.audits || {};
   const score = (cat) => (cat?.score !== null && cat?.score !== undefined) ? Math.round(cat.score * 100) : null;
-  const parseDisplayVal = (v) => (v && typeof v === 'string') ? v.trim() : null;
+  // Strip thousands-separator commas (e.g. "1,370 ms" → "1370 ms") to prevent CSV column shift
+  const parseDisplayVal = (v) => (v && typeof v === 'string') ? v.trim().replace(/(\d),(\d)/g, '$1$2') : null;
 
   // Savings in KB (null if audit missing or no savings)
   const savingsKB = id => {

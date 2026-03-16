@@ -2357,6 +2357,9 @@ function showBulkResults(rows){
 function exportBulkCSV(){
   if(!bulkResults.length){toast('No results yet','err');return;}
   const esc=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  // Strip thousands-separator commas from display strings (e.g. "1,370 ms" → "1370 ms")
+  // to prevent CSV column shift for rows with TBT/FCP/etc >= 1000ms
+  const fmt=v=>v==null?v:String(v).replace(/(\d),(\d)/g,'$1$2');
   const getHost=url=>{try{return new URL(url).hostname;}catch{return url||'';}};
   const issueHeaders=[];
   for(let n=1;n<=16;n++)issueHeaders.push(`Issue ${n} Severity`,`Issue ${n} Category`,`Issue ${n} Title`,`Issue ${n} Description`);
@@ -2405,7 +2408,7 @@ function exportBulkCSV(){
       m.ogTitle??'',m.ogDescription??'',m.ogImage??'',
       m.hasAnalytics??'',m.hasSitemap??'',m.hasJsonLD??'',m.hasFavicon??'',
       m.docSizeKB??'',m.altCoverage??'',m.mixedContentCount??'',m.server??'',m.csp??'',
-      m.fcp??'',m.lcp??'',m.cls??'',m.tbt??'',m.speedIndex??'',m.tti??'',m.ttfbMs??'',
+      fmt(m.fcp)??'',fmt(m.lcp)??'',fmt(m.cls)??'',fmt(m.tbt)??'',fmt(m.speedIndex)??'',fmt(m.tti)??'',m.ttfbMs??'',
       m.totalPageWeightKB??'',m.requestCount??'',m.numScripts??'',m.numStylesheets??'',m.numFonts??'',m.domNodes??'',
       m.jsExecutionMs??'',m.mainThreadMs??'',m.longTaskCount??'',
       m.unusedJsKB??'',m.unusedCssKB??'',m.renderBlockingCount??'',m.renderBlockingSavingsMs??'',
