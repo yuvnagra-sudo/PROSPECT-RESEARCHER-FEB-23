@@ -1184,7 +1184,7 @@ function updateColBadge(colKey){
   const el=$i('cs-'+colKey);if(!el)return;
   const runSt=colRunStatus[colKey]||'idle';
   const cnt=colRunCount[colKey]||{done:0,total:0,errors:0};
-  if(runSt==='running'){el.textContent=`${cnt.done}/${cnt.total}`;el.className='col-status-badge csb-running';}
+  if(runSt==='running'){const disp=Math.min(cnt.done,cnt.total);el.textContent=`${disp}/${cnt.total}`;el.className='col-status-badge csb-running';}
   else if(runSt==='done'){el.textContent=cnt.errors?`⚠ ${cnt.done-cnt.errors}/${cnt.done}`:`✓ ${cnt.done}`;el.className='col-status-badge csb-'+(cnt.errors?'error':'done');}
   else if(runSt==='error'){el.textContent='✗';el.className='col-status-badge csb-error';}
   else{el.textContent='';el.className='col-status-badge';}
@@ -1215,10 +1215,12 @@ async function runCol(colKey,limit=0){
   for(let i=0;i<Math.min(csvRows.length,150);i++){
     if(!rowStatuses[i]?.[colKey]||rowStatuses[i][colKey]==='pending'){updateCell(i,colKey,'running',null);}
   }
-  // Connect SSE if not already open for this sheet job
+  // Connect SSE if not already open for this sheet job — wait for open before firing POST
   if(!sse||curJobId!==sheetJobId){
     curJobId=sheetJobId;
-    openSSE(sheetJobId);
+    await new Promise(resolve=>openSSE(sheetJobId,false,resolve));
+  }else if(sse.readyState!==EventSource.OPEN){
+    await new Promise(resolve=>{sse.onopen=resolve;});
   }
   // Fire run-col — results stream via SSE
   const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey,colDef:col,limit});
@@ -1875,10 +1877,11 @@ function stopRunUI(){
 }
 
 let sseRetryDelay=2000,sseRetryTimer=null;
-function openSSE(jobId,isReconnect=false){
+function openSSE(jobId,isReconnect=false,onOpen=null){
   if(sse){sse.close();sse=null;}
   if(sseRetryTimer){clearTimeout(sseRetryTimer);sseRetryTimer=null;}
   sse=new EventSource('/api/stream/'+jobId+'?token='+token);
+  sse.onopen=()=>{if(onOpen)onOpen();};
   sse.onmessage=e=>{
     sseRetryDelay=2000; // reset backoff on successful message
     try{onSSEMsg(JSON.parse(e.data));}catch(err){console.warn('SSE parse error',err);}
@@ -2022,6 +2025,7 @@ function onSSEMsg(m){
   }else if(m.type==='col-done'){
     colRunStatus[m.colKey]=m.failed>0?'error':'done';
     updateColBadge(m.colKey);
+    reconcileColResults(m.colKey);
     const lbl=enrichCols.find(c=>c.key===m.colKey)?.label||m.colKey;
     toast(`"${lbl}" done — ${m.succeeded} succeeded${m.failed?' · '+m.failed+' failed':''}`,'ok',4000);
   }else if(m.type==='done'){
@@ -2034,6 +2038,22 @@ function onSSEMsg(m){
     const ok=m.succeeded||0,fail=m.failed||0;
     toast(`Done! ${ok} succeeded${fail?' · '+fail+' failed':''}${m.cost?' · '+fmtCost(m.cost):''}`,'ok',5000);
   }
+}
+
+async function reconcileColResults(colKey){
+  if(!sheetJobId)return;
+  const d=await api('GET','/api/sheet/'+sheetJobId);
+  if(!d||d.error||!d.rows)return;
+  let updated=0;
+  for(const row of d.rows){
+    const val=row.research?.[colKey];
+    if(val!=null&&val!==''&&(rowResults[row.idx]?.[colKey]==null)){
+      if(!rowResults[row.idx])rowResults[row.idx]={};
+      rowResults[row.idx][colKey]=val;
+      updated++;
+    }
+  }
+  if(updated>0)renderVirtualBody();
 }
 
 // ── Row Detail Modal ──────────────────────────────────────────────────────────
@@ -2332,13 +2352,90 @@ function showBulkResults(rows){
 }
 function exportBulkCSV(){
   if(!bulkResults.length){toast('No results yet','err');return;}
-  const headers=['#','Company/URL','Mobile Perf','Mobile SEO','Mobile Accessibility','Mobile BP','Desktop Perf','Desktop SEO','HTTPS','HTTP Redirect','FCP','LCP','Response MS','Issues Count','Status'];
   const esc=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
-  const csvRows=bulkResults.map((r,i)=>{
-    const m=r.data?.metrics||{};const d=r.data?.desktop||{};
-    return[i+1,r.company||'',m.performance??'',m.seo??'',m.accessibility??'',m.bestPractices??'',d.performance??'',d.seo??'',m.httpsWorks??'',m.httpRedirects??'',m.fcp??'',m.lcp??'',m.responseMs??'',(r.data?.issues||[]).length,r.status].map(esc).join(',');
+  const getHost=url=>{try{return new URL(url).hostname;}catch{return url||'';}};
+  const issueHeaders=[];
+  for(let n=1;n<=16;n++)issueHeaders.push(`Issue ${n} Severity`,`Issue ${n} Category`,`Issue ${n} Title`,`Issue ${n} Description`);
+  const headers=[
+    'Company','URL','Final URL','Status','Summary',
+    'Performance (Mobile)','SEO (Mobile)','Accessibility (Mobile)','Best Practices (Mobile)',
+    'Performance (Desktop)','SEO (Desktop)','Accessibility (Desktop)','Best Practices (Desktop)',
+    'Response Ms','HTTP Status','HTTPS Works','HTTP\u2192HTTPS Redirect',
+    'Title','Title Length','Meta Description','Meta Desc Length','First H1','H1 Count',
+    'Has Viewport','Has Canonical','Is Noindex',
+    'OG Title','OG Description','OG Image',
+    'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
+    'Doc Size KB','Alt Coverage %','Mixed Content Count','Server','CSP Header',
+    'FCP','LCP','CLS','TBT','Speed Index','TTI','TTFB (ms)',
+    'Total Weight (KB)','Requests','Scripts','Stylesheets','Fonts','DOM Nodes',
+    'JS Execution (ms)','Main Thread (ms)','Long Tasks (>50ms)',
+    'Unused JS (KB)','Unused CSS (KB)','Render Blocking','Render Block Savings (ms)',
+    'Unoptimized Images (KB)','Modern Image Formats (KB)','Responsive Images (KB)','Offscreen Images (KB)',
+    'Unminified JS (KB)','Unminified CSS (KB)','Text Compression (KB)',
+    'Legacy JS (KB)','Duplicate JS (KB)','Efficient Animations (KB)',
+    '3rd Party Block (ms)','3rd Party Weight (KB)',
+    'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues',
+    ...issueHeaders,
+    'Errors','Site Alive','Final Domain','Original Domain','Domain Redirected',
+    'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal','Has Online Payment',
+    'Has Calculator/Tool','Has Email Capture','Has Click-to-Call','Has Email Link',
+    'Platform','Copyright Year','Page Text Snippet',
+    'Screenshot Status','Screenshot Path','Visual Analysis'
+  ];
+  const rows=bulkResults.map(r=>{
+    const m=r.data?.metrics||{};
+    const d=r.data?.desktop||{};
+    const issues=r.data?.issues||[];
+    const cm=m.contactMethods||{};
+    const origUrl=r.url||r.company||'';
+    const finalUrl=m.finalUrl||'';
+    const finalDomain=getHost(finalUrl);
+    const origDomain=getHost(origUrl);
+    const row=[
+      r.company||'',origUrl,finalUrl,r.status||'',r.data?.summary||'',
+      m.performance??'',m.seo??'',m.accessibility??'',m.bestPractices??'',
+      d.performance??'',d.seo??'',d.accessibility??'',d.bestPractices??'',
+      m.responseMs??'',m.status??'',m.httpsWorks??'',m.httpRedirects??'',
+      m.title??'',m.titleLength??'',m.metaDesc??'',m.metaDescLength??'',m.firstH1??'',m.h1Count??'',
+      m.viewport??'',m.hasCanonical??'',m.isNoindex??'',
+      m.ogTitle??'',m.ogDescription??'',m.ogImage??'',
+      m.hasAnalytics??'',m.hasSitemap??'',m.hasJsonLD??'',m.hasFavicon??'',
+      m.docSizeKB??'',m.altCoverage??'',m.mixedContentCount??'',m.server??'',m.csp??'',
+      m.fcp??'',m.lcp??'',m.cls??'',m.tbt??'',m.speedIndex??'',m.tti??'',m.ttfbMs??'',
+      m.totalPageWeightKB??'',m.requestCount??'',m.numScripts??'',m.numStylesheets??'',m.numFonts??'',m.domNodes??'',
+      m.jsExecutionMs??'',m.mainThreadMs??'',m.longTaskCount??'',
+      m.unusedJsKB??'',m.unusedCssKB??'',m.renderBlockingCount??'',m.renderBlockingSavingsMs??'',
+      m.unoptimizedImagesKB??'',m.modernImageFormatsKB??'',m.responsiveImagesKB??'',m.offscreenImagesKB??'',
+      m.unminifiedJsKB??'',m.unminifiedCssKB??'',m.textCompressionKB??'',
+      m.legacyJsKB??'',m.duplicateJsKB??'',m.efficientAnimationsKB??'',
+      m.thirdPartyBlockingMs??'',m.thirdPartyWeightKB??'',
+      issues.length,
+      issues.filter(i=>i.severity==='critical').length,
+      issues.filter(i=>i.severity==='high').length,
+      issues.filter(i=>i.severity==='medium').length,
+      issues.filter(i=>i.severity==='low').length,
+    ];
+    for(let n=0;n<16;n++){
+      const iss=issues[n];
+      row.push(iss?.severity??'',iss?.category??'',iss?.title??'',iss?.description??'');
+    }
+    const errs=r.data?.errors;
+    row.push(
+      Array.isArray(errs)?errs.join('; '):(errs||''),
+      r.status==='success'?'Yes':'No',
+      finalDomain,origDomain,
+      finalDomain&&origDomain&&finalDomain!==origDomain?'Yes':'No',
+      cm.hasContactForm??m.hasContactForm??'',
+      m.hasScheduling??'',m.hasChatWidget??'',m.hasClientPortal??'',m.hasOnlinePayment??'',
+      m.hasCalculatorOrTool??'',m.hasEmailCapture??'',
+      cm.hasClickToCall??m.hasClickToCall??'',
+      cm.hasEmailLink??m.hasEmailLink??'',
+      m.platform??'',m.copyrightYear??'',m.pageTextSnippet??'',
+      r.data?.screenshot_status??'',r.data?.screenshot_path??'',r.data?.visual_analysis??''
+    );
+    return row.map(esc).join(',');
   });
-  const blob=new Blob(['\uFEFF'+[headers.map(h=>'"'+h+'"').join(','),...csvRows].join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const blob=new Blob(['\uFEFF'+[headers.map(h=>'"'+h+'"').join(','),...rows].join('\r\n')],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='bulk_audit_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
 }
 function resetBulkAudit(){
