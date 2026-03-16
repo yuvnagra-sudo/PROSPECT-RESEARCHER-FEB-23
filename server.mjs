@@ -886,7 +886,7 @@ function buildPrompt(row,map,idx,useWebSearch){
 // ─── Bulk Audit Runner (persistent, DB-driven, auto-resumable) ───────────────
 const activeBulkAudits=new Set();
 
-async function runBulkAudit(jid){
+async function runBulkAudit(jid,{enableScreenshots=false}={}){
   if(activeBulkAudits.has(jid))return; // already running
   const job=db.prepare('SELECT*FROM jobs WHERE id=?').get(jid);
   if(!job||job.provider!=='pagespeed')return;
@@ -909,14 +909,13 @@ async function runBulkAudit(jid){
       const row=pending[qi++];
       const url=row.url||row.company||'';
       try{
-        const [result,ss]=await Promise.all([
-          auditWebsite(url,psKey||undefined),
-          takeScreenshot(url),
-        ]);
-        ssAttempt++;if(ss.status==='success')ssOk++;else ssFail++;
+        const auditPromise=auditWebsite(url,psKey||undefined);
+        const ssPromise=enableScreenshots?takeScreenshot(url):Promise.resolve({status:'skipped',path:null});
+        const [result,ss]=await Promise.all([auditPromise,ssPromise]);
+        if(enableScreenshots){ssAttempt++;if(ss.status==='success')ssOk++;else ssFail++;}
         result.screenshot_status=ss.status;result.screenshot_path=ss.path;
         // Gemini visual analysis of screenshot
-        if(ss.status==='success'&&ss.path){
+        if(enableScreenshots&&ss.status==='success'&&ss.path){
           const geminiKey=userKey(job.user_id,'GEMINI_API_KEY');
           if(geminiKey){
             try{result.visual_analysis=await callGeminiVision(ss.path,geminiKey);}catch{}
@@ -1970,7 +1969,7 @@ Rules:
 
   // ── Bulk Audit (one job for all URLs) ──────────────────────────────────────
   if(req.method==='POST'&&p==='/api/bulk-audit'){const b=await readB(req);try{
-    const{urls,jobName}=JSON.parse(b);
+    const{urls,jobName,enableScreenshots=false}=JSON.parse(b);
     if(!Array.isArray(urls)||!urls.length)return json(res,{error:'urls array required'},400);
     const name=jobName||(urls.length+' sites bulk audit');
     const jr=S.iJ.run(uid,name,'pagespeed','website-audit','',0,'{}',urls.length,null);
@@ -1978,7 +1977,7 @@ Rules:
     S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
     for(let i=0;i<urls.length;i++){const u=urls[i];S.iR.run(jid,i,u.url||String(u),u.company||u.url||String(u),null);}
     json(res,{jobId:jid,status:'running'});
-    runBulkAudit(jid).catch(e=>console.error('bulk audit error',e.message));
+    runBulkAudit(jid,{enableScreenshots}).catch(e=>console.error('bulk audit error',e.message));
   }catch(e){json(res,{error:e.message||'Bulk audit failed'},500);}return;}
 
   if(req.method==='GET'&&p.match(/^\/api\/bulk-audit-rows\/\d+$/)){

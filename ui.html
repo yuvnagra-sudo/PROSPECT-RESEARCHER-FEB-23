@@ -553,6 +553,10 @@ th:hover .th-del-btn{opacity:1!important}
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
             <button class="btn bp" id="btn-bulk-run" onclick="startBulkAudit()">▶ Start Bulk Audit</button>
             <button class="btn bs sm" onclick="resetBulkAudit()">Reset</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8;cursor:pointer;user-select:none">
+              <input type="checkbox" id="bulk-screenshots" style="width:14px;height:14px;cursor:pointer">
+              📸 Screenshots
+            </label>
             <span id="bulk-info" style="font-size:12px;color:#64748b"></span>
           </div>
           <div id="bulk-progress" class="bulk-prog hide">
@@ -2303,7 +2307,7 @@ async function startBulkAudit(){
   const urls=bulkRows.filter(r=>(r[urlCol]||'').trim()).map(r=>({url:r[urlCol].trim(),company:compCol?r[compCol]||r[urlCol]:r[urlCol]}));
   if(!urls.length){toast('No URLs found','err');return;}
   const btn=$i('btn-bulk-run');btn.disabled=true;btn.textContent='Starting…';
-  const d=await api('POST','/api/bulk-audit',{urls,jobName:urls.length+' sites bulk audit'});
+  const d=await api('POST','/api/bulk-audit',{urls,jobName:urls.length+' sites bulk audit',enableScreenshots:$i('bulk-screenshots').checked});
   if(!d||d.error){toast(d?.error||'Failed','err');btn.disabled=false;btn.textContent='▶ Start Bulk Audit';return;}
   bulkJobId=d.jobId;
   $i('bulk-progress').classList.remove('hide');
