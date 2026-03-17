@@ -923,7 +923,6 @@ const PARKING_HOSTS = [
   'sedoparking.com','sedo.com','hugedomains.com','afternic.com','dan.com',
   'dot-services.org','dot-consulting.org','parkingcrew.net','above.com',
   'undeveloped.com','buydomains.com','domainnamessales.com','bodis.com',
-  'godaddy.com','namecheap.com',
 ];
 
 function classifySiteHealth(httpData) {
@@ -931,9 +930,14 @@ function classifySiteHealth(httpData) {
     return { alive: false, flags: ['connection-failed'], reason: httpData?.error || 'Connection failed' };
   }
 
+  // If Playwright successfully rendered the page, the site is definitively alive —
+  // skip all further checks regardless of HTTP status or content size
+  if (httpData.jsRendered) {
+    return { alive: true, flags: [], reason: '' };
+  }
+
   const html = httpData.html || {};
   const finalUrl = httpData.finalUrl || '';
-  const status = httpData.status;
   const docSizeKB = html.docSizeKB ?? 0;
   const title = html.title || '';
   const snippet = html.pageTextSnippet || '';
@@ -962,15 +966,14 @@ function classifySiteHealth(httpData) {
     return { alive: false, flags: ['broken-install'], reason: 'Broken CMS / server error on page' };
   }
 
-  // 4. Empty page — too small and no title
+  // 4. Empty page — too small and no title (only when not JS-rendered, already checked above)
   if (docSizeKB <= 2 && title.length < 5) {
     return { alive: false, flags: ['empty-page'], reason: `Empty page (${docSizeKB}KB, no title)` };
   }
 
-  // 5. Access-denied wall with no real content
-  if ((status === 403 || status === 401) && docSizeKB < 5 && !title) {
-    return { alive: false, flags: ['access-denied'], reason: `Access denied (HTTP ${status})` };
-  }
+  // Note: 403/401 responses are NOT treated as dead — WAFs and CDNs (Cloudflare, Akamai)
+  // return 403 for legitimate sites when blocking our server IP, indistinguishable from a
+  // genuine access wall. Err on the side of treating them as alive.
 
   return { alive: true, flags: [], reason: '' };
 }
