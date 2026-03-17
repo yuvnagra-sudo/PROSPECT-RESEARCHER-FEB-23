@@ -2409,7 +2409,7 @@ function _exportBulkCSV_browser_fallback(){
     'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
     // ── Page metadata ──
     'Doc Size KB','Alt Coverage %','Mixed Content Count','Server','CSP Header',
-    'X-Content-Type-Options','X-Frame-Options','HSTS',
+    'X-Content-Type-Options','X-Frame-Options','HSTS','JS Rendered',
     // ── Lab Core Web Vitals (display strings) ──
     'FCP (Lab)','LCP (Lab)','CLS (Lab)','TBT (Lab)','Speed Index (Lab)','TTI (Lab)','TTFB (ms)',
     // ── Lab CWV numeric (ms / raw) ──
@@ -2487,7 +2487,7 @@ function _exportBulkCSV_browser_fallback(){
       m.hasAnalytics??'',m.hasSitemap??'',m.hasJsonLD??'',m.hasFavicon??'',
       // ── Page metadata ──
       m.docSizeKB??'',m.altCoverage??'',m.mixedContentCount??'',m.server??'',m.csp??'',
-      m.xContentType??'',m.xFrame??'',m.hsts??'',
+      m.xContentType??'',m.xFrame??'',m.hsts??'',m.jsRendered?'Yes':'No',
       // ── Lab CWV display strings ──
       fmt(m.fcp)??'',fmt(m.lcp)??'',fmt(m.cls)??'',fmt(m.tbt)??'',fmt(m.speedIndex)??'',fmt(m.tti)??'',m.ttfbMs??'',
       // ── Lab CWV numeric ──

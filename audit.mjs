@@ -16,19 +16,30 @@ function getOrigin(url) {
   try { return new URL(url).origin; } catch { return ''; }
 }
 
+// ─── HTML entity decoder ─────────────────────────────────────────────────────
+function decodeHtmlEntities(str) {
+  if (!str) return str;
+  return str
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+
 // ─── HTML parsers (regex only, no cheerio) ───────────────────────────────────
 function parseTitle(html) {
   const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  return m ? m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : null;
+  return m ? decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()) : null;
 }
 function parseMetaDesc(html) {
   const m = html.match(/<meta\s+(?:[^>]*?\s+)?name=["']description["'][^>]*content=["']([^"']*)/i)
     || html.match(/<meta\s+(?:[^>]*?\s+)?content=["']([^"']*?)["'][^>]*name=["']description["']/i);
-  return m ? m[1].trim() : null;
+  return m ? decodeHtmlEntities(m[1].trim()) : null;
 }
 function parseH1s(html) {
   return [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)]
-    .map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
+    .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()));
 }
 function parseViewport(html) {
   return /<meta\s+(?:[^>]*?\s+)?name=["']viewport["'][^>]*>/i.test(html);
@@ -153,6 +164,23 @@ const FETCH_HEADERS = {
   'accept-language': 'en-US,en;q=0.9',
 };
 
+// ─── JS-shell detection ───────────────────────────────────────────────────────
+// Returns true when fetch() got a 200 but the body is essentially empty JS scaffolding.
+// Common with GoDaddy Website Builder, CPA Site Solutions (ASP.NET), Wix headless, etc.
+function isJsShell(status, html) {
+  if (status !== 200 || !html) return false;
+  if (html.length < 1500) return true; // anything under 1.5KB on a 200 is suspicious
+  // Empty body or single empty root div (React/Vue/Angular apps)
+  if (/<body[^>]*>\s*(<div[^>]*>\s*<\/div>\s*)*\s*<\/body>/i.test(html)) return true;
+  // Extract visible text — if there's almost none, it's a shell
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  return text.length < 120 && html.length > 800;
+}
+
 // ─── Cloudflare bypass via Playwright ────────────────────────────────────────
 function isCloudflareChallenge(status, html, serverHeader) {
   if (serverHeader === 'cloudflare' && (status === 403 || status === 503)) return true;
@@ -169,7 +197,7 @@ const _cfQueue = [];
 const _cfAcquire = () => new Promise(res => { if (_cfSlots > 0) { _cfSlots--; res(); } else _cfQueue.push(res); });
 const _cfRelease = () => { if (_cfQueue.length > 0) _cfQueue.shift()(); else _cfSlots++; };
 
-async function fetchHTMLWithPlaywright(url) {
+async function fetchHTMLWithPlaywright(url, reason = 'CF') {
   const { chromium } = await import('playwright');
   await _cfAcquire();
   let browser;
@@ -186,19 +214,20 @@ async function fetchHTMLWithPlaywright(url) {
     const page = await ctx.newPage();
     let finalStatus = 200;
     page.on('response', r => { if (r.url() === url || !finalStatus) finalStatus = r.status(); });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    // Wait up to 8s for the CF JS challenge to resolve and redirect to real page
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    // Wait for meaningful content: title or body text visible, up to 10s
     try {
       await page.waitForFunction(
-        () => !document.body?.innerText?.includes('Just a moment'),
-        { timeout: 8000, polling: 500 }
+        () => (document.title?.trim().length > 5 || document.body?.innerText?.trim().length > 100)
+          && !document.body?.innerText?.includes('Just a moment'),
+        { timeout: 10000, polling: 500 }
       );
     } catch {} // timeout is fine — grab whatever loaded
     const html = await page.content();
     const finalUrl = page.url();
     return { ok: true, html, finalUrl, status: finalStatus };
   } catch (e) {
-    console.error(`[audit] Playwright CF bypass failed for ${url}: ${e.message}`);
+    console.error(`[audit] Playwright (${reason}) failed for ${url}: ${e.message}`);
     return { ok: false, html: '', finalUrl: url, status: 0 };
   } finally {
     if (browser) try { await browser.close(); } catch {}
@@ -239,14 +268,24 @@ async function checkHTTP(url) {
   let httpStatus = res.status;
   try { html = await res.text(); } catch {}
 
-  // Cloudflare JS challenge detected — retry with headless Chrome
+  // Cloudflare JS challenge or JS-rendered shell — retry with headless Chrome
+  let jsRendered = false;
   if (isCloudflareChallenge(httpStatus, html, hdrs['server'])) {
-    console.log(`[audit] Cloudflare challenge detected for ${url} — retrying with Playwright`);
-    const pw = await fetchHTMLWithPlaywright(url);
+    console.log(`[audit] Cloudflare challenge for ${url} — retrying with Playwright`);
+    const pw = await fetchHTMLWithPlaywright(url, 'CF');
     if (pw.ok && pw.html) {
       html = pw.html;
       finalUrl = pw.finalUrl || finalUrl;
-      // Keep original httpStatus so the CSV correctly shows 403/503
+      jsRendered = true;
+      // Keep original httpStatus so CSV shows 403/503
+    }
+  } else if (isJsShell(httpStatus, html)) {
+    console.log(`[audit] JS-rendered shell detected for ${url} — fetching with Playwright`);
+    const pw = await fetchHTMLWithPlaywright(url, 'JS');
+    if (pw.ok && pw.html && pw.html.length > html.length) {
+      html = pw.html;
+      finalUrl = pw.finalUrl || finalUrl;
+      jsRendered = true;
     }
   }
 
@@ -267,6 +306,7 @@ async function checkHTTP(url) {
     status: httpStatus,
     finalUrl,
     responseMs,
+    jsRendered,
     headers: {
       hsts: hdrs['strict-transport-security'] || null,
       csp: hdrs['content-security-policy'] || null,
@@ -840,6 +880,7 @@ function buildSummary(url, metrics, issues) {
   const hsts = metrics.hsts; const xct = metrics.xContentType; const xfr = metrics.xFrame;
   techLines.push(`Security headers: HSTS=${hsts ? 'Yes' : 'No'}, X-Content-Type=${xct ? 'Yes' : 'No'}, X-Frame=${xfr ? 'Yes' : 'No'}`);
   if (metrics.server) techLines.push(`Server: ${metrics.server}`);
+  if (metrics.jsRendered) techLines.push(`Rendering: JavaScript-rendered (fetched with headless Chrome)`);
   if (techLines.length) { lines.push('TECHNICAL METRICS:'); lines.push(...techLines); lines.push(''); }
 
   if (metrics.opportunities?.length) {
@@ -923,6 +964,7 @@ export async function auditWebsite(inputUrl, apiKey) {
     hasCalculatorOrTool: html.contactMethods?.hasCalculatorOrTool || false,
     hasEmailCapture: html.contactMethods?.hasEmailCapture || false,
     pageTextSnippet: html.pageTextSnippet || '',
+    jsRendered: httpData?.jsRendered || false,
     mixedContentCount: html.mixedContent?.length,
     hsts: httpData?.headers?.hsts,
     csp: httpData?.headers?.csp,
