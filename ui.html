@@ -2121,7 +2121,7 @@ async function loadJobs(){
       <td style="font-size:12px;font-family:monospace">${fmtCost(j.cost)}</td>
       <td style="font-size:12px;color:#64748b">${ago(j.created_at)}</td>
       <td class="td-actions">
-        ${j.isAudit?`<button class="btn bs sm" onclick="viewAuditJob(${j.id},'${x(j.name)}')">View</button>`:`<button class="btn bs sm" onclick="viewJob(${j.id},'${x(j.name)}')">View</button>`}<button class="btn bs sm" onclick="exportJob(${j.id})">⬇ Export</button>
+        ${j.isAudit?`<button class="btn bs sm" onclick="viewAuditJob(${j.id},'${x(j.name)}')">View</button>`:`<button class="btn bs sm" onclick="viewJob(${j.id},'${x(j.name)}')">View</button>`}<button class="btn bs sm" onclick="${j.isAudit?`window.open('/api/bulk-audit-csv/${j.id}?token='+token)`:`exportJob(${j.id})`}">⬇ Export</button>
         <button class="btn bd sm" onclick="deleteJob(${j.id},this)">Delete</button>
       </td>
     </tr>`).join('')}</tbody>
