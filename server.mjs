@@ -1268,7 +1268,7 @@ const server=createServer(async(req,res)=>{
   try{
   const url=new URL(req.url,`http://localhost:${PORT}`);const p=url.pathname;
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,DELETE,OPTIONS','access-control-allow-headers':'content-type,authorization'});res.end();return;}
-  if(req.method==='GET'&&p==='/'){res.writeHead(200,{'content-type':'text/html'});res.end(HTML);return;}
+  if(req.method==='GET'&&p==='/'){res.writeHead(200,{'content-type':'text/html','cache-control':'no-store'});res.end(HTML);return;}
 
   // Serve screenshot images
   if(req.method==='GET'&&p.startsWith('/screenshots/')){
