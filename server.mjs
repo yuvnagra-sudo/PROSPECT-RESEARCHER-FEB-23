@@ -1794,7 +1794,7 @@ Rules:
         'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues'];
       const issueHdrs=[];
       for(let i=1;i<=maxIssues;i++){issueHdrs.push(`Issue ${i} Severity`,`Issue ${i} Category`,`Issue ${i} Title`,`Issue ${i} Description`);}
-      const verifyHdrs=['Site Alive','Final Domain','Original Domain','Domain Redirected',
+      const verifyHdrs=['Site Alive','Site Death Reason','Site Flags','Final Domain','Original Domain','Domain Redirected',
         'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal',
         'Has Online Payment','Has Calculator/Tool','Has Email Capture',
         'Has Click-to-Call','Has Email Link','Platform','Copyright Year','Page Text Snippet',
@@ -1855,7 +1855,8 @@ Rules:
           const finalDomain=domainOf(a.finalUrl||'');
           const cm2=m.contactMethods||{};
           cols.push(
-            yn(m.status>=200&&m.status<=299),
+            m.siteAlive!=null?yn(m.siteAlive):yn(m.status>=200&&m.status<=299),
+            escRawA(m.siteDeathReason||''),escRawA(m.siteFlags||''),
             escRawA(finalDomain),
             escRawA(origDomain),
             yn(finalDomain&&origDomain&&finalDomain!==origDomain),
@@ -2041,7 +2042,7 @@ Rules:
       'Tap Targets Score','Aria Valid Score','Color Contrast Score','Content Width Score',
       'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues',
       ...issueHdrs,
-      'Errors','Site Alive','Final Domain','Original Domain','Domain Redirected',
+      'Errors','Site Alive','Site Death Reason','Site Flags','Final Domain','Original Domain','Domain Redirected',
       'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal','Has Online Payment',
       'Has Calculator/Tool','Has Email Capture','Has Click-to-Call','Has Email Link',
       'Platform','Copyright Year','Page Text Snippet',
@@ -2100,7 +2101,8 @@ Rules:
       const errs=data.errors;
       row.push(
         Array.isArray(errs)?errs.join('; '):(errs||''),
-        r.status==='success'?'Yes':'No',
+        m.siteAlive!=null?(m.siteAlive?'Yes':'No'):(r.status==='success'?'Yes':'No'),
+        m.siteDeathReason??'',m.siteFlags??'',
         finalDomain,origDomain,
         finalDomain&&origDomain&&finalDomain!==origDomain?'Yes':'No',
         cm.hasContactForm??m.hasContactForm??'',

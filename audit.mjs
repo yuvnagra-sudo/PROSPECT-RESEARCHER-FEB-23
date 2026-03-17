@@ -842,6 +842,21 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
 function buildSummary(url, metrics, issues) {
   const lines = [`WEBSITE AUDIT DATA FOR: ${url}`, ''];
 
+  // Dead site — short-circuit summary
+  if (metrics.siteAlive === false) {
+    lines.push('SITE STATUS: NON-FUNCTIONAL');
+    lines.push(`Reason: ${metrics.siteDeathReason}`);
+    if (metrics.siteFlags) lines.push(`Flags: ${metrics.siteFlags}`);
+    lines.push('');
+    lines.push('PageSpeed, Core Web Vitals, and detailed technical audits were skipped.');
+    if (issues.length) {
+      lines.push('');
+      lines.push('ISSUES:');
+      issues.forEach(i => lines.push(`🔴 CRITICAL: [${i.category}] ${i.title}\n  → ${i.detail}`));
+    }
+    return lines.join('\n');
+  }
+
   if (!metrics.pageSpeedOk && metrics.pageSpeedError) {
     lines.push(`PAGESPEED: Unavailable (${metrics.pageSpeedError})`);
     lines.push('');
@@ -903,6 +918,63 @@ function buildSummary(url, metrics, issues) {
   return lines.join('\n');
 }
 
+// ─── Site Health Classifier ───────────────────────────────────────────────────
+const PARKING_HOSTS = [
+  'sedoparking.com','sedo.com','hugedomains.com','afternic.com','dan.com',
+  'dot-services.org','dot-consulting.org','parkingcrew.net','above.com',
+  'undeveloped.com','buydomains.com','domainnamessales.com','bodis.com',
+  'godaddy.com','namecheap.com',
+];
+
+function classifySiteHealth(httpData) {
+  if (!httpData?.ok) {
+    return { alive: false, flags: ['connection-failed'], reason: httpData?.error || 'Connection failed' };
+  }
+
+  const html = httpData.html || {};
+  const finalUrl = httpData.finalUrl || '';
+  const status = httpData.status;
+  const docSizeKB = html.docSizeKB ?? 0;
+  const title = html.title || '';
+  const snippet = html.pageTextSnippet || '';
+
+  let finalHost = '';
+  try { finalHost = new URL(finalUrl).hostname.toLowerCase(); } catch {}
+
+  // 1. Redirect to known parking service
+  for (const host of PARKING_HOSTS) {
+    if (finalHost === host || finalHost.endsWith('.' + host)) {
+      return { alive: false, flags: ['parked-redirect'], reason: `Redirects to parking service (${finalHost})` };
+    }
+  }
+
+  // 2. Parked domain / for-sale page text in title or body snippet
+  const combined = (title + ' ' + snippet).toLowerCase();
+  if (
+    /(?:domain|website).{0,15}(?:for sale|is for sale|available for purchase)|buy this domain|domain has expired|parked domain|domain parking/.test(combined)
+    && docSizeKB < 30
+  ) {
+    return { alive: false, flags: ['parked-domain'], reason: 'Domain is parked or for sale' };
+  }
+
+  // 3. Broken server install — PHP/MySQL errors visible in page text
+  if (/fatal error|mysql.*error|database connection|db connection error|php parse error|warning.*on line \d+/i.test(snippet)) {
+    return { alive: false, flags: ['broken-install'], reason: 'Broken CMS / server error on page' };
+  }
+
+  // 4. Empty page — too small and no title
+  if (docSizeKB <= 2 && title.length < 5) {
+    return { alive: false, flags: ['empty-page'], reason: `Empty page (${docSizeKB}KB, no title)` };
+  }
+
+  // 5. Access-denied wall with no real content
+  if ((status === 403 || status === 401) && docSizeKB < 5 && !title) {
+    return { alive: false, flags: ['access-denied'], reason: `Access denied (HTTP ${status})` };
+  }
+
+  return { alive: true, flags: [], reason: '' };
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function auditWebsite(inputUrl, apiKey) {
   const t0 = Date.now();
@@ -911,30 +983,53 @@ export async function auditWebsite(inputUrl, apiKey) {
   const url = normalizeUrl(inputUrl);
   if (!url) return { url: inputUrl, finalUrl: inputUrl, elapsedMs: 0, issues: [], topIssues: [], metrics: {}, summary: 'Invalid URL', errors: ['Invalid URL'] };
 
-  // Run all four checks in parallel for speed
-  const [httpRes, pageSpeedRes, sslRes, robotsRes] = await Promise.allSettled([
-    checkHTTP(url),
-    checkPageSpeed(url, apiKey),
-    checkSSL(url),
-    checkRobots(url),
+  // Phase 1: HTTP + SSL + Robots in parallel
+  const [httpRes, sslRes, robotsRes] = await Promise.allSettled([
+    checkHTTP(url), checkSSL(url), checkRobots(url),
   ]);
 
   const httpData = httpRes.status === 'fulfilled' ? httpRes.value : null;
-  const pageSpeed = pageSpeedRes.status === 'fulfilled' ? pageSpeedRes.value : null;
   const ssl = sslRes.status === 'fulfilled' ? sslRes.value : null;
   const robots = robotsRes.status === 'fulfilled' ? robotsRes.value : null;
 
   if (httpRes.status === 'rejected') errors.push('HTTP check: ' + (httpRes.reason?.message || String(httpRes.reason)));
-  if (pageSpeedRes.status === 'rejected') errors.push('PageSpeed check: ' + (pageSpeedRes.reason?.message || String(pageSpeedRes.reason)));
   if (sslRes.status === 'rejected') errors.push('SSL check: ' + (sslRes.reason?.message || String(sslRes.reason)));
   if (robotsRes.status === 'rejected') errors.push('Robots check: ' + (robotsRes.reason?.message || String(robotsRes.reason)));
+
+  // Phase 2: Classify site health (fast, no I/O)
+  const health = classifySiteHealth(httpData);
 
   const finalUrl = httpData?.finalUrl || url;
   const html = httpData?.html || {};
   const analytics = html.analytics || {};
 
+  let originalDomain = '';
+  let finalDomain = '';
+  try { originalDomain = new URL(url).hostname; } catch {}
+  try { finalDomain = new URL(finalUrl).hostname; } catch {}
+  const domainRedirected = !!finalDomain && originalDomain !== finalDomain;
+
+  // Phase 3: PageSpeed — skip entirely for dead/non-functional sites (saves 20-30s)
+  let pageSpeed = null;
+  let pageSpeedSkipped = false;
+  if (health.alive) {
+    const psRes = await checkPageSpeed(url, apiKey).catch(e => ({ ok: false, error: e.message }));
+    pageSpeed = psRes;
+    if (!psRes.ok) errors.push('PageSpeed check: ' + (psRes.error || 'unavailable'));
+  } else {
+    pageSpeedSkipped = true;
+  }
+
   // Flatten metrics for easy access
   const metrics = {
+    // Site health classification
+    siteAlive: health.alive,
+    siteFlags: health.flags.join(', '),
+    siteDeathReason: health.reason,
+    originalDomain,
+    finalDomain,
+    domainRedirected,
+
     responseMs: httpData?.responseMs,
     status: httpData?.status,
     finalUrl,
@@ -1017,7 +1112,7 @@ export async function auditWebsite(inputUrl, apiKey) {
     thirdPartyEntities: pageSpeed?.ok ? pageSpeed.metrics.thirdPartyEntities : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
     pageSpeedOk: pageSpeed?.ok || false,
-    pageSpeedError: !pageSpeed?.ok ? (pageSpeed?.error || 'PageSpeed data unavailable') : null,
+    pageSpeedError: pageSpeedSkipped ? 'Skipped — site non-functional' : (!pageSpeed?.ok ? (pageSpeed?.error || 'PageSpeed data unavailable') : null),
     pageSpeedAttempts: pageSpeed?.attempts || 0,
 
     // ── Lab CWV numeric (ms/raw) ─────────────────────────────────────────────
@@ -1094,7 +1189,10 @@ export async function auditWebsite(inputUrl, apiKey) {
     metaDescription: pageSpeed?.ok ? pageSpeed.metrics.metaDescription : null,
   };
 
-  const issues = generateIssues(httpData, pageSpeed, ssl, robots);
+  // Dead sites get one critical issue; live sites get the full issue list
+  const issues = health.alive
+    ? generateIssues(httpData, pageSpeed, ssl, robots)
+    : [{ severity: 'critical', category: 'Site Health', title: 'Site is non-functional', detail: health.reason }];
 
   // Sort: critical → high → medium → low
   const sevOrd = { critical: 0, high: 1, medium: 2, low: 3 };
