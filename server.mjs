@@ -9,13 +9,16 @@ import { auditWebsite } from './audit.mjs';
 import { takeScreenshot } from './screenshot.mjs';
 import { callGeminiVision } from './vision.mjs';
 
-// Load HTML at module init so it is always available before the server starts
-const HTML = readFileSync(new URL('./ui.html', import.meta.url), 'utf8');
+// Load HTML at module init — version tag injected after BUILD_VERSION is known
+let HTML_RAW = readFileSync(new URL('./ui.html', import.meta.url), 'utf8');
 
 // .env loader
 try { const ep=resolve(process.cwd(),'.env'); if(existsSync(ep)) readFileSync(ep,'utf8').split('\n').forEach(l=>{const m=l.match(/^\s*([^#=]+?)\s*=\s*(.*?)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^["']|["']$/g,'');}); } catch{}
 
 const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex');
+const BUILD_VERSION = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0,8) || Date.now().toString(36);
+const HTML = HTML_RAW.replace('<meta charset="UTF-8">','<meta charset="UTF-8"><meta name="app-version" content="'+BUILD_VERSION+'">');
+HTML_RAW=null;
 
 // ─── Database ───
 const DD=resolve(process.cwd(),process.env.DATA_DIR||'.data'); if(!existsSync(DD))mkdirSync(DD,{recursive:true});
@@ -1268,7 +1271,8 @@ const server=createServer(async(req,res)=>{
   try{
   const url=new URL(req.url,`http://localhost:${PORT}`);const p=url.pathname;
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,DELETE,OPTIONS','access-control-allow-headers':'content-type,authorization'});res.end();return;}
-  if(req.method==='GET'&&p==='/'){res.writeHead(200,{'content-type':'text/html','cache-control':'no-store'});res.end(HTML);return;}
+  if(req.method==='GET'&&p==='/'){res.writeHead(200,{'content-type':'text/html','cache-control':'no-store','x-app-version':BUILD_VERSION});res.end(HTML);return;}
+  if(req.method==='GET'&&p==='/api/version'){res.writeHead(200,{'content-type':'application/json','cache-control':'no-store','access-control-allow-origin':'*'});res.end(JSON.stringify({version:BUILD_VERSION}));return;}
 
   // Serve screenshot images
   if(req.method==='GET'&&p.startsWith('/screenshots/')){

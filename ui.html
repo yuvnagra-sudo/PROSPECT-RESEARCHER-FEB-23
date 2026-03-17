@@ -890,6 +890,29 @@ async function boot(){
   renderProvSelect();
   nav('table');
   checkActiveJob();
+  startVersionPoller();
+}
+// ── Version poller — shows reload banner when server has been updated ──────────
+const _PAGE_LOADED_AT=Date.now();
+async function startVersionPoller(){
+  const check=async()=>{
+    try{
+      const r=await fetch('/api/version');
+      if(!r.ok)return;
+      const {version}=await r.json();
+      const el=document.getElementById('_ver-banner');
+      const pageVer=document.head.querySelector('meta[name=app-version]')?.content||'';
+      if(pageVer&&version&&version!==pageVer&&!el){
+        const b=document.createElement('div');
+        b.id='_ver-banner';
+        b.style='position:fixed;bottom:0;left:0;right:0;background:#4f46e5;color:#fff;padding:10px 20px;text-align:center;z-index:9999;font-size:13px;display:flex;align-items:center;justify-content:center;gap:12px';
+        b.innerHTML='<span>A new version is available.</span><button onclick="location.reload(true)" style="background:#fff;color:#4f46e5;border:none;padding:4px 14px;border-radius:5px;cursor:pointer;font-weight:600;font-size:13px">Reload</button>';
+        document.body.appendChild(b);
+      }
+    }catch{}
+  };
+  setTimeout(check,5000);
+  setInterval(check,60000);
 }
 async function init(){
   if(!token){$i('app').classList.add('hide');return;}
