@@ -245,22 +245,28 @@ async function checkHTTP(url) {
     headers: FETCH_HEADERS,
   });
 
-  // Build candidate URLs to try in order:
-  // 1. As given (https://example.com)
-  // 2. http:// fallback (https → http, for SSL/cert failures)
-  // 3. www. prefix if bare domain (https://www.example.com)
-  // 4. www. + http:// (last resort)
-  const candidates = [url];
-  if (url.startsWith('https://')) {
-    candidates.push(url.replace('https://', 'http://'));
-  }
+  // Build candidate URLs to try in order, covering common mismatches:
+  // 1. As given                          (https://www.example.com)
+  // 2. Strip www. if present             (https://example.com)     ← fixes www→bare cert mismatches
+  // 3. Add www. if absent               (https://www.example.com)  ← fixes bare→www DNS mismatches
+  // 4. http:// of whatever worked above                            ← SSL fallback
   const urlObj = (() => { try { return new URL(url); } catch { return null; } })();
-  if (urlObj && !urlObj.hostname.startsWith('www.')) {
-    const wwwUrl = url.replace(urlObj.hostname, 'www.' + urlObj.hostname);
-    candidates.push(wwwUrl);
-    if (wwwUrl.startsWith('https://')) {
+  const candidates = [url];
+  if (urlObj) {
+    const host = urlObj.hostname;
+    if (host.startsWith('www.')) {
+      // Input has www. — also try bare domain
+      const bareUrl = url.replace(host, host.slice(4));
+      candidates.push(bareUrl);
+      candidates.push(bareUrl.replace('https://', 'http://'));
+    } else {
+      // Input has no www. — also try www. variant
+      const wwwUrl = url.replace(host, 'www.' + host);
+      candidates.push(wwwUrl);
       candidates.push(wwwUrl.replace('https://', 'http://'));
     }
+    // http:// of the original as final fallback
+    if (url.startsWith('https://')) candidates.push(url.replace('https://', 'http://'));
   }
 
   let lastError = '';
