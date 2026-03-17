@@ -1990,6 +1990,129 @@ Rules:
     json(res,{job:{id:job.id,name:job.name,status:job.status,succeeded:job.succeeded,failed:job.failed,total_rows:job.total_rows},rows:rows.map(r=>({idx:r.idx,company:r.company,status:r.status,data:r.research?JSON.parse(r.research):null,error:r.error}))});
     return;}
 
+  // ── Bulk Audit CSV Export (server-side, bypasses browser cache) ──────────────
+  if(req.method==='GET'&&p.match(/^\/api\/bulk-audit-csv\/\d+$/)){
+    const jid=parseInt(p.split('/').pop());const job=S.gJ.get(jid);
+    if(!job||job.user_id!==uid||job.provider!=='pagespeed')return json(res,{error:'Not found'},404);
+    const rows=db.prepare('SELECT idx,company,prompt,status,research,error FROM rows WHERE job_id=? ORDER BY idx').all(jid);
+    const esc=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+    const fmt=v=>v==null?'':String(v).replace(/(\d),(\d)/g,'$1$2');
+    const getHost=u=>{try{return new URL(u).hostname;}catch{return u||'';}};
+    const issueHdrs=[];for(let n=1;n<=16;n++)issueHdrs.push(`Issue ${n} Severity`,`Issue ${n} Category`,`Issue ${n} Title`,`Issue ${n} Description`);
+    const headers=[
+      'Company','URL','Final URL','Status','Summary',
+      'Performance (Mobile)','SEO (Mobile)','Accessibility (Mobile)','Best Practices (Mobile)',
+      'Performance (Desktop)','SEO (Desktop)','Accessibility (Desktop)','Best Practices (Desktop)',
+      'Response Ms','HTTP Status','HTTPS Works','HTTP\u2192HTTPS Redirect',
+      'Title','Title Length','Meta Description','Meta Desc Length','First H1','H1 Count',
+      'Has Viewport','Has Canonical','Is Noindex',
+      'OG Title','OG Description','OG Image',
+      'Has Analytics','Has Sitemap','Has JSON-LD','Has Favicon',
+      'Doc Size KB','Alt Coverage %','Mixed Content Count','Server','CSP Header',
+      'X-Content-Type-Options','X-Frame-Options','HSTS',
+      'FCP (Lab)','LCP (Lab)','CLS (Lab)','TBT (Lab)','Speed Index (Lab)','TTI (Lab)','TTFB (ms)',
+      'FCP ms (Lab)','LCP ms (Lab)','CLS Score (Lab)','TBT ms (Lab)','Speed Index ms (Lab)','TTI ms (Lab)',
+      'CrUX Data Available','CrUX Overall Rating',
+      'CrUX FCP p75 (ms)','CrUX FCP Rating','CrUX LCP p75 (ms)','CrUX LCP Rating',
+      'CrUX CLS p75','CrUX CLS Rating','CrUX INP p75 (ms)','CrUX INP Rating',
+      'CrUX TTFB p75 (ms)','CrUX TTFB Rating','CrUX FID p75 (ms)','CrUX FID Rating',
+      'Origin CrUX Available','Origin CrUX Overall Rating',
+      'Origin CrUX FCP p75 (ms)','Origin CrUX FCP Rating','Origin CrUX LCP p75 (ms)','Origin CrUX LCP Rating',
+      'Origin CrUX CLS p75','Origin CrUX CLS Rating','Origin CrUX INP p75 (ms)','Origin CrUX INP Rating',
+      'Origin CrUX TTFB p75 (ms)','Origin CrUX TTFB Rating','Origin CrUX FID p75 (ms)','Origin CrUX FID Rating',
+      'Desktop FCP ms','Desktop LCP ms','Desktop CLS Score','Desktop TBT ms','Desktop Speed Index ms','Desktop TTI ms','Desktop TTFB ms',
+      'Total Weight (KB)','Requests','Scripts','Stylesheets','Fonts','DOM Nodes',
+      'JS Execution (ms)','Main Thread (ms)','Long Tasks (>50ms)',
+      'Unused JS (KB)','Unused CSS (KB)','Render Blocking Count','Render Block Savings (ms)',
+      'Unoptimized Images (KB)','Modern Image Formats (KB)','Responsive Images (KB)','Offscreen Images (KB)',
+      'Unminified JS (KB)','Unminified CSS (KB)','Text Compression (KB)',
+      'Legacy JS (KB)','Duplicate JS (KB)','Efficient Animations (KB)','Long Cache Savings (KB)',
+      '3rd Party Block (ms)','3rd Party Weight (KB)',
+      'Render Blocking Resources','Unused JS Resources','Unused CSS Resources',
+      'Unoptimized Image Resources','Modern Image Candidates','Responsive Image Resources','Offscreen Image Resources',
+      'Legacy JS Resources','Duplicate JS Resources',
+      'Top JS Bootup Files','3rd Party Entities','Preconnect Opportunities','Font Display Issues',
+      'Uses HTTP/2 Score','Passive Event Listeners Score','No document.write Score',
+      'Efficient Cache Policy Score','Image Alt Score','Links Descriptive Score',
+      'Tap Targets Score','Aria Valid Score','Color Contrast Score','Content Width Score',
+      'Issue Count','Critical Issues','High Issues','Medium Issues','Low Issues',
+      ...issueHdrs,
+      'Errors','Site Alive','Final Domain','Original Domain','Domain Redirected',
+      'Has Contact Form','Has Scheduling','Has Chat Widget','Has Client Portal','Has Online Payment',
+      'Has Calculator/Tool','Has Email Capture','Has Click-to-Call','Has Email Link',
+      'Platform','Copyright Year','Page Text Snippet',
+      'Screenshot Status','Screenshot Path','Visual Analysis'
+    ];
+    const csvRows=rows.map(r=>{
+      const data=r.research?JSON.parse(r.research):{};
+      const m=data.metrics||{};const d=data.desktop||{};
+      const issues=data.issues||[];const cm=m.contactMethods||{};
+      const origUrl=r.company||'';const companyName=r.prompt||origUrl;
+      const finalUrl=m.finalUrl||'';
+      const finalDomain=getHost(finalUrl);const origDomain=getHost(origUrl);
+      const row=[
+        companyName,origUrl,finalUrl,r.status||'',data.summary||'',
+        m.performance??'',m.seo??'',m.accessibility??'',m.bestPractices??'',
+        d.performance??'',d.seo??'',d.accessibility??'',d.bestPractices??'',
+        m.responseMs??'',m.status??'',m.httpsWorks??'',m.httpRedirects??'',
+        m.title??'',m.titleLength??'',m.metaDesc??'',m.metaDescLength??'',m.firstH1??'',m.h1Count??'',
+        m.viewport??'',m.hasCanonical??'',m.isNoindex??'',
+        m.ogTitle??'',m.ogDescription??'',m.ogImage??'',
+        m.hasAnalytics??'',m.hasSitemap??'',m.hasJsonLD??'',m.hasFavicon??'',
+        m.docSizeKB??'',m.altCoverage??'',m.mixedContentCount??'',m.server??'',m.csp??'',
+        m.xContentType??'',m.xFrame??'',m.hsts??'',
+        fmt(m.fcp),fmt(m.lcp),fmt(m.cls),fmt(m.tbt),fmt(m.speedIndex),fmt(m.tti),m.ttfbMs??'',
+        m.fcpMs??'',m.lcpMs??'',m.clsScore??'',m.tbtMs??'',m.speedIndexMs??'',m.ttiMs??'',
+        m.cruxAvailable?'Yes':'No',m.cruxOverall??'',
+        m.cruxFCPMs??'',m.cruxFCPRating??'',m.cruxLCPMs??'',m.cruxLCPRating??'',
+        m.cruxCLSScore??'',m.cruxCLSRating??'',m.cruxINPMs??'',m.cruxINPRating??'',
+        m.cruxTTFBMs??'',m.cruxTTFBRating??'',m.cruxFIDMs??'',m.cruxFIDRating??'',
+        m.originCruxAvailable?'Yes':'No',m.originCruxOverall??'',
+        m.originCruxFCPMs??'',m.originCruxFCPRating??'',m.originCruxLCPMs??'',m.originCruxLCPRating??'',
+        m.originCruxCLSScore??'',m.originCruxCLSRating??'',m.originCruxINPMs??'',m.originCruxINPRating??'',
+        m.originCruxTTFBMs??'',m.originCruxTTFBRating??'',m.originCruxFIDMs??'',m.originCruxFIDRating??'',
+        d.fcpMs??'',d.lcpMs??'',d.clsScore??'',d.tbtMs??'',d.speedIndexMs??'',d.ttiMs??'',d.ttfbMs??'',
+        m.totalPageWeightKB??'',m.requestCount??'',m.numScripts??'',m.numStylesheets??'',m.numFonts??'',m.domNodes??'',
+        m.jsExecutionMs??'',m.mainThreadMs??'',m.longTaskCount??'',
+        m.unusedJsKB??'',m.unusedCssKB??'',m.renderBlockingCount??'',m.renderBlockingSavingsMs??'',
+        m.unoptimizedImagesKB??'',m.modernImageFormatsKB??'',m.responsiveImagesKB??'',m.offscreenImagesKB??'',
+        m.unminifiedJsKB??'',m.unminifiedCssKB??'',m.textCompressionKB??'',
+        m.legacyJsKB??'',m.duplicateJsKB??'',m.efficientAnimationsKB??'',m.longCacheSavingsKB??'',
+        m.thirdPartyBlockingMs??'',m.thirdPartyWeightKB??'',
+        m.renderBlockingResources??'',m.unusedJsResources??'',m.unusedCssResources??'',
+        m.unoptimizedImageResources??'',m.modernImageResources??'',m.responsiveImageResources??'',m.offscreenImageResources??'',
+        m.legacyJsResources??'',m.duplicateJsResources??'',
+        m.bootupTimeResources??'',m.thirdPartyEntities??'',m.preconnectResources??'',m.fontDisplayResources??'',
+        m.usesHttp2??'',m.usesPassiveListeners??'',m.noDocumentWrite??'',
+        m.efficientCachePolicy??'',m.imageAlt??'',m.linksDescriptive??'',
+        m.tapTargets??'',m.ariaValid??'',m.colorContrast??'',m.contentWidth??'',
+        issues.length,
+        issues.filter(i=>i.severity==='critical').length,
+        issues.filter(i=>i.severity==='high').length,
+        issues.filter(i=>i.severity==='medium').length,
+        issues.filter(i=>i.severity==='low').length,
+      ];
+      for(let n=0;n<16;n++){const iss=issues[n];row.push(iss?.severity??'',iss?.category??'',iss?.title??'',iss?.description??'');}
+      const errs=data.errors;
+      row.push(
+        Array.isArray(errs)?errs.join('; '):(errs||''),
+        r.status==='success'?'Yes':'No',
+        finalDomain,origDomain,
+        finalDomain&&origDomain&&finalDomain!==origDomain?'Yes':'No',
+        cm.hasContactForm??m.hasContactForm??'',
+        m.hasScheduling??'',m.hasChatWidget??'',m.hasClientPortal??'',m.hasOnlinePayment??'',
+        m.hasCalculatorOrTool??'',m.hasEmailCapture??'',
+        cm.hasClickToCall??m.hasClickToCall??'',cm.hasEmailLink??m.hasEmailLink??'',
+        m.platform??'',m.copyrightYear??'',m.pageTextSnippet??'',
+        data.screenshot_status??'',data.screenshot_path??'',data.visual_analysis??''
+      );
+      return row.map(esc).join(',');
+    });
+    const date=new Date().toISOString().slice(0,10);
+    const csv='\uFEFF'+[headers.map(h=>'"'+h+'"').join(','),...csvRows].join('\r\n');
+    res.writeHead(200,{'content-type':'text/csv;charset=utf-8','content-disposition':`attachment;filename="audit_export_${date}.csv"`,'cache-control':'no-store'});
+    res.end(csv);return;}
+
   res.writeHead(404);res.end('Not found');
   }catch(topErr){
     // Top-level catch: prevents any unhandled error from crashing the server process

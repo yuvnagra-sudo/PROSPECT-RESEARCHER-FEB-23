@@ -2358,6 +2358,10 @@ function showBulkResults(rows){
   }).join('');
 }
 function exportBulkCSV(){
+  if(!bulkJobId){toast('No results yet','err');return;}
+  window.open('/api/bulk-audit-csv/'+bulkJobId+'?token='+encodeURIComponent(token));
+}
+function _exportBulkCSV_browser_fallback(){
   if(!bulkResults.length){toast('No results yet','err');return;}
   const esc=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
   const fmt=v=>v==null?v:String(v).replace(/(\d),(\d)/g,'$1$2');
