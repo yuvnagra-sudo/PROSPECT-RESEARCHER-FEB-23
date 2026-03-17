@@ -239,26 +239,40 @@ async function fetchHTMLWithPlaywright(url, reason = 'CF') {
 async function checkHTTP(url) {
   const t0 = Date.now();
   let res;
-  // Try https first, fall back to http:// if connection refused or SSL error
   const tryFetch = async (u) => fetch(u, {
     signal: AbortSignal.timeout(TIMEOUT_HTTP),
     redirect: 'follow',
     headers: FETCH_HEADERS,
   });
-  try {
-    res = await tryFetch(url);
-  } catch (e) {
-    // If https failed, try http://
-    if (url.startsWith('https://')) {
-      try {
-        res = await tryFetch(url.replace('https://', 'http://'));
-      } catch (e2) {
-        return { ok: false, error: e2.message };
-      }
-    } else {
-      return { ok: false, error: e.message };
+
+  // Build candidate URLs to try in order:
+  // 1. As given (https://example.com)
+  // 2. http:// fallback (https → http, for SSL/cert failures)
+  // 3. www. prefix if bare domain (https://www.example.com)
+  // 4. www. + http:// (last resort)
+  const candidates = [url];
+  if (url.startsWith('https://')) {
+    candidates.push(url.replace('https://', 'http://'));
+  }
+  const urlObj = (() => { try { return new URL(url); } catch { return null; } })();
+  if (urlObj && !urlObj.hostname.startsWith('www.')) {
+    const wwwUrl = url.replace(urlObj.hostname, 'www.' + urlObj.hostname);
+    candidates.push(wwwUrl);
+    if (wwwUrl.startsWith('https://')) {
+      candidates.push(wwwUrl.replace('https://', 'http://'));
     }
   }
+
+  let lastError = '';
+  for (const candidate of candidates) {
+    try {
+      res = await tryFetch(candidate);
+      break; // success — stop trying
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+  if (!res) return { ok: false, error: lastError };
   const responseMs = Date.now() - t0;
   const hdrs = {};
   for (const [k, v] of res.headers) hdrs[k.toLowerCase()] = v;
