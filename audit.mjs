@@ -153,6 +153,59 @@ const FETCH_HEADERS = {
   'accept-language': 'en-US,en;q=0.9',
 };
 
+// ─── Cloudflare bypass via Playwright ────────────────────────────────────────
+function isCloudflareChallenge(status, html, serverHeader) {
+  if (serverHeader === 'cloudflare' && (status === 403 || status === 503)) return true;
+  if (!html) return false;
+  if (html.includes('cf-browser-verification') || html.includes('_cf_chl_opt')) return true;
+  if (html.includes('Just a moment') && html.includes('Enable JavaScript and cookies')) return true;
+  if (html.includes('cloudflare-static/rocket-loader') && html.includes('Just a moment')) return true;
+  return false;
+}
+
+// Semaphore: max 2 concurrent Playwright CF fetches (~300MB each = ~600MB peak)
+let _cfSlots = 2;
+const _cfQueue = [];
+const _cfAcquire = () => new Promise(res => { if (_cfSlots > 0) { _cfSlots--; res(); } else _cfQueue.push(res); });
+const _cfRelease = () => { if (_cfQueue.length > 0) _cfQueue.shift()(); else _cfSlots++; };
+
+async function fetchHTMLWithPlaywright(url) {
+  const { chromium } = await import('playwright');
+  await _cfAcquire();
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const ctx = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      ignoreHTTPSErrors: true,
+      extraHTTPHeaders: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    const page = await ctx.newPage();
+    let finalStatus = 200;
+    page.on('response', r => { if (r.url() === url || !finalStatus) finalStatus = r.status(); });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    // Wait up to 8s for the CF JS challenge to resolve and redirect to real page
+    try {
+      await page.waitForFunction(
+        () => !document.body?.innerText?.includes('Just a moment'),
+        { timeout: 8000, polling: 500 }
+      );
+    } catch {} // timeout is fine — grab whatever loaded
+    const html = await page.content();
+    const finalUrl = page.url();
+    return { ok: true, html, finalUrl, status: finalStatus };
+  } catch (e) {
+    console.error(`[audit] Playwright CF bypass failed for ${url}: ${e.message}`);
+    return { ok: false, html: '', finalUrl: url, status: 0 };
+  } finally {
+    if (browser) try { await browser.close(); } catch {}
+    _cfRelease();
+  }
+}
+
 // ─── Check: HTTP + HTML ───────────────────────────────────────────────────────
 async function checkHTTP(url) {
   const t0 = Date.now();
@@ -182,7 +235,20 @@ async function checkHTTP(url) {
   for (const [k, v] of res.headers) hdrs[k.toLowerCase()] = v;
 
   let html = '';
+  let finalUrl = res.url;
+  let httpStatus = res.status;
   try { html = await res.text(); } catch {}
+
+  // Cloudflare JS challenge detected — retry with headless Chrome
+  if (isCloudflareChallenge(httpStatus, html, hdrs['server'])) {
+    console.log(`[audit] Cloudflare challenge detected for ${url} — retrying with Playwright`);
+    const pw = await fetchHTMLWithPlaywright(url);
+    if (pw.ok && pw.html) {
+      html = pw.html;
+      finalUrl = pw.finalUrl || finalUrl;
+      // Keep original httpStatus so the CSV correctly shows 403/503
+    }
+  }
 
   const title = parseTitle(html);
   const metaDesc = parseMetaDesc(html);
@@ -198,8 +264,8 @@ async function checkHTTP(url) {
 
   return {
     ok: true,
-    status: res.status,
-    finalUrl: res.url,
+    status: httpStatus,
+    finalUrl,
     responseMs,
     headers: {
       hsts: hdrs['strict-transport-security'] || null,
