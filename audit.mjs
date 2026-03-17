@@ -266,9 +266,51 @@ async function fetchPageSpeedStrategy(url, strategy, apiKey) {
     try { data = await res.json(); } catch { lastError = 'Invalid JSON from PageSpeed API'; continue; }
     const lhr = data.lighthouseResult;
     if (!lhr) { lastError = 'PageSpeed response missing lighthouseResult'; continue; }
-    return { ok: true, lhr, attempts: attempt + 1 };
+    return { ok: true, lhr, crux: data.loadingExperience || null, originCrux: data.originLoadingExperience || null, attempts: attempt + 1 };
   }
   return { ok: false, error: lastError || `PageSpeed ${strategy} unavailable after 3 attempts`, skipped: false };
+}
+
+// Parse CrUX field data from PSI API (loadingExperience or originLoadingExperience)
+function parseCrux(cruxData) {
+  if (!cruxData || !cruxData.metrics) return null;
+  const m = cruxData.metrics;
+  const cat = k => {
+    const c = m[k]?.category;
+    if (c === 'FAST') return 'GOOD';
+    if (c === 'SLOW') return 'POOR';
+    if (c === 'AVERAGE') return 'NEEDS IMPROVEMENT';
+    return null;
+  };
+  const p75 = k => m[k]?.percentiles?.p75 ?? null;
+  return {
+    available: true,
+    overallCategory: cruxData.overall_category || null,
+    fcpMs: p75('FIRST_CONTENTFUL_PAINT_MS'),
+    fcpRating: cat('FIRST_CONTENTFUL_PAINT_MS'),
+    lcpMs: p75('LARGEST_CONTENTFUL_PAINT_MS'),
+    lcpRating: cat('LARGEST_CONTENTFUL_PAINT_MS'),
+    clsScore: p75('CUMULATIVE_LAYOUT_SHIFT_SCORE'),
+    clsRating: cat('CUMULATIVE_LAYOUT_SHIFT_SCORE'),
+    inpMs: p75('INTERACTION_TO_NEXT_PAINT'),
+    inpRating: cat('INTERACTION_TO_NEXT_PAINT'),
+    ttfbMs: p75('EXPERIMENTAL_TIME_TO_FIRST_BYTE'),
+    ttfbRating: cat('EXPERIMENTAL_TIME_TO_FIRST_BYTE'),
+    fidMs: p75('FIRST_INPUT_DELAY_MS'),
+    fidRating: cat('FIRST_INPUT_DELAY_MS'),
+  };
+}
+
+// Extract top resource items from a Lighthouse audit as "url | wastedKB" strings (semicolon-joined)
+function extractResourceItems(audits, id, { limit = 10, byteField = 'wastedBytes', msField = null } = {}) {
+  const items = audits[id]?.details?.items;
+  if (!items?.length) return null;
+  return items.slice(0, limit).map(item => {
+    const url = item.url || item.label || item.node?.snippet || '';
+    if (msField && item[msField] != null) return url ? `${url} (${Math.round(item[msField])}ms)` : `${Math.round(item[msField])}ms`;
+    if (byteField && item[byteField] != null) return url ? `${url} (${Math.round(item[byteField] / 1024)}KB)` : `${Math.round(item[byteField] / 1024)}KB`;
+    return url;
+  }).filter(Boolean).join('; ') || null;
 }
 
 function parseLHR(lhr) {
@@ -318,6 +360,39 @@ function parseLHR(lhr) {
   const tpItems = audits['third-party-summary']?.details?.items || [];
   const thirdPartyBlockingMs = tpItems.length ? Math.round(tpItems.reduce((t, i) => t + (i.blockingTime || 0), 0)) : null;
   const thirdPartyWeightKB = tpItems.length ? Math.round(tpItems.reduce((t, i) => t + (i.transferSize || 0), 0) / 1024) : null;
+  const thirdPartyEntities = tpItems.length ? tpItems.slice(0, 10).map(i => {
+    const name = i.entity || '';
+    const parts = [];
+    if (i.blockingTime > 0) parts.push(`${Math.round(i.blockingTime)}ms blocking`);
+    if (i.transferSize > 0) parts.push(`${Math.round(i.transferSize/1024)}KB`);
+    return parts.length ? `${name} (${parts.join(', ')})` : name;
+  }).filter(Boolean).join('; ') : null;
+
+  // Resource-level detail strings (semicolon-separated "url (wastedKB)" or "url (ms)")
+  const renderBlockingResources = extractResourceItems(audits, 'render-blocking-resources', { byteField: 'totalBytes', msField: 'wastedMs' });
+  const unusedJsResources       = extractResourceItems(audits, 'unused-javascript');
+  const unusedCssResources      = extractResourceItems(audits, 'unused-css-rules');
+  const unoptimizedImageResources = extractResourceItems(audits, 'uses-optimized-images');
+  const modernImageResources    = extractResourceItems(audits, 'uses-webp-images');
+  const responsiveImageResources = extractResourceItems(audits, 'uses-responsive-images');
+  const offscreenImageResources = extractResourceItems(audits, 'offscreen-images');
+  const legacyJsResources       = extractResourceItems(audits, 'legacy-javascript', { byteField: 'wastedBytes' });
+  const duplicateJsResources    = extractResourceItems(audits, 'duplicated-javascript');
+  const bootupTimeResources     = extractResourceItems(audits, 'bootup-time', { byteField: 'wastedBytes', msField: 'total' });
+  const preconnectResources     = extractResourceItems(audits, 'uses-rel-preconnect', { byteField: 'wastedMs', msField: null });
+  const fontDisplayResources    = extractResourceItems(audits, 'font-display', { byteField: 'wastedBytes' });
+
+  // Additional failed audits (boolean pass/fail)
+  const auditScore = id => audits[id]?.score != null ? Math.round(audits[id].score * 100) : null;
+  const auditFailed = id => audits[id]?.score != null ? audits[id].score < 1 : null;
+
+  // Numeric values for lab CWV (ms/score) in addition to displayValue strings
+  const fcpMs = audits['first-contentful-paint']?.numericValue != null ? Math.round(audits['first-contentful-paint'].numericValue) : null;
+  const lcpMs = audits['largest-contentful-paint']?.numericValue != null ? Math.round(audits['largest-contentful-paint'].numericValue) : null;
+  const clsScore = audits['cumulative-layout-shift']?.numericValue != null ? Math.round(audits['cumulative-layout-shift'].numericValue * 1000) / 1000 : null;
+  const tbtMs = audits['total-blocking-time']?.numericValue != null ? Math.round(audits['total-blocking-time'].numericValue) : null;
+  const speedIndexMs = audits['speed-index']?.numericValue != null ? Math.round(audits['speed-index'].numericValue) : null;
+  const ttiMs = audits['interactive']?.numericValue != null ? Math.round(audits['interactive'].numericValue) : null;
 
   return {
     // ── Scores ──────────────────────────────────────────────────────────────
@@ -374,6 +449,43 @@ function parseLHR(lhr) {
     // ── Third party ─────────────────────────────────────────────────────────
     thirdPartyBlockingMs,
     thirdPartyWeightKB,
+    thirdPartyEntities,
+
+    // ── Lab CWV numeric values (ms / raw score) ──────────────────────────────
+    fcpMs, lcpMs, clsScore, tbtMs, speedIndexMs, ttiMs,
+
+    // ── Resource detail strings ──────────────────────────────────────────────
+    renderBlockingResources,
+    unusedJsResources,
+    unusedCssResources,
+    unoptimizedImageResources,
+    modernImageResources,
+    responsiveImageResources,
+    offscreenImageResources,
+    legacyJsResources,
+    duplicateJsResources,
+    bootupTimeResources,
+    preconnectResources,
+    fontDisplayResources,
+
+    // ── Additional audit scores ──────────────────────────────────────────────
+    usesHttp2: auditScore('uses-http2'),
+    usesHttp2Failed: auditFailed('uses-http2'),
+    criticalRequestChainScore: auditScore('critical-request-chains'),
+    usesPassiveListeners: auditScore('uses-passive-event-listeners'),
+    noDocumentWrite: auditScore('no-document-write'),
+    efficientCachePolicy: auditScore('uses-long-cache-ttl'),
+    longCacheSavingsKB: savingsKB('uses-long-cache-ttl'),
+    charsetDefined: auditScore('charset'),
+    contentWidth: auditScore('content-width'),
+    imageAlt: auditScore('image-alt'),
+    linksDescriptive: auditScore('link-text'),
+    robotsTxt: auditScore('robots-txt'),
+    tapTargets: auditScore('tap-targets'),
+    ariaValid: auditScore('aria-valid-attr'),
+    colorContrast: auditScore('color-contrast'),
+    documentTitle: auditScore('document-title'),
+    metaDescription: auditScore('meta-description'),
 
     opportunities,
   };
@@ -397,6 +509,10 @@ async function checkPageSpeed(url, apiKey) {
   const mobile = mobileOk ? parseLHR(mobileRes.lhr) : null;
   const desktop = desktopOk ? parseLHR(desktopRes.lhr) : null;
 
+  // CrUX field data — prefer URL-level, fall back to origin-level
+  const crux = mobileOk ? parseCrux(mobileRes.crux) : null;
+  const originCrux = mobileOk ? parseCrux(mobileRes.originCrux) : null;
+
   // Primary metrics from mobile (Google's ranking signal), desktop as bonus
   const metrics = mobile || desktop;
   const attempts = Math.max(mobileRes.attempts || 1, desktopRes.attempts || 1);
@@ -406,6 +522,8 @@ async function checkPageSpeed(url, apiKey) {
     metrics,
     mobile,
     desktop,
+    crux,
+    originCrux,
     opportunities: metrics?.opportunities || [],
     attempts,
   };
@@ -788,10 +906,84 @@ export async function auditWebsite(inputUrl, apiKey) {
     efficientAnimationsKB: pageSpeed?.ok ? pageSpeed.metrics.efficientAnimationsKB : null,
     thirdPartyBlockingMs: pageSpeed?.ok ? pageSpeed.metrics.thirdPartyBlockingMs : null,
     thirdPartyWeightKB: pageSpeed?.ok ? pageSpeed.metrics.thirdPartyWeightKB : null,
+    thirdPartyEntities: pageSpeed?.ok ? pageSpeed.metrics.thirdPartyEntities : null,
     opportunities: pageSpeed?.ok ? (pageSpeed.opportunities || []) : [],
     pageSpeedOk: pageSpeed?.ok || false,
     pageSpeedError: !pageSpeed?.ok ? (pageSpeed?.error || 'PageSpeed data unavailable') : null,
     pageSpeedAttempts: pageSpeed?.attempts || 0,
+
+    // ── Lab CWV numeric (ms/raw) ─────────────────────────────────────────────
+    fcpMs: pageSpeed?.ok ? pageSpeed.metrics.fcpMs : null,
+    lcpMs: pageSpeed?.ok ? pageSpeed.metrics.lcpMs : null,
+    clsScore: pageSpeed?.ok ? pageSpeed.metrics.clsScore : null,
+    tbtMs: pageSpeed?.ok ? pageSpeed.metrics.tbtMs : null,
+    speedIndexMs: pageSpeed?.ok ? pageSpeed.metrics.speedIndexMs : null,
+    ttiMs: pageSpeed?.ok ? pageSpeed.metrics.ttiMs : null,
+
+    // ── CrUX URL-level field data ────────────────────────────────────────────
+    cruxAvailable: pageSpeed?.crux?.available || false,
+    cruxOverall: pageSpeed?.crux?.overallCategory || null,
+    cruxFCPMs: pageSpeed?.crux?.fcpMs ?? null,
+    cruxFCPRating: pageSpeed?.crux?.fcpRating || null,
+    cruxLCPMs: pageSpeed?.crux?.lcpMs ?? null,
+    cruxLCPRating: pageSpeed?.crux?.lcpRating || null,
+    cruxCLSScore: pageSpeed?.crux?.clsScore ?? null,
+    cruxCLSRating: pageSpeed?.crux?.clsRating || null,
+    cruxINPMs: pageSpeed?.crux?.inpMs ?? null,
+    cruxINPRating: pageSpeed?.crux?.inpRating || null,
+    cruxTTFBMs: pageSpeed?.crux?.ttfbMs ?? null,
+    cruxTTFBRating: pageSpeed?.crux?.ttfbRating || null,
+    cruxFIDMs: pageSpeed?.crux?.fidMs ?? null,
+    cruxFIDRating: pageSpeed?.crux?.fidRating || null,
+
+    // ── CrUX Origin-level field data ─────────────────────────────────────────
+    originCruxAvailable: pageSpeed?.originCrux?.available || false,
+    originCruxOverall: pageSpeed?.originCrux?.overallCategory || null,
+    originCruxFCPMs: pageSpeed?.originCrux?.fcpMs ?? null,
+    originCruxFCPRating: pageSpeed?.originCrux?.fcpRating || null,
+    originCruxLCPMs: pageSpeed?.originCrux?.lcpMs ?? null,
+    originCruxLCPRating: pageSpeed?.originCrux?.lcpRating || null,
+    originCruxCLSScore: pageSpeed?.originCrux?.clsScore ?? null,
+    originCruxCLSRating: pageSpeed?.originCrux?.clsRating || null,
+    originCruxINPMs: pageSpeed?.originCrux?.inpMs ?? null,
+    originCruxINPRating: pageSpeed?.originCrux?.inpRating || null,
+    originCruxTTFBMs: pageSpeed?.originCrux?.ttfbMs ?? null,
+    originCruxTTFBRating: pageSpeed?.originCrux?.ttfbRating || null,
+    originCruxFIDMs: pageSpeed?.originCrux?.fidMs ?? null,
+    originCruxFIDRating: pageSpeed?.originCrux?.fidRating || null,
+
+    // ── Resource detail strings ──────────────────────────────────────────────
+    renderBlockingResources: pageSpeed?.ok ? pageSpeed.metrics.renderBlockingResources : null,
+    unusedJsResources: pageSpeed?.ok ? pageSpeed.metrics.unusedJsResources : null,
+    unusedCssResources: pageSpeed?.ok ? pageSpeed.metrics.unusedCssResources : null,
+    unoptimizedImageResources: pageSpeed?.ok ? pageSpeed.metrics.unoptimizedImageResources : null,
+    modernImageResources: pageSpeed?.ok ? pageSpeed.metrics.modernImageResources : null,
+    responsiveImageResources: pageSpeed?.ok ? pageSpeed.metrics.responsiveImageResources : null,
+    offscreenImageResources: pageSpeed?.ok ? pageSpeed.metrics.offscreenImageResources : null,
+    legacyJsResources: pageSpeed?.ok ? pageSpeed.metrics.legacyJsResources : null,
+    duplicateJsResources: pageSpeed?.ok ? pageSpeed.metrics.duplicateJsResources : null,
+    bootupTimeResources: pageSpeed?.ok ? pageSpeed.metrics.bootupTimeResources : null,
+    preconnectResources: pageSpeed?.ok ? pageSpeed.metrics.preconnectResources : null,
+    fontDisplayResources: pageSpeed?.ok ? pageSpeed.metrics.fontDisplayResources : null,
+
+    // ── Additional audit scores ──────────────────────────────────────────────
+    usesHttp2: pageSpeed?.ok ? pageSpeed.metrics.usesHttp2 : null,
+    usesHttp2Failed: pageSpeed?.ok ? pageSpeed.metrics.usesHttp2Failed : null,
+    criticalRequestChainScore: pageSpeed?.ok ? pageSpeed.metrics.criticalRequestChainScore : null,
+    usesPassiveListeners: pageSpeed?.ok ? pageSpeed.metrics.usesPassiveListeners : null,
+    noDocumentWrite: pageSpeed?.ok ? pageSpeed.metrics.noDocumentWrite : null,
+    efficientCachePolicy: pageSpeed?.ok ? pageSpeed.metrics.efficientCachePolicy : null,
+    longCacheSavingsKB: pageSpeed?.ok ? pageSpeed.metrics.longCacheSavingsKB : null,
+    charsetDefined: pageSpeed?.ok ? pageSpeed.metrics.charsetDefined : null,
+    contentWidth: pageSpeed?.ok ? pageSpeed.metrics.contentWidth : null,
+    imageAlt: pageSpeed?.ok ? pageSpeed.metrics.imageAlt : null,
+    linksDescriptive: pageSpeed?.ok ? pageSpeed.metrics.linksDescriptive : null,
+    robotsTxt: pageSpeed?.ok ? pageSpeed.metrics.robotsTxt : null,
+    tapTargets: pageSpeed?.ok ? pageSpeed.metrics.tapTargets : null,
+    ariaValid: pageSpeed?.ok ? pageSpeed.metrics.ariaValid : null,
+    colorContrast: pageSpeed?.ok ? pageSpeed.metrics.colorContrast : null,
+    documentTitle: pageSpeed?.ok ? pageSpeed.metrics.documentTitle : null,
+    metaDescription: pageSpeed?.ok ? pageSpeed.metrics.metaDescription : null,
   };
 
   const issues = generateIssues(httpData, pageSpeed, ssl, robots);
@@ -803,13 +995,8 @@ export async function auditWebsite(inputUrl, apiKey) {
   const topIssues = issues.slice(0, 3);
   const summary = buildSummary(url, metrics, issues);
 
-  // Expose desktop PageSpeed scores at top level for CSV export
-  const desktopScores = pageSpeed?.ok && pageSpeed.desktop ? {
-    performance: pageSpeed.desktop.performance,
-    seo: pageSpeed.desktop.seo,
-    accessibility: pageSpeed.desktop.accessibility,
-    bestPractices: pageSpeed.desktop.bestPractices,
-  } : null;
+  // Expose full desktop PageSpeed metrics for CSV export
+  const desktopData = pageSpeed?.ok && pageSpeed.desktop ? pageSpeed.desktop : null;
 
   return {
     url: inputUrl,
@@ -818,7 +1005,9 @@ export async function auditWebsite(inputUrl, apiKey) {
     issues,
     topIssues,
     metrics,
-    desktop: desktopScores,
+    desktop: desktopData,
+    crux: pageSpeed?.crux || null,
+    originCrux: pageSpeed?.originCrux || null,
     summary,
     errors,
   };

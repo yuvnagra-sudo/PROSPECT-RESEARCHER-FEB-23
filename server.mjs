@@ -89,14 +89,14 @@ const PROVDEFS={
   // Gemini 3 Flash — primary recommended provider
   // Model ID: gemini-3-flash-preview | Context: 1M in / 64k out | Pricing: $0.50/$3.00 per 1M tokens
   // Supports: structured JSON output + Google Search grounding simultaneously (Gemini 3 feature)
-  gemini3flash:{name:'Gemini 3 Flash',model:'gemini-3-flash-preview',inputCost:0.50,outputCost:3.00,format:'gemini-native',webSearch:true,webCostPerCall:0.035,envName:'GEMINI_API_KEY',isDefault:true},
+  gemini3flash:{name:'Gemini 3 Flash',model:'gemini-3-flash-preview',inputCost:0.50,outputCost:3.00,format:'gemini-native',webSearch:true,webCostPerCall:0.014,envName:'GEMINI_API_KEY',isDefault:true},
   // Gemini 2.5 Flash — fallback / cheaper option
-  gemini:{name:'Gemini 2.5 Flash',model:'gemini-2.5-flash',inputCost:0.15,outputCost:0.60,format:'gemini-native',webSearch:true,webCostPerCall:0.035,envName:'GEMINI_API_KEY'},
+  gemini:{name:'Gemini 2.5 Flash',model:'gemini-2.5-flash',inputCost:0.30,outputCost:2.50,format:'gemini-native',webSearch:true,webCostPerCall:0.035,envName:'GEMINI_API_KEY'},
   claude:{name:'Claude Sonnet 4',model:'claude-sonnet-4-20250514',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:3,outputCost:15,format:'anthropic',webSearch:true,webCostPerCall:0.015,cacheReadCost:0.30,cacheWriteCost:3.75,envName:'ANTHROPIC_API_KEY'},
   haiku:{name:'Claude Haiku 4.5',model:'claude-haiku-4-5-20251001',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:1,outputCost:5,format:'anthropic',webSearch:true,webCostPerCall:0.005,cacheReadCost:0.10,cacheWriteCost:1.25,envName:'ANTHROPIC_API_KEY'},
-  gpt5:{name:'GPT-5',model:'gpt-5',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:1.25,outputCost:10,format:'openai',webSearch:true,webTool:'openai',webCostPerCall:0.018,envName:'OPENAI_API_KEY'},
-  gpt5mini:{name:'GPT-5 Mini',model:'gpt-5-mini',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.40,outputCost:1.60,format:'openai',webSearch:true,webTool:'openai',webCostPerCall:0.018,envName:'OPENAI_API_KEY'},
-  gpt5nano:{name:'GPT-5 Nano',model:'gpt-5-nano',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.10,outputCost:0.40,format:'openai',webSearch:false,webCostPerCall:0,envName:'OPENAI_API_KEY'},
+  gpt5:{name:'GPT-5',model:'gpt-5',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:1.75,outputCost:14,format:'openai',webSearch:true,webTool:'openai',webCostPerCall:0.010,envName:'OPENAI_API_KEY'},
+  gpt5mini:{name:'GPT-5 Mini',model:'gpt-5-mini',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.25,outputCost:2.00,format:'openai',webSearch:true,webTool:'openai',webCostPerCall:0.010,envName:'OPENAI_API_KEY'},
+  gpt5nano:{name:'GPT-5 Nano',model:'gpt-5-nano',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.05,outputCost:0.40,format:'openai',webSearch:false,webCostPerCall:0,envName:'OPENAI_API_KEY'},
   openai:{name:'GPT-4o Mini',model:'gpt-4o-mini',apiUrl:'https://api.openai.com/v1/chat/completions',inputCost:0.15,outputCost:0.60,format:'openai',webSearch:false,webCostPerCall:0,envName:'OPENAI_API_KEY'},
   deepseek:{name:'DeepSeek V3',model:'deepseek-chat',apiUrl:'https://api.deepseek.com/v1/chat/completions',inputCost:0.56,outputCost:1.68,format:'openai',webSearch:false,webCostPerCall:0,envName:'DEEPSEEK_API_KEY'},
   _pagespeed:{name:'PageSpeed API',model:'',inputCost:0,outputCost:0,format:'none',webSearch:false,webCostPerCall:0,envName:'PAGESPEED_API_KEY',hidden:true},
@@ -1197,6 +1197,7 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
     ?'Follow the user\'s instructions exactly. Output only what is requested — nothing more, no extra commentary.'
     :wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
   const concurrency=Math.min(CONCURRENCY[job.provider]||3,5);
+  let tIn=0,tOut=0,webCalls=0;
   async function colWorker(){
     while(queue.length>0&&!ctx.cancelled){
       const row=queue.shift();if(!row)break;
@@ -1231,6 +1232,7 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
           const merged={...existing,[colKey]:value,_parsed:true};
           const allComplete=sections.length>0&&sections.every(s=>s.type==='python'||s.type==='formula'||merged[s.key]!==undefined&&merged[s.key]!=='');
           S.uRMerge.run(JSON.stringify(merged),allComplete?'success':'partial',r.inputTokens,r.outputTokens,jobId,row.idx);
+          tIn+=r.inputTokens||0;tOut+=r.outputTokens||0;if(job.use_web_search)webCalls++;
           ok++;done=true;rlOk(job.provider);
           emit({type:'cell-result',rowIdx:row.idx,colKey,status:'success',value});
         }catch(err){
@@ -1245,10 +1247,11 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
   await Promise.all(Array.from({length:concurrency},()=>colWorker()));
   } // end if python/ai
   // Keep job status as paused (sheet mode stays open)
+  const colCost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+webCalls*(prov.webCostPerCall||0);
   const rj=S.gJ.get(jobId);
-  S.uJ.run(rj.succeeded+ok,rj.failed+fail,'paused',rj.total_in,rj.total_out,rj.total_cr,rj.total_cw,rj.cost,rj.elapsed,jobId);
+  S.uJ.run(rj.succeeded+ok,rj.failed+fail,'paused',rj.total_in+tIn,rj.total_out+tOut,rj.total_cr,rj.total_cw,rj.cost+colCost,rj.elapsed,jobId);
   ctx._running=false;
-  emit({type:'col-done',colKey,succeeded:ok,failed:fail});
+  emit({type:'col-done',colKey,succeeded:ok,failed:fail,cost:colCost});
 }
 
 const PORT=parseInt(process.env.PORT||'3000');
