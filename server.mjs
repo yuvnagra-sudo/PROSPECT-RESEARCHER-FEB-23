@@ -6,6 +6,7 @@ import { resolve, join } from 'path';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
 import { auditWebsite } from './audit.mjs';
+import { scoreRows, buildExcel } from './scorer.mjs';
 import { takeScreenshot } from './screenshot.mjs';
 import { callGeminiVision } from './vision.mjs';
 
@@ -2118,6 +2119,25 @@ Rules:
     const csv='\uFEFF'+[headers.map(h=>'"'+h+'"').join(','),...csvRows].join('\r\n');
     res.writeHead(200,{'content-type':'text/csv;charset=utf-8','content-disposition':`attachment;filename="audit_export_${date}.csv"`,'cache-control':'no-store'});
     res.end(csv);return;}
+
+  // ── Score & Personalize ────────────────────────────────────────────────────
+  if(req.method==='POST'&&p==='/api/score-csv'){
+    const b=await readB(req);
+    let csvText;
+    try{({csv:csvText}=JSON.parse(b));}catch{return json(res,{error:'Invalid request'},400);}
+    if(!csvText)return json(res,{error:'No CSV provided'},400);
+    let parsed;try{parsed=parseCSV(csvText);}catch{return json(res,{error:'Could not parse CSV'},400);}
+    if(!parsed.rows.length)return json(res,{error:'CSV has no data rows'},400);
+    const results=scoreRows(parsed.rows);
+    let excelB64=null;
+    try{
+      const buf=await buildExcel(results);
+      excelB64=Buffer.from(buf).toString('base64');
+    }catch(e){
+      console.error('[scorer] Excel build failed:',e.message);
+    }
+    json(res,{results,excel:excelB64});
+    return;}
 
   res.writeHead(404);res.end('Not found');
   }catch(topErr){

@@ -424,6 +424,7 @@ th:hover .th-del-btn{opacity:1!important}
       <button class="nt" data-p="jobs" onclick="nav('jobs')">Jobs</button>
       <button class="nt" data-p="results" onclick="nav('results')" id="nav-results" style="display:none">Results</button>
       <button class="nt" data-p="audit" onclick="nav('audit')">Audit</button>
+      <button class="nt" data-p="scorer" onclick="nav('scorer')">Score</button>
       <button class="nt" data-p="settings" onclick="nav('settings')">Settings</button>
       <button class="nt hide" data-p="admin" id="nav-admin" onclick="nav('admin')">Admin</button>
     </nav>
@@ -576,6 +577,40 @@ th:hover .th-del-btn{opacity:1!important}
                 <tbody id="bulk-tbody"></tbody>
               </table>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Score & Personalize Pane ── -->
+    <div class="pane hide" id="pane-scorer" style="padding:24px">
+      <div class="ph" style="margin-bottom:0"><h2>Score & Personalize</h2></div>
+      <p style="font-size:13px;color:#64748b;margin-bottom:16px">Upload an audit CSV to score each site and generate cold-email personalization prompts.</p>
+      <div id="scr-upload-area" class="bulk-uz" onclick="document.getElementById('scr-fi').click()" style="margin-bottom:16px">
+        <div style="font-size:32px;margin-bottom:10px">📊</div>
+        <p style="font-size:14px;font-weight:600;margin-bottom:4px">Drop audit CSV here</p>
+        <p style="font-size:12px;color:#64748b">Export from the Audit tab or Jobs page first</p>
+        <input type="file" id="scr-fi" accept=".csv,.tsv,.txt" style="display:none" onchange="onScorerFile(event)">
+      </div>
+      <div id="scr-config" class="hide">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+          <span id="scr-file-info" style="font-size:13px;color:#64748b;flex:1"></span>
+          <button class="btn bp" id="btn-scr-run" onclick="runScorer()">▶ Score & Download Excel</button>
+          <button class="btn bs sm" onclick="resetScorer()">Reset</button>
+        </div>
+        <div id="scr-progress" class="hide" style="font-size:13px;color:#64748b;margin-bottom:12px">Processing…</div>
+        <div id="scr-results" class="hide">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span id="scr-done-msg" style="font-size:13px;font-weight:600"></span>
+            <button class="btn bs sm" onclick="runScorer()" id="btn-scr-rerun">⬇ Re-download Excel</button>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="bulk-tbl" id="scr-tbl">
+              <thead><tr>
+                <th>Company</th><th>URL</th><th>Quality</th><th>Score</th><th>Key Findings</th><th>Prompt</th>
+              </tr></thead>
+              <tbody id="scr-tbody"></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -2564,6 +2599,95 @@ function resetBulkAudit(){
   $i('bulk-fi').value='';$i('bulk-uz').classList.remove('hide');$i('bulk-config').classList.add('hide');
   $i('bulk-progress').classList.add('hide');$i('bulk-results-area').classList.add('hide');
   $i('btn-bulk-run').disabled=false;$i('btn-bulk-run').textContent='▶ Start Bulk Audit';
+}
+
+// ── Score & Personalize ───────────────────────────────────────────────────────
+let scorerCsvText='';let scorerResults=[];
+
+function onScorerFile(e){
+  const file=e.target.files[0];if(!file)return;
+  const rd=new FileReader();
+  rd.onload=ev=>{
+    scorerCsvText=ev.target.result;
+    $i('scr-file-info').textContent=`${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+    $i('scr-upload-area').classList.add('hide');
+    $i('scr-config').classList.remove('hide');
+    $i('scr-results').classList.add('hide');
+  };
+  rd.readAsText(file,'utf-8');
+}
+
+async function runScorer(){
+  if(!scorerCsvText){alert('Upload an audit CSV first.');return;}
+  $i('btn-scr-run').disabled=true;$i('btn-scr-run').textContent='Processing…';
+  $i('scr-progress').classList.remove('hide');
+  $i('scr-results').classList.add('hide');
+  try{
+    const res=await fetch('/api/score-csv',{method:'POST',headers:{'content-type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({csv:scorerCsvText})});
+    if(res.ok){
+      const data=await res.json();
+      scorerResults=data.results||[];
+      // Trigger Excel download if available
+      if(data.excel){
+        const bytes=atob(data.excel);const arr=new Uint8Array(bytes.length);
+        for(let i=0;i<bytes.length;i++)arr[i]=bytes.charCodeAt(i);
+        const blob=new Blob([arr],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+        const url=URL.createObjectURL(blob);const a=document.createElement('a');
+        a.href=url;a.download=`scored_${new Date().toISOString().slice(0,10)}.xlsx`;a.click();URL.revokeObjectURL(url);
+      }
+      $i('scr-done-msg').textContent=`Scored ${scorerResults.length} rows${data.excel?' — Excel downloaded':' (Excel unavailable)'}`;
+      renderScorerTable(scorerResults);
+      $i('scr-results').classList.remove('hide');
+    } else {
+      const err=await res.json().catch(()=>({error:'Server error'}));
+      alert('Error: '+(err.error||'Unknown error'));
+    }
+  }catch(e){alert('Request failed: '+e.message);}
+  finally{
+    $i('btn-scr-run').disabled=false;$i('btn-scr-run').textContent='▶ Score & Download Excel';
+    $i('scr-progress').classList.add('hide');
+  }
+}
+
+function renderScorerTable(results){
+  const QUAL_COLOR={good:'#006100',dead:'#9C0006',broken:'#9C0006',crawler_blocked:'#9C5700',default_page:'#9C5700',empty_shell:'#9C5700'};
+  const QUAL_BG={good:'#C6EFCE',dead:'#FFC7CE',broken:'#FFC7CE',crawler_blocked:'#FFEB9C',default_page:'#FFEB9C',empty_shell:'#FFEB9C'};
+  const scoreColor=s=>s>=85?'#006100':s>=65?'#9C5700':'#9C0006';
+  const scoreBg=s=>s>=85?'#C6EFCE':s>=65?'#FFEB9C':'#FFC7CE';
+  const tb=$i('scr-tbody');
+  tb.innerHTML=results.map(r=>{
+    const scoreCell=r.score===-1
+      ?'<span style="color:#808080">N/A</span>'
+      :`<span style="background:${scoreBg(r.score)};color:${scoreColor(r.score)};padding:2px 8px;border-radius:4px;font-weight:600">${r.score}</span>`;
+    const qualCell=`<span style="background:${QUAL_BG[r.quality]||'#F2F2F2'};color:${QUAL_COLOR[r.quality]||'#333'};padding:2px 8px;border-radius:4px;font-size:11px">${r.quality}</span>`;
+    const summary=x(r.summary.slice(0,120))+(r.summary.length>120?'…':'');
+    return`<tr>
+      <td style="font-weight:500">${x(r.company)}</td>
+      <td><a href="${x(r.url)}" target="_blank" style="color:#3b82f6;font-size:12px">${x(r.url.replace(/^https?:\/\//,'').slice(0,40))}</a></td>
+      <td>${qualCell}</td>
+      <td style="text-align:center">${scoreCell}</td>
+      <td style="font-size:11px;color:#475569;max-width:300px">${summary}</td>
+      <td><button class="btn bs sm" onclick="copyPrompt(${results.indexOf(r)})" style="font-size:11px">Copy Prompt</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function copyPrompt(idx){
+  const r=scorerResults[idx];if(!r)return;
+  navigator.clipboard.writeText(r.prompt).then(()=>{
+    const btn=document.querySelectorAll('#scr-tbody button')[idx];
+    if(btn){btn.textContent='Copied!';setTimeout(()=>{btn.textContent='Copy Prompt';},1500);}
+  });
+}
+
+function resetScorer(){
+  scorerCsvText='';scorerResults=[];
+  $i('scr-fi').value='';
+  $i('scr-upload-area').classList.remove('hide');
+  $i('scr-config').classList.add('hide');
+  $i('scr-results').classList.add('hide');
+  $i('scr-progress').classList.add('hide');
+  $i('scr-tbody').innerHTML='';
 }
 
 // ── Audit Renderer ────────────────────────────────────────────────────────────
