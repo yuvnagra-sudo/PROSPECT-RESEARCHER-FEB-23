@@ -2654,20 +2654,49 @@ function renderScorerTable(results){
   const QUAL_BG={good:'#C6EFCE',dead:'#FFC7CE',broken:'#FFC7CE',crawler_blocked:'#FFEB9C',default_page:'#FFEB9C',empty_shell:'#FFEB9C'};
   const scoreColor=s=>s>=85?'#006100':s>=65?'#9C5700':'#9C0006';
   const scoreBg=s=>s>=85?'#C6EFCE':s>=65?'#FFEB9C':'#FFC7CE';
+  const tierBadge=(n,sev)=>{
+    if(!n)return'';
+    const bg={CRITICAL:'#FFC7CE',HIGH:'#FFEB9C',MED:'#fff3cd',LOW:'#e2e8f0',GOOD:'#C6EFCE'};
+    const col={CRITICAL:'#9C0006',HIGH:'#9C5700',MED:'#856404',LOW:'#475569',GOOD:'#006100'};
+    return`<span style="background:${bg[sev]};color:${col[sev]};padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;margin-right:2px">${sev[0]}:${n}</span>`;
+  };
   const tb=$i('scr-tbody');
-  tb.innerHTML=results.map(r=>{
+  // Update thead
+  $i('scr-tbl').querySelector('thead tr').innerHTML=`
+    <th>Company</th><th>URL</th><th>Quality</th><th>Score</th>
+    <th>Tier Breakdown</th><th>Top Issues</th><th>Key Metrics</th><th>Prompt</th>`;
+  tb.innerHTML=results.map((r,idx)=>{
     const scoreCell=r.score===-1
       ?'<span style="color:#808080">N/A</span>'
-      :`<span style="background:${scoreBg(r.score)};color:${scoreColor(r.score)};padding:2px 8px;border-radius:4px;font-weight:600">${r.score}</span>`;
-    const qualCell=`<span style="background:${QUAL_BG[r.quality]||'#F2F2F2'};color:${QUAL_COLOR[r.quality]||'#333'};padding:2px 8px;border-radius:4px;font-size:11px">${r.quality}</span>`;
-    const summary=x(r.summary.slice(0,120))+(r.summary.length>120?'…':'');
-    return`<tr>
-      <td style="font-weight:500">${x(r.company)}</td>
-      <td><a href="${x(r.url)}" target="_blank" style="color:#3b82f6;font-size:12px">${x(r.url.replace(/^https?:\/\//,'').slice(0,40))}</a></td>
+      :`<span style="background:${scoreBg(r.score)};color:${scoreColor(r.score)};padding:2px 8px;border-radius:4px;font-weight:700;font-size:14px">${r.score}</span>`;
+    const qualCell=`<span style="background:${QUAL_BG[r.quality]||'#F2F2F2'};color:${QUAL_COLOR[r.quality]||'#333'};padding:2px 7px;border-radius:4px;font-size:11px">${r.quality}</span>`;
+    const ct=r.counts||{};
+    const tiers=[
+      tierBadge(ct.critical,'CRITICAL'),tierBadge(ct.high,'HIGH'),
+      tierBadge(ct.med,'MED'),tierBadge(ct.low,'LOW'),tierBadge(ct.good,'GOOD'),
+    ].join('');
+    const breakdown=r.scoreBreakdown?`<div style="font-size:10px;color:#94a3b8;margin-top:3px">${x(r.scoreBreakdown)}</div>`:'';
+    // Top critical+high findings
+    const bt=r.byTier||{};
+    const topIssues=[...(bt.CRITICAL||[]).slice(0,2),...(bt.HIGH||[]).slice(0,2)];
+    const issuesHtml=topIssues.map(t=>`<div style="font-size:11px;color:#475569;border-left:2px solid #cbd5e1;padding-left:5px;margin-bottom:2px">${x(t.slice(0,80))}${t.length>80?'…':''}</div>`).join('');
+    // Key metrics snippet
+    const km=r.keyMetrics||{};
+    const metricSnips=[];
+    if(km.perfMobile!==null&&km.perfMobile!==undefined)metricSnips.push(`Perf ${km.perfMobile}/100`);
+    if(km.lcpSec!==null&&km.lcpSec!==undefined)metricSnips.push(`LCP ${km.lcpSec}s`);
+    if(km.pageWeightMb!==null&&km.pageWeightMb!==undefined)metricSnips.push(`${km.pageWeightMb}MB`);
+    if(km.platform)metricSnips.push(km.platform);
+    const metricsHtml=metricSnips.map(s=>`<span style="font-size:10px;background:#f1f5f9;padding:1px 5px;border-radius:3px;margin-right:3px">${x(s)}</span>`).join('');
+    return`<tr style="vertical-align:top">
+      <td style="font-weight:500;min-width:130px">${x(r.company)}</td>
+      <td><a href="${x(r.url)}" target="_blank" style="color:#3b82f6;font-size:11px">${x(r.url.replace(/^https?:\/\//,'').slice(0,35))}</a></td>
       <td>${qualCell}</td>
-      <td style="text-align:center">${scoreCell}</td>
-      <td style="font-size:11px;color:#475569;max-width:300px">${summary}</td>
-      <td><button class="btn bs sm" onclick="copyPrompt(${results.indexOf(r)})" style="font-size:11px">Copy Prompt</button></td>
+      <td style="text-align:center;white-space:nowrap">${scoreCell}</td>
+      <td style="white-space:nowrap">${tiers}${breakdown}</td>
+      <td style="min-width:220px">${issuesHtml||'<span style="font-size:11px;color:#94a3b8">—</span>'}</td>
+      <td style="white-space:nowrap">${metricsHtml}</td>
+      <td><button class="btn bs sm" onclick="copyPrompt(${idx})" style="font-size:11px">Copy Prompt</button></td>
     </tr>`;
   }).join('');
 }

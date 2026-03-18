@@ -208,6 +208,9 @@ COMPANY: {company}
 URL: {url}
 SCORE: {score}/100
 
+RAW METRICS (use these exact numbers when writing — do not fabricate):
+{metrics_block}
+
 FINDINGS (sorted by impact, with confidence level):
 {findings_block}
 
@@ -243,7 +246,7 @@ const QUALITY_DESCRIPTIONS = {
   empty_shell:     "The page had virtually no content when our crawler loaded it. Could be a parked domain, placeholder, or a JS-heavy site that requires a full browser to render.",
 };
 
-export function buildPromptContext(company, url, score, quality, findings) {
+export function buildPromptContext(company, url, score, quality, findings, keyMetrics = {}) {
   if (quality !== 'good') {
     const desc = QUALITY_DESCRIPTIONS[quality] || 'The audit data was unreliable for unknown reasons.';
     return PROMPT_BLOCKED
@@ -253,18 +256,138 @@ export function buildPromptContext(company, url, score, quality, findings) {
   const sevOrder = { CRITICAL: 0, HIGH: 1, MED: 2, LOW: 3, GOOD: 4 };
   const sorted = [...findings].sort((a, b) => (sevOrder[a.sev] ?? 5) - (sevOrder[b.sev] ?? 5));
   const block = sorted.map(f => `  [${f.sev}] (${f.cat}, confidence: ${f.conf}) ${f.text}`).join('\n');
+
+  // Build a raw metrics block so the LLM has exact numbers to reference
+  const km = keyMetrics;
+  const metricLines = [];
+  if (km.perfMobile !== null)   metricLines.push(`Mobile PageSpeed: ${km.perfMobile}/100${km.perfDesktop !== null ? `, Desktop: ${km.perfDesktop}/100` : ''}`);
+  if (km.seoScore !== null)     metricLines.push(`SEO score: ${km.seoScore}/100`);
+  if (km.accessScore !== null)  metricLines.push(`Accessibility: ${km.accessScore}/100`);
+  if (km.lcpSec !== null)       metricLines.push(`LCP (largest content visible): ${km.lcpSec}s on mobile${km.cruxLcpMs ? ` | Real-user p75: ${km.cruxLcpMs}ms (${km.cruxLcpRating || ''})` : ''}`);
+  if (km.clsScore !== null)     metricLines.push(`CLS (layout shift score): ${km.clsScore}${km.cruxClsP75 !== null ? ` | Real-user p75: ${km.cruxClsP75}` : ''}`);
+  if (km.tbtMs !== null)        metricLines.push(`TBT (total blocking time): ${km.tbtMs}ms`);
+  if (km.fcpSec !== null)       metricLines.push(`FCP (first content visible): ${km.fcpSec}s`);
+  if (km.cruxInpMs !== null)    metricLines.push(`INP (interaction delay, real users): ${km.cruxInpMs}ms (${km.cruxInpRating || ''})`);
+  if (km.cruxAvailable)         metricLines.push(`CrUX overall (real-user rating): ${km.cruxOverall || 'available'}`);
+  if (km.pageWeightMb !== null) metricLines.push(`Total page weight: ${km.pageWeightMb} MB`);
+  if (km.requests !== null)     metricLines.push(`HTTP requests: ${km.requests}`);
+  if (km.unusedJsKb !== null && km.unusedJsKb > 0)  metricLines.push(`Unused JavaScript: ${km.unusedJsKb} KB`);
+  if (km.unusedCssKb !== null && km.unusedCssKb > 0) metricLines.push(`Unused CSS: ${km.unusedCssKb} KB`);
+  if (km.responseMs !== null)   metricLines.push(`Server response time: ${km.responseMs}ms`);
+  if (km.httpsWorks !== null)   metricLines.push(`HTTPS: ${km.httpsWorks ? 'working' : 'NOT WORKING'}`);
+  if (km.httpRedirect !== null) metricLines.push(`HTTP→HTTPS redirect: ${km.httpRedirect ? 'yes' : 'no'}`);
+  if (km.platform)              metricLines.push(`Platform: ${km.platform}`);
+  if (km.title)                 metricLines.push(`Page title: "${km.title.slice(0, 80)}"${km.titleLen ? ` (${km.titleLen} chars)` : ''}`);
+  if (km.metaDescLen !== null)  metricLines.push(`Meta description length: ${km.metaDescLen} chars`);
+  if (km.h1Count !== null)      metricLines.push(`H1 tags: ${km.h1Count}`);
+  if (km.copyrightYear)         metricLines.push(`Copyright year on page: ${km.copyrightYear}`);
+  if (km.jsRendered)            metricLines.push(`Note: page required headless browser to render (JS-heavy site)`);
+
+  const convPresent = [
+    km.hasContactForm && 'contact form', km.hasScheduling && 'scheduling',
+    km.hasChatWidget && 'chat widget', km.hasClientPortal && 'client portal',
+    km.hasOnlinePayment && 'online payment', km.hasEmailCapture && 'email capture',
+    km.hasClickToCall && 'click-to-call',
+  ].filter(Boolean);
+  if (convPresent.length) metricLines.push(`Conversion features detected: ${convPresent.join(', ')}`);
+
+  const metricsBlock = metricLines.length ? metricLines.map(l => `  ${l}`).join('\n') : '  (no raw metrics available)';
+
   return PROMPT_GOOD
     .replace('{company}', company).replace('{url}', url)
-    .replace('{score}', score).replace('{findings_block}', block);
+    .replace('{score}', score)
+    .replace('{findings_block}', block)
+    .replace('{metrics_block}', metricsBlock);
+}
+
+// ─── Key Metrics Extractor ────────────────────────────────────────────────────
+// Pulls the raw numbers the LLM needs to write specific, credible sentences.
+function extractKeyMetrics(row) {
+  const n   = (k) => { const v = safeFloat(row[k]); return v !== null ? v : null; };
+  const ni  = (k) => { const v = safeInt(row[k]);   return v !== null ? v : null; };
+  const s   = (k) => (row[k] || '').trim() || null;
+  const b   = (k) => { const v = (row[k] || '').trim(); return v === '' ? null : tbool(row[k]); };
+
+  const lcpMs = n('LCP ms (Lab)');
+  const tbtMs = n('TBT ms (Lab)');
+  const weightKb = n('Total Weight (KB)');
+
+  return {
+    // PageSpeed scores
+    perfMobile:     ni('Performance (Mobile)'),
+    perfDesktop:    ni('Performance (Desktop)'),
+    seoScore:       ni('SEO (Mobile)'),
+    accessScore:    ni('Accessibility (Mobile)'),
+    bestPractices:  ni('Best Practices (Mobile)'),
+
+    // Core Web Vitals (lab)
+    lcpSec:   lcpMs !== null ? Math.round(lcpMs / 100) / 10 : null,
+    clsScore: n('CLS Score (Lab)'),
+    tbtMs:    tbtMs !== null ? Math.round(tbtMs) : null,
+    fcpSec:   (() => { const v = n('FCP ms (Lab)'); return v !== null ? Math.round(v / 100) / 10 : null; })(),
+    speedIndexSec: (() => { const v = n('Speed Index ms (Lab)'); return v !== null ? Math.round(v / 100) / 10 : null; })(),
+
+    // CrUX (real-user field data)
+    cruxAvailable:  b('CrUX Data Available'),
+    cruxOverall:    s('CrUX Overall Rating'),
+    cruxLcpMs:      ni('CrUX LCP p75 (ms)'),
+    cruxLcpRating:  s('CrUX LCP Rating'),
+    cruxInpMs:      ni('CrUX INP p75 (ms)'),
+    cruxInpRating:  s('CrUX INP Rating'),
+    cruxClsP75:     n('CrUX CLS p75'),
+    cruxClsRating:  s('CrUX CLS Rating'),
+
+    // Page weight & requests
+    pageWeightMb: weightKb !== null ? Math.round(weightKb / 102.4) / 10 : null,
+    requests:     ni('Requests'),
+    domNodes:     ni('DOM Nodes'),
+    unusedJsKb:   ni('Unused JS (KB)'),
+    unusedCssKb:  ni('Unused CSS (KB)'),
+
+    // HTTP / infra
+    responseMs:    ni('Response Ms'),
+    httpsWorks:    b('HTTPS Works'),
+    httpRedirect:  b('HTTP→HTTPS Redirect'),
+    server:        s('Server'),
+    platform:      s('Platform'),
+    jsRendered:    b('JS Rendered'),
+
+    // On-page
+    title:         s('Title'),
+    titleLen:      ni('Title Length'),
+    metaDescLen:   ni('Meta Desc Length'),
+    h1Count:       ni('H1 Count'),
+    hasCanonical:  b('Has Canonical'),
+    hasSitemap:    b('Has Sitemap'),
+    hasJsonLD:     b('Has JSON-LD'),
+    hasAnalytics:  b('Has Analytics'),
+    copyrightYear: s('Copyright Year'),
+    docSizeKb:     ni('Doc Size KB'),
+
+    // Conversion
+    hasContactForm:   b('Has Contact Form'),
+    hasScheduling:    b('Has Scheduling'),
+    hasChatWidget:    b('Has Chat Widget'),
+    hasClientPortal:  b('Has Client Portal'),
+    hasOnlinePayment: b('Has Online Payment'),
+    hasEmailCapture:  b('Has Email Capture'),
+    hasClickToCall:   b('Has Click-to-Call'),
+
+    // Security headers
+    hsts:  s('HSTS'),
+    csp:   s('CSP Header'),
+    xcto:  s('X-Content-Type-Options'),
+    xfo:   s('X-Frame-Options'),
+  };
 }
 
 // ─── Main scorer ─────────────────────────────────────────────────────────────
-// rows: array of {header: value} objects (from parseCSV)
 export function scoreRows(rows) {
   return rows.map(row => {
     const company = (row['Company'] || '').trim();
     const url     = (row['URL']     || '').trim();
     const quality = classifyDataQuality(row);
+    const keyMetrics = extractKeyMetrics(row);
 
     let findings, score, summary;
     if (quality === 'good') {
@@ -277,57 +400,193 @@ export function scoreRows(rows) {
       summary  = `[${quality.toUpperCase()}] Audit data unreliable`;
     }
 
-    const prompt = buildPromptContext(company, url, score, quality, findings);
-    return { company, url, quality, score, summary, prompt };
+    // Per-tier breakdown
+    const byTier = { CRITICAL: [], HIGH: [], MED: [], LOW: [], GOOD: [] };
+    const byCategory = {};
+    let deducted = 0;
+    for (const f of findings) {
+      (byTier[f.sev] = byTier[f.sev] || []).push(f.text);
+      (byCategory[f.cat] = byCategory[f.cat] || []).push(f);
+      deducted += SEV_POINTS[f.sev] || 0;
+    }
+
+    // Per-category sub-scores (100 minus deductions within that category)
+    const catScores = {};
+    for (const [cat, fs] of Object.entries(byCategory)) {
+      catScores[cat] = Math.max(0, 100 - fs.reduce((s, f) => s + (SEV_POINTS[f.sev] || 0), 0));
+    }
+
+    const scoreBreakdown = [
+      byTier.CRITICAL.length ? `CRITICAL ×${byTier.CRITICAL.length} (−${byTier.CRITICAL.length * 25})` : null,
+      byTier.HIGH.length     ? `HIGH ×${byTier.HIGH.length} (−${byTier.HIGH.length * 10})` : null,
+      byTier.MED.length      ? `MED ×${byTier.MED.length} (−${byTier.MED.length * 4})` : null,
+      byTier.LOW.length      ? `LOW ×${byTier.LOW.length} (−${byTier.LOW.length * 1})` : null,
+      byTier.GOOD.length     ? `GOOD ×${byTier.GOOD.length} (+0)` : null,
+    ].filter(Boolean).join(', ') || 'No issues found';
+
+    const prompt = buildPromptContext(company, url, score, quality, findings, keyMetrics);
+    return {
+      company, url, quality, score, summary, prompt,
+      keyMetrics, byTier, catScores, scoreBreakdown,
+      counts: {
+        critical: byTier.CRITICAL.length, high: byTier.HIGH.length,
+        med: byTier.MED.length, low: byTier.LOW.length, good: byTier.GOOD.length,
+        total: findings.length,
+      },
+    };
   });
 }
 
 // ─── Excel builder (requires exceljs) ────────────────────────────────────────
+const EXCEL_HEADERS = [
+  // Identity
+  'Company', 'URL', 'data_quality', 'score', 'score_breakdown',
+  // Tier counts
+  'critical_count', 'high_count', 'med_count', 'low_count', 'good_count',
+  // Tier findings (text)
+  'CRITICAL findings', 'HIGH findings', 'MED findings', 'LOW findings', 'GOOD findings',
+  // Category sub-scores
+  'perf_cat_score', 'seo_cat_score', 'security_cat_score', 'accessibility_cat_score', 'conversion_cat_score', 'tech_cat_score',
+  // Raw key metrics
+  'perf_mobile', 'perf_desktop', 'seo_score', 'accessibility_score',
+  'lcp_sec', 'cls_score', 'tbt_ms', 'fcp_sec',
+  'crux_overall', 'crux_lcp_ms', 'crux_lcp_rating', 'crux_inp_ms', 'crux_inp_rating',
+  'page_weight_mb', 'requests', 'unused_js_kb', 'unused_css_kb',
+  'response_ms', 'https_works', 'platform', 'title', 'copyright_year',
+  // Full output
+  'findings_summary', 'prompt_context',
+];
+
 export async function buildExcel(results) {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Audit Results');
 
-  const headers = ['Company', 'URL', 'data_quality', 'score', 'findings_summary', 'prompt_context'];
-  ws.addRow(headers);
+  ws.addRow(EXCEL_HEADERS);
   const hRow = ws.getRow(1);
   hRow.font = { bold: true, size: 11 };
   hRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
-  hRow.alignment = { horizontal: 'center' };
+  hRow.alignment = { horizontal: 'center', wrapText: true };
+  hRow.height = 30;
   hRow.commit();
 
-  for (const r of results) {
-    const row = ws.addRow([r.company, r.url, r.quality, r.score === -1 ? '' : r.score, r.summary, r.prompt]);
-    row.alignment = { vertical: 'top', wrapText: true };
-
-    // Color-code score cell (col 4)
-    const scoreCell = row.getCell(4);
-    if (r.score === -1) {
-      scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-      scoreCell.font = { color: { argb: 'FF808080' } };
-    } else if (r.score >= 85) {
-      scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6EFCE' } };
-      scoreCell.font = { color: { argb: 'FF006100' } };
-    } else if (r.score >= 65) {
-      scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
-      scoreCell.font = { color: { argb: 'FF9C5700' } };
+  const colorScore = (cell, score) => {
+    if (score === -1 || score === null) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+      cell.font = { color: { argb: 'FF808080' } };
+    } else if (score >= 85) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6EFCE' } };
+      cell.font = { bold: true, color: { argb: 'FF006100' } };
+    } else if (score >= 65) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
+      cell.font = { bold: true, color: { argb: 'FF9C5700' } };
     } else {
-      scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } };
-      scoreCell.font = { color: { argb: 'FF9C0006' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } };
+      cell.font = { bold: true, color: { argb: 'FF9C0006' } };
+    }
+  };
+
+  for (const r of results) {
+    const km = r.keyMetrics || {};
+    const bt = r.byTier || {};
+    const cs = r.catScores || {};
+    const ct = r.counts || {};
+
+    const rowData = [
+      // Identity
+      r.company, r.url, r.quality,
+      r.score === -1 ? '' : r.score,
+      r.scoreBreakdown || '',
+      // Tier counts
+      ct.critical || 0, ct.high || 0, ct.med || 0, ct.low || 0, ct.good || 0,
+      // Tier findings text
+      (bt.CRITICAL || []).join(' | '),
+      (bt.HIGH     || []).join(' | '),
+      (bt.MED      || []).join(' | '),
+      (bt.LOW      || []).join(' | '),
+      (bt.GOOD     || []).join(' | '),
+      // Category sub-scores
+      cs.performance   ?? '', cs.seo        ?? '', cs.security ?? '',
+      cs.accessibility ?? '', cs.conversion ?? '', cs.tech     ?? '',
+      // Raw metrics
+      km.perfMobile ?? '', km.perfDesktop ?? '', km.seoScore ?? '', km.accessScore ?? '',
+      km.lcpSec ?? '', km.clsScore ?? '', km.tbtMs ?? '', km.fcpSec ?? '',
+      km.cruxOverall ?? '', km.cruxLcpMs ?? '', km.cruxLcpRating ?? '',
+      km.cruxInpMs ?? '', km.cruxInpRating ?? '',
+      km.pageWeightMb ?? '', km.requests ?? '', km.unusedJsKb ?? '', km.unusedCssKb ?? '',
+      km.responseMs ?? '', km.httpsWorks !== null ? (km.httpsWorks ? 'Yes' : 'No') : '',
+      km.platform ?? '', km.title ?? '', km.copyrightYear ?? '',
+      // Full output
+      r.summary, r.prompt,
+    ];
+
+    const row = ws.addRow(rowData);
+    row.alignment = { vertical: 'top', wrapText: true };
+    colorScore(row.getCell(4), r.score);
+
+    // Color critical count cell if non-zero
+    const critCell = row.getCell(6);
+    if (ct.critical > 0) {
+      critCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFC7CE' } };
+      critCell.font = { bold: true, color: { argb: 'FF9C0006' } };
+    }
+    const highCell = row.getCell(7);
+    if (ct.high > 0) {
+      highCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
+      highCell.font = { bold: true, color: { argb: 'FF9C5700' } };
     }
     row.commit();
   }
 
   ws.columns = [
-    { width: 30 }, // Company
-    { width: 40 }, // URL
-    { width: 16 }, // data_quality
+    { width: 28 }, // Company
+    { width: 38 }, // URL
+    { width: 15 }, // data_quality
     { width: 8  }, // score
-    { width: 80 }, // findings_summary
-    { width: 100}, // prompt_context
+    { width: 35 }, // score_breakdown
+    { width: 9  }, // critical_count
+    { width: 9  }, // high_count
+    { width: 9  }, // med_count
+    { width: 9  }, // low_count
+    { width: 9  }, // good_count
+    { width: 60 }, // CRITICAL findings
+    { width: 60 }, // HIGH findings
+    { width: 60 }, // MED findings
+    { width: 50 }, // LOW findings
+    { width: 40 }, // GOOD findings
+    { width: 12 }, // perf_cat_score
+    { width: 12 }, // seo_cat_score
+    { width: 14 }, // security_cat_score
+    { width: 17 }, // accessibility_cat_score
+    { width: 16 }, // conversion_cat_score
+    { width: 12 }, // tech_cat_score
+    { width: 12 }, // perf_mobile
+    { width: 12 }, // perf_desktop
+    { width: 10 }, // seo_score
+    { width: 14 }, // accessibility_score
+    { width: 10 }, // lcp_sec
+    { width: 10 }, // cls_score
+    { width: 10 }, // tbt_ms
+    { width: 10 }, // fcp_sec
+    { width: 14 }, // crux_overall
+    { width: 13 }, // crux_lcp_ms
+    { width: 14 }, // crux_lcp_rating
+    { width: 13 }, // crux_inp_ms
+    { width: 14 }, // crux_inp_rating
+    { width: 14 }, // page_weight_mb
+    { width: 10 }, // requests
+    { width: 13 }, // unused_js_kb
+    { width: 13 }, // unused_css_kb
+    { width: 12 }, // response_ms
+    { width: 12 }, // https_works
+    { width: 14 }, // platform
+    { width: 50 }, // title
+    { width: 14 }, // copyright_year
+    { width: 90 }, // findings_summary
+    { width: 120}, // prompt_context
   ];
   ws.views = [{ state: 'frozen', ySplit: 1 }];
-  ws.autoFilter = { from: 'A1', to: `F${results.length + 1}` };
+  ws.autoFilter = { from: 'A1', to: `${String.fromCharCode(64 + EXCEL_HEADERS.length)}${results.length + 1}` };
 
   return wb.xlsx.writeBuffer();
 }
