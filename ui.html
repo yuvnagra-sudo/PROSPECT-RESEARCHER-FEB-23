@@ -967,7 +967,7 @@ function nav(pane){
 }
 
 // ── Provider Select ───────────────────────────────────────────────────────────
-const PREF_ORDER=['gemini3flash','gemini','claude','haiku','gpt5','gpt5mini','gpt5nano','openai','deepseek'];
+const PREF_ORDER=['gemini31lite_vtx','gemini3flash_vtx','gemini_vtx','geminilite_vtx','gemini3flash','gemini','claude','haiku','gpt5','gpt5mini','gpt5nano','openai','deepseek'];
 function renderProvSelect(){
   const sel=$i('prov-sel');
   const avail=PREF_ORDER.filter(id=>providers[id]?.hasKey&&!providers[id]?.hidden);
