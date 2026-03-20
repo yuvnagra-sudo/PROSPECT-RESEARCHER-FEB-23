@@ -94,6 +94,10 @@ const PROVDEFS={
   // Model ID: gemini-3-flash-preview | Context: 1M in / 64k out | Pricing: $0.50/$3.00 per 1M tokens
   // Supports: structured JSON output + Google Search grounding simultaneously (Gemini 3 feature)
   gemini3flash:{name:'Gemini 3 Flash',model:'gemini-3-flash-preview',inputCost:0.50,outputCost:3.00,format:'gemini-native',webSearch:true,webCostPerCall:0.014,envName:'GEMINI_API_KEY',isDefault:true},
+  gemini3flash_vtx:{name:'Gemini 3 Flash (Vertex)',model:'gemini-3-flash-preview',inputCost:0.50,outputCost:3.00,format:'vertex-express',webSearch:true,webCostPerCall:0.014,envName:'VERTEX_API_KEY'},
+  gemini_vtx:{name:'Gemini 2.5 Flash (Vertex)',model:'gemini-2.5-flash',inputCost:0.30,outputCost:2.50,format:'vertex-express',webSearch:true,webCostPerCall:0.035,envName:'VERTEX_API_KEY'},
+  geminilite_vtx:{name:'Gemini 2.5 Flash Lite (Vertex)',model:'gemini-2.5-flash-lite',inputCost:0.10,outputCost:0.40,format:'vertex-express',webSearch:true,webCostPerCall:0.014,envName:'VERTEX_API_KEY'},
+  gemini31lite_vtx:{name:'Gemini 3.1 Flash Lite (Vertex)',model:'gemini-3.1-flash-lite-preview',inputCost:0.25,outputCost:1.50,format:'vertex-express',webSearch:true,webCostPerCall:0.014,envName:'VERTEX_API_KEY'},
   // Gemini 2.5 Flash — fallback / cheaper option
   gemini:{name:'Gemini 2.5 Flash',model:'gemini-2.5-flash',inputCost:0.30,outputCost:2.50,format:'gemini-native',webSearch:true,webCostPerCall:0.035,envName:'GEMINI_API_KEY'},
   claude:{name:'Claude Sonnet 4',model:'claude-sonnet-4-20250514',apiUrl:'https://api.anthropic.com/v1/messages',inputCost:3,outputCost:15,format:'anthropic',webSearch:true,webCostPerCall:0.015,cacheReadCost:0.30,cacheWriteCost:3.75,envName:'ANTHROPIC_API_KEY'},
@@ -315,8 +319,12 @@ function rlOk(p){const r=gRL(p);r.okRun++;if(r.okRun>=5&&r.delay>r.min){r.delay=
 // Detect if a model is Gemini 3 series (supports structured output + web search simultaneously)
 function isGemini3(model){return model&&(model.startsWith('gemini-3')||model.startsWith('gemini-3.'));}
 
+
 async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/${prov.model}:generateContent?key=${apiKey}`;
+  const url=prov.format==='vertex-express'
+    ?`https://aiplatform.googleapis.com/v1/publishers/google/models/${prov.model}:generateContent?key=${apiKey}`
+    :`https://generativelanguage.googleapis.com/v1beta/models/${prov.model}:generateContent?key=${apiKey}`;
+  const headers={'content-type':'application/json'};
   const gemini3=isGemini3(prov.model);
 
   const body={
@@ -368,7 +376,7 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
 
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),90000);  // 90s for Gemini 3 (thinking adds latency)
   const sig=jobSignal?AbortSignal.any([ac.signal,jobSignal]):ac.signal;
-  let res;try{res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 90s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
+  let res;try{res=await fetch(url,{method:'POST',headers,body:JSON.stringify(body),signal:sig});}catch(e){clearTimeout(timer);if(e.name==='AbortError')throw{type:'api_error',message:jobSignal?.aborted?'Job cancelled':'Request timed out after 90s'};throw{type:'api_error',message:e.message};}clearTimeout(timer);
   if(res.status===429){const t=await res.text();let m;try{m=JSON.parse(t).error?.message||t}catch{m=t}
     if(m.includes('quota')||m.includes('limit: 0')||m.includes('RESOURCE_EXHAUSTED'))throw{type:'api_error',message:'Gemini quota exhausted'};
     const rm=m.match(/retry in ([\d.]+)s/i);throw{type:'rate_limit',wait:rm?Math.ceil(parseFloat(rm[1]))*1000:30000};}
@@ -449,7 +457,7 @@ async function callOpenAI(prompt,prov,sys,web,apiKey,jobSignal,sections){
   return{research,inputTokens:u.prompt_tokens||0,outputTokens:u.completion_tokens||0,cacheRead:0,cacheWrite:0};
 }
 function callLLM(p,prov,sys,web,apiKey,jobSignal,sections){
-  if(prov.format==='gemini-native')return callGemini(p,prov,sys,web,apiKey,jobSignal,sections);
+  if(prov.format==='gemini-native'||prov.format==='vertex-express')return callGemini(p,prov,sys,web,apiKey,jobSignal,sections);
   if(prov.format==='anthropic')return callAnthropic(p,prov,sys,web,apiKey,jobSignal);
   return callOpenAI(p,prov,sys,web,apiKey,jobSignal,sections);
 }
@@ -1168,6 +1176,7 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
   if(!toProcess.length){emit({type:'col-done',colKey,succeeded:0,failed:0});ctx._running=false;return;}
   const queue=[...toProcess];let ok=0,fail=0;
 
+  let tIn=0,tOut=0,webCalls=0;
   // ── Python column ──────────────────────────────────────────────────────────
   if(colSection.type==='python'){
     const code=colSection.code||'result=""';
@@ -1201,7 +1210,6 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
     ?'Follow the user\'s instructions exactly. Output only what is requested — nothing more, no extra commentary.'
     :wrapPromptForStructuredOutput(job.system_prompt,[colSection]);
   const concurrency=Math.min(CONCURRENCY[job.provider]||3,5);
-  let tIn=0,tOut=0,webCalls=0;
   async function colWorker(){
     while(queue.length>0&&!ctx.cancelled){
       const row=queue.shift();if(!row)break;
@@ -1265,7 +1273,7 @@ function readB(req){return new Promise((resolve,reject)=>{let b='';let size=0;le
   req.on('end',()=>{if(!tooLarge)resolve(b);});
   req.on('error',e=>{if(!tooLarge)reject(e);});});}
 function json(res,d,s=200){res.writeHead(s,{'content-type':'application/json','access-control-allow-origin':'*'});res.end(JSON.stringify(d));}
-const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY','PAGESPEED_API_KEY'];
+const VALID_KEYS=['GEMINI_API_KEY','ANTHROPIC_API_KEY','OPENAI_API_KEY','DEEPSEEK_API_KEY','PAGESPEED_API_KEY','VERTEX_API_KEY'];
 
 // ─── HTTP Server ───
 const server=createServer(async(req,res)=>{
