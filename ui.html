@@ -1901,6 +1901,16 @@ async function runResearch(limit){
   const pid=$i('prov-sel').value;
   if(!pid){toast('Select a provider (add API keys in Settings)','err');return;}
   const isTest=limit!=null&&limit>0;
+  // Confirm before large/expensive runs
+  if(!isTest){
+    const p=providers[pid];const useWeb=$i('ws-chk').checked;
+    const estCost=(p.inputCost*2000/1e6)+(p.outputCost*1500/1e6)+(useWeb?(p.webCostPerCall||0):0);
+    const totalEst=estCost*csvRows.length;
+    if(csvRows.length>50||totalEst>1){
+      const msg=`Run research on ${csvRows.length} rows?\n\nEstimated cost: ~${fmtCost(totalEst)}\n\nUse ⚡ Test (10) first to verify results before full run.`;
+      if(!confirm(msg))return;
+    }
+  }
   // Reset all result states (cells show as empty dash until results arrive)
   rowResults={};rowStatuses={};sheetJobId=null;colRunStatus={};colRunCount={};
   renderTable();

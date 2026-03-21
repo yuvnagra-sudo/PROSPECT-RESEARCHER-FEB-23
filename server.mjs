@@ -393,6 +393,16 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
     throw{type:'api_error',message:'Gemini returned empty response — possible grounding-only output. Will retry.'};
   }
 
+  // If web search was requested but Gemini didn't actually use it, the response is likely
+  // hallucinated from training data. Detect via absence of groundingMetadata and retry.
+  if(web){
+    const grounding=candidate?.groundingMetadata;
+    const didSearch=(grounding?.groundingChunks?.length||0)>0||(grounding?.webSearchQueries?.length||0)>0;
+    if(!didSearch){
+      throw{type:'api_error',message:'Gemini did not use web search — response may be hallucinated. Retrying.'};
+    }
+  }
+
   return{research,inputTokens:u.promptTokenCount||0,outputTokens:u.candidatesTokenCount||0,cacheRead:0,cacheWrite:0};
 }
 
