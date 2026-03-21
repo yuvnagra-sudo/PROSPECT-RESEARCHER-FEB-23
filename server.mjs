@@ -331,17 +331,10 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
     systemInstruction:{parts:[{text:sys}]},
     contents:[{parts:[{text:prompt}]}],
     generationConfig:{
-      maxOutputTokens:32000,  // Gemini 3 Flash supports up to 64k output; 32k is safe headroom
+      maxOutputTokens:8000,  // Research JSON output rarely exceeds 2-3K tokens; 8K is safe headroom
+      thinkingConfig:gemini3?{thinkingLevel:'none'}:{thinkingBudget:0},  // Disable thinking — adds 10-30% token cost with no quality benefit for research
     }
   };
-
-  // Gemini 3 Flash: use thinking_level=low for research tasks (faster, still high quality)
-  // Gemini 2.5: use thinkingBudget=0 to disable thinking (no thinking support in 2.5 Flash)
-  if(gemini3){
-    body.generationConfig.thinkingConfig={thinkingLevel:'low'};
-  } else {
-    body.generationConfig.thinkingConfig={thinkingBudget:0};
-  }
 
   // Structured JSON output:
   // Gemini 3: CAN combine responseMimeType + responseSchema WITH google_search tools (new in Gemini 3)
