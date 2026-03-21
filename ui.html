@@ -1274,6 +1274,7 @@ async function runCol(colKey,limit=0){
   colRunStatus[colKey]='running';
   colRunCount[colKey]={done:0,total:csvRows.length,errors:0};
   updateColBadge(colKey);
+  $i('btn-cancel').classList.remove('hide');
   // Show spinners in all empty cells for this column
   for(let i=0;i<Math.min(csvRows.length,150);i++){
     if(!rowStatuses[i]?.[colKey]||rowStatuses[i][colKey]==='pending'){updateCell(i,colKey,'running',null);}
@@ -2090,6 +2091,7 @@ function onSSEMsg(m){
     colRunCost[m.colKey]=(colRunCost[m.colKey]||0)+(m.cost||0);
     updateColBadge(m.colKey);
     reconcileColResults(m.colKey);
+    if(!Object.values(colRunStatus).some(s=>s==='running'))$i('btn-cancel').classList.add('hide');
     const lbl=enrichCols.find(c=>c.key===m.colKey)?.label||m.colKey;
     const costNote=m.cost>0?' · '+fmtCost(m.cost):'';
     toast(`"${lbl}" done — ${m.succeeded} succeeded${m.failed?' · '+m.failed+' failed':''}${costNote}`,'ok',4000);

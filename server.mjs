@@ -364,14 +364,9 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   }
 
   // Google Search grounding
+  // Vertex AI Express uses camelCase {googleSearch:{}}, AI Studio uses snake_case {google_search:{}}
   if(web){
-    if(gemini3){
-      // Gemini 3: use google_search tool (compatible with structured output)
-      body.tools=[{google_search:{}}];
-    } else {
-      // Gemini 2.5: use google_search_retrieval (older API)
-      body.tools=[{google_search:{}}];
-    }
+    body.tools=prov.format==='vertex-express'?[{googleSearch:{}}]:[{google_search:{}}];
   }
 
   const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),90000);  // 90s for Gemini 3 (thinking adds latency)
@@ -961,7 +956,7 @@ async function runBulkAudit(jid,{enableScreenshots=false}={}){
 const actv=new Map();
 
 // How many concurrent requests to allow per provider
-const CONCURRENCY={gemini:5,gemini3flash:5,claude:5,haiku:5,gpt5:20,gpt5mini:25,gpt5nano:30,openai:10,deepseek:10};
+const CONCURRENCY={gemini:5,gemini3flash:5,gemini3flash_vtx:5,gemini_vtx:5,geminilite_vtx:5,gemini31lite_vtx:5,claude:5,haiku:5,gpt5:20,gpt5mini:25,gpt5nano:30,openai:10,deepseek:10};
 
 async function runJob(jobId){
   const job=S.gJ.get(jobId);if(!job)return;const prov=PROVDEFS[job.provider];if(!prov)return;
@@ -1157,6 +1152,7 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
   // Attach to or create ctx for this sheet job
   let ctx=actv.get(jobId);
   if(!ctx){ctx={cancelled:false,listeners:new Set(),abort:new AbortController()};actv.set(jobId,ctx);}
+  else{ctx.cancelled=false;ctx.abort=new AbortController();}
   ctx._running=true;
   const emit=d=>{const msg=`data: ${JSON.stringify(d)}\n\n`;for(const l of ctx.listeners){try{l.write(msg);}catch{}}};
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
