@@ -37,6 +37,7 @@ try{db.exec(`ALTER TABLE jobs ADD COLUMN sections_json TEXT`);}catch{}
 try{db.exec(`ALTER TABLE rows ADD COLUMN quality INT DEFAULT 0`);}catch{}
 try{db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`);}catch{}
 try{db.exec(`ALTER TABLE rows ADD COLUMN original_row TEXT`);}catch{}
+try{db.exec(`ALTER TABLE jobs ADD COLUMN max_spend REAL DEFAULT NULL`);}catch{}
 
 // Fix 5: Recover orphaned jobs left in "running" state after server crash/restart
 // Bulk audit jobs resume automatically; research jobs become 'paused' (user resumes manually)
@@ -65,7 +66,7 @@ const S={
   getUserKey:db.prepare(`SELECT key_value FROM user_keys WHERE user_id=? AND key_name=?`),
   delUserKey:db.prepare(`DELETE FROM user_keys WHERE user_id=? AND key_name=?`),
   getUserKeys:db.prepare(`SELECT key_name FROM user_keys WHERE user_id=?`),
-  iJ:db.prepare(`INSERT INTO jobs(user_id,name,provider,template_id,system_prompt,use_web_search,col_map,total_rows,sections_json)VALUES(?,?,?,?,?,?,?,?,?)`),
+  iJ:db.prepare(`INSERT INTO jobs(user_id,name,provider,template_id,system_prompt,use_web_search,col_map,total_rows,sections_json,max_spend)VALUES(?,?,?,?,?,?,?,?,?,?)`),
   uJ:db.prepare(`UPDATE jobs SET succeeded=?,failed=?,status=?,total_in=?,total_out=?,total_cr=?,total_cw=?,cost=?,elapsed=?,updated_at=datetime('now')WHERE id=?`),
   gJ:db.prepare(`SELECT*FROM jobs WHERE id=?`),
   lJ:db.prepare(`SELECT id,name,provider,template_id,total_rows,succeeded,failed,status,cost,elapsed,created_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 50`),
@@ -399,10 +400,11 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   }
 
   // If web search was requested but Gemini didn't actually use it, the response is likely
-  // hallucinated from training data. Detect via absence of groundingMetadata and retry.
+  // hallucinated from training data. Use webSearchQueries as signal — groundingChunks is
+  // always empty when structured output (responseMimeType:'application/json') is active.
   if(web){
     const grounding=candidate?.groundingMetadata;
-    const didSearch=(grounding?.groundingChunks?.length||0)>0||(grounding?.webSearchQueries?.length||0)>0;
+    const didSearch=(grounding?.webSearchQueries?.length||0)>0;
     if(!didSearch){
       throw{type:'api_error',retryable:true,message:'Gemini did not use web search — response may be hallucinated. Retrying.'};
     }
@@ -1010,6 +1012,10 @@ async function runJob(jobId){
   const flushStats=()=>{
     const elapsed=((Date.now()-t0)/1000)+job.elapsed;
     const cost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+(tCW/1e6)*(prov.cacheWriteCost||0)+(tCR/1e6)*(prov.cacheReadCost||0)+(job.use_web_search?webCalls*(prov.webCostPerCall||0):0);
+    if(job.max_spend&&cost>=job.max_spend){
+      emit({type:'log',level:'warn',msg:`⛔ Spending cap $${job.max_spend.toFixed(2)} reached — stopping job.`});
+      ctx.cancelled=true;ctx.abort.abort();
+    }
     S.uJ.run(ok,fail,'running',tIn,tOut,tCR,tCW,cost,elapsed,jobId);
   };
 
@@ -1097,10 +1103,19 @@ async function runJob(jobId){
             emit({type:'rate_info',delay:w,hits:gRL(job.provider).hits});
             await sleep(w);
           }else if(err.type==='api_error'&&(err.retryable||err.message?.includes('empty response')||err.message?.includes('MAX_TOKENS'))){
-            retries++;
-            const w=Math.min(3000*retries,15000);
-            emit({type:'log',level:'warn',msg:`⚠️ Incomplete "${row.company}" — retry ${retries}/5 in ${w/1000}s`});
-            await sleep(w);
+            const isGrounding=err.retryable&&err.message?.includes('web search');
+            if(isGrounding&&retries>=2){
+              S.uR.run('error',null,'Gemini skipped web search after 2 retries',0,0,0,0,jobId,row.idx);
+              fail++;done=true;
+              emit({type:'result',idx:row.idx,company:row.company,status:'error',error:'Gemini skipped web search after 2 retries'});
+              emit({type:'progress',succeeded:ok,failed:fail,total:job.total_rows,current:row.company});
+              flushStats();
+            }else{
+              retries++;
+              const w=Math.min(3000*retries,15000);
+              emit({type:'log',level:'warn',msg:`⚠️ Incomplete "${row.company}" — retry ${retries}/5 in ${w/1000}s`});
+              await sleep(w);
+            }
           }else{
             S.uR.run('error',null,lastErr,0,0,0,0,jobId,row.idx);fail++;done=true;
             emit({type:'result',idx:row.idx,company:row.company,status:'error',error:lastErr});
@@ -1250,11 +1265,24 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
           S.uRMerge.run(JSON.stringify(merged),allComplete?'success':'partial',r.inputTokens,r.outputTokens,jobId,row.idx);
           tIn+=r.inputTokens||0;tOut+=r.outputTokens||0;if(job.use_web_search)webCalls++;
           ok++;done=true;rlOk(job.provider);
+          // Per-row spending cap check
+          if(job.max_spend){
+            const curColCost=(tIn/1e6)*prov.inputCost+(tOut/1e6)*prov.outputCost+webCalls*(prov.webCostPerCall||0);
+            const baseJob=S.gJ.get(jobId);
+            if(baseJob.cost+curColCost>=job.max_spend){
+              emit({type:'log',level:'warn',msg:`⛔ Spending cap $${job.max_spend.toFixed(2)} reached — stopping job.`});
+              ctx.cancelled=true;ctx.abort.abort();
+            }
+          }
           emit({type:'cell-result',rowIdx:row.idx,colKey,status:'success',value});
         }catch(err){
           lastErr=err.message||String(err);
           if(err.type==='rate_limit'){retries++;const w=rlHit(job.provider,err.wait);await sleep(w);}
-          else if(err.type==='api_error'&&err.retryable){retries++;await sleep(Math.min(3000*retries,15000));}
+          else if(err.type==='api_error'&&err.retryable){
+            const isGrounding=err.message?.includes('web search');
+            if(isGrounding&&retries>=2){fail++;done=true;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:'Gemini skipped web search after 2 retries'});}
+            else{retries++;await sleep(Math.min(3000*retries,15000));}
+          }
           else{fail++;done=true;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr});}
         }
       }
@@ -1445,14 +1473,14 @@ Return ONLY valid JSON (no markdown, no code fences):
   }catch(e){json(res,{error:e.message},400);}return;}
 
   if(req.method==='POST'&&p==='/api/research'){const b=await readB(req);try{
-    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,explicitSections}=JSON.parse(b);
+    const{csv,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,templateId,explicitSections,maxSpend}=JSON.parse(b);
     const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
     const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key above.`},400);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
     const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=1?JSON.stringify(explicitSections):null;
-    const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
+    const result=S.iJ.run(uid,`${rows.length} prospects via ${prov.name}`,pid,templateId||'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson,maxSpend||null);
     const jobId=Number(result.lastInsertRowid);
     // Chunked inserts: 500 rows per transaction to avoid blocking the event loop on large files
     const CHUNK=500;
@@ -1469,14 +1497,14 @@ Return ONLY valid JSON (no markdown, no code fences):
 
   // ─── Clay-style: create sheet without running ─────────────────────────────
   if(req.method==='POST'&&p==='/api/create-sheet'){const b=await readB(req);try{
-    const{csv,contextColHeaders,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,explicitSections,jobName}=JSON.parse(b);
+    const{csv,contextColHeaders,provider:pid,useWebSearch:uw,systemPrompt:sp,colMapOverride,explicitSections,jobName,maxSpend}=JSON.parse(b);
     const prov=PROVDEFS[pid];if(!prov)return json(res,{error:'Unknown provider'},400);
     const ak=userKey(uid,prov.envName);if(!ak)return json(res,{error:`No API key for ${prov.name}. Add your key in Settings.`},400);
     const{headers,rows}=parseCSV(csv);if(!rows.length)return json(res,{error:'No data'},400);
     const cm=colMapOverride||autoGuess(headers,rows);if(!cm.company)return json(res,{error:'No Company column'},400);
     const sysPrompt=sp||TEMPLATES['b2b-outreach'].prompt;const actualWeb=uw!==false&&prov.webSearch;
     const sectionsJson=Array.isArray(explicitSections)&&explicitSections.length>=1?JSON.stringify(explicitSections):null;
-    const result=S.iJ.run(uid,jobName||`Sheet: ${rows.length} rows via ${prov.name}`,pid,'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson);
+    const result=S.iJ.run(uid,jobName||`Sheet: ${rows.length} rows via ${prov.name}`,pid,'custom',sysPrompt,actualWeb?1:0,JSON.stringify(cm),rows.length,sectionsJson,maxSpend||null);
     const jobId=Number(result.lastInsertRowid);
     db.prepare("UPDATE jobs SET status='paused' WHERE id=?").run(jobId);
     // contextColHeaders: columns to use for the LLM prompt (user's selection)
