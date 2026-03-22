@@ -1286,6 +1286,17 @@ async function runCol(colKey,limit=0){
   }else if(sse.readyState!==EventSource.OPEN){
     await new Promise(resolve=>{sse.onopen=resolve;});
   }
+  // Confirm before large column runs (limit=0 means all rows)
+  if(limit===0){
+    const p=providers[pid];const useWeb=$i('ws-chk').checked;
+    const pending=csvRows.filter((_,i)=>rowResults[i]?.[colKey]==null).length;
+    const estCost=((p.inputCost*2000/1e6)+(p.outputCost*1500/1e6)+(useWeb?(p.webCostPerCall||0):0))*pending;
+    if(pending>50||estCost>1){
+      if(!confirm(`Run "${col.label}" for ${pending} rows?\n\nEstimated cost: ~${fmtCost(estCost)}`)){
+        colRunStatus[colKey]='idle';updateColBadge(colKey);$i('btn-cancel').classList.add('hide');return;
+      }
+    }
+  }
   // Fire run-col — results stream via SSE
   const result=await api('POST','/api/run-col',{jobId:sheetJobId,colKey,colDef:col,limit});
   if(!result||result.error){

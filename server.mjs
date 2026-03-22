@@ -327,8 +327,13 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
   const headers={'content-type':'application/json'};
   const gemini3=isGemini3(prov.model);
 
+  // When web search is on, prepend a hard directive so Gemini doesn't skip the tool
+  const sysText=web
+    ?'CRITICAL INSTRUCTION: You MUST use the google_search tool to look up current information for every company. Never use your training data as a primary source — only report facts you retrieved via web search. If you cannot find verified information after searching, write "No data found" rather than guessing.\n\n'+sys
+    :sys;
+
   const body={
-    systemInstruction:{parts:[{text:sys}]},
+    systemInstruction:{parts:[{text:sysText}]},
     contents:[{parts:[{text:prompt}]}],
     generationConfig:{
       maxOutputTokens:8000,  // Research JSON output rarely exceeds 2-3K tokens; 8K is safe headroom
@@ -399,7 +404,7 @@ async function callGemini(prompt,prov,sys,web,apiKey,jobSignal,sections){
     const grounding=candidate?.groundingMetadata;
     const didSearch=(grounding?.groundingChunks?.length||0)>0||(grounding?.webSearchQueries?.length||0)>0;
     if(!didSearch){
-      throw{type:'api_error',message:'Gemini did not use web search — response may be hallucinated. Retrying.'};
+      throw{type:'api_error',retryable:true,message:'Gemini did not use web search — response may be hallucinated. Retrying.'};
     }
   }
 
@@ -1091,7 +1096,7 @@ async function runJob(jobId){
             emit({type:'log',level:'warn',msg:`⏳ Rate limit "${row.company}" — retry ${Math.round(w/1000)}s (${retries}/5)`});
             emit({type:'rate_info',delay:w,hits:gRL(job.provider).hits});
             await sleep(w);
-          }else if(err.type==='api_error'&&(err.message?.includes('empty response')||err.message?.includes('MAX_TOKENS'))){
+          }else if(err.type==='api_error'&&(err.retryable||err.message?.includes('empty response')||err.message?.includes('MAX_TOKENS'))){
             retries++;
             const w=Math.min(3000*retries,15000);
             emit({type:'log',level:'warn',msg:`⚠️ Incomplete "${row.company}" — retry ${retries}/5 in ${w/1000}s`});
@@ -1249,6 +1254,7 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
         }catch(err){
           lastErr=err.message||String(err);
           if(err.type==='rate_limit'){retries++;const w=rlHit(job.provider,err.wait);await sleep(w);}
+          else if(err.type==='api_error'&&err.retryable){retries++;await sleep(Math.min(3000*retries,15000));}
           else{fail++;done=true;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr});}
         }
       }
