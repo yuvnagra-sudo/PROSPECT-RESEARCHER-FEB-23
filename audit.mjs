@@ -657,7 +657,7 @@ async function checkPageSpeed(url, apiKey) {
 
 // ─── Check: SSL + HTTP redirect ───────────────────────────────────────────────
 async function checkSSL(url) {
-  const result = { httpsWorks: false, httpRedirects: false, redirectTarget: null };
+  const result = { httpsWorks: false, httpRedirects: false, redirectTarget: null, redirectHops: null };
 
   const httpsUrl = url.replace(/^http:\/\//i, 'https://');
   try {
@@ -674,20 +674,32 @@ async function checkSSL(url) {
 
   const httpUrl = url.replace(/^https:\/\//i, 'http://');
   try {
-    // Use redirect:'follow' so multi-hop chains (e.g. http://www → http:// → https://)
-    // are fully traced — redirect:'manual' only sees the first hop and misses
-    // sites that strip www before upgrading to HTTPS.
-    const r = await fetch(httpUrl, {
-      signal: AbortSignal.timeout(TIMEOUT_HTTP),
-      redirect: 'follow',
-      method: 'HEAD',
-      headers: { 'user-agent': BROWSER_UA },
-    });
-    const finalUrl = r.url || '';
-    if (finalUrl.startsWith('https://')) {
-      result.httpRedirects = true;
-      result.redirectTarget = finalUrl.slice(0, 120);
+    // Manually follow the redirect chain to count hops AND detect final HTTPS destination.
+    // redirect:'follow' can't give hop count; redirect:'manual' only sees one hop at a time.
+    let currentUrl = httpUrl;
+    let hops = 0;
+    const MAX_HOPS = 10;
+    while (hops <= MAX_HOPS) {
+      const r = await fetch(currentUrl, {
+        signal: AbortSignal.timeout(TIMEOUT_HTTP),
+        redirect: 'manual',
+        method: 'HEAD',
+        headers: { 'user-agent': BROWSER_UA },
+      });
+      if ([301, 302, 307, 308].includes(r.status)) {
+        const loc = r.headers.get('location') || '';
+        if (!loc) break;
+        hops++;
+        currentUrl = new URL(loc, currentUrl).href;
+      } else {
+        break;
+      }
     }
+    if (currentUrl.startsWith('https://')) {
+      result.httpRedirects = true;
+      result.redirectTarget = currentUrl.slice(0, 120);
+    }
+    result.redirectHops = hops;
   } catch {}
 
   return result;
@@ -820,6 +832,9 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
     if (ssl?.httpsWorks && !ssl?.httpRedirects) add('medium', 'Security', 'HTTP may not redirect to HTTPS',
       'HTTP-to-HTTPS redirect not detected via HEAD request. Visitors who type the domain without https:// may land on an insecure version. Verify this manually — some CDNs handle this transparently.');
 
+    if (ssl?.httpRedirects && ssl?.redirectHops > 1) add('medium', 'Performance', `Redirect chain: ${ssl.redirectHops} hops to reach HTTPS`,
+      `The site uses ${ssl.redirectHops} redirect hops to reach HTTPS (e.g. http://www → http:// → https://). Each extra hop adds 50–300ms of latency before the browser sees any content — wasted time on every first visit. Combining all redirects into a single hop (http://www → https://) is a one-line server config fix with immediate performance gains.`);
+
     // HSTS: CDNs inject this for browsers but not API responses — LOW only
     if (!h.headers.hsts && ssl?.httpsWorks) add('low', 'Security', 'HSTS header not detected',
       'HTTP Strict Transport Security header not found in server response. Note: many CDNs (Cloudflare, Fastly) inject HSTS for browsers but not API requests — verify manually before flagging.');
@@ -904,7 +919,10 @@ function buildSummary(url, metrics, issues) {
   const techLines = [];
   if (metrics.responseMs != null) techLines.push(`Server response time: ${metrics.responseMs}ms`);
   if (metrics.httpsWorks != null) techLines.push(`HTTPS: ${metrics.httpsWorks ? 'Working' : 'NOT WORKING'}`);
-  if (metrics.httpRedirects != null) techLines.push(`HTTP→HTTPS redirect: ${metrics.httpRedirects ? 'Yes' : 'No'}`);
+  if (metrics.httpRedirects != null) {
+    const hopNote = metrics.redirectHops != null ? ` (${metrics.redirectHops} hop${metrics.redirectHops !== 1 ? 's' : ''})` : '';
+    techLines.push(`HTTP→HTTPS redirect: ${metrics.httpRedirects ? `Yes${hopNote}` : 'No'}`);
+  }
   if (metrics.title !== undefined) techLines.push(`Title tag: ${metrics.title ? `"${metrics.title.slice(0, 80)}" (${metrics.titleLength} chars)` : 'MISSING'}`);
   if (metrics.metaDescLength !== undefined) techLines.push(`Meta description: ${metrics.metaDesc ? `${metrics.metaDescLength} chars` : 'MISSING'}`);
   if (metrics.h1Count !== undefined) techLines.push(`H1 tags: ${metrics.h1Count}`);
@@ -1061,6 +1079,7 @@ export async function auditWebsite(inputUrl, apiKey) {
     finalUrl,
     httpsWorks: ssl?.httpsWorks,
     httpRedirects: ssl?.httpRedirects,
+    redirectHops: ssl?.redirectHops ?? null,
     title: html.title,
     titleLength: html.titleLength,
     metaDesc: html.metaDesc,
