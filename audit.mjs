@@ -674,16 +674,19 @@ async function checkSSL(url) {
 
   const httpUrl = url.replace(/^https:\/\//i, 'http://');
   try {
+    // Use redirect:'follow' so multi-hop chains (e.g. http://www → http:// → https://)
+    // are fully traced — redirect:'manual' only sees the first hop and misses
+    // sites that strip www before upgrading to HTTPS.
     const r = await fetch(httpUrl, {
       signal: AbortSignal.timeout(TIMEOUT_HTTP),
-      redirect: 'manual',
+      redirect: 'follow',
       method: 'HEAD',
       headers: { 'user-agent': BROWSER_UA },
     });
-    const loc = r.headers.get('location') || '';
-    if ([301, 302, 307, 308].includes(r.status) && loc.startsWith('https://')) {
+    const finalUrl = r.url || '';
+    if (finalUrl.startsWith('https://')) {
       result.httpRedirects = true;
-      result.redirectTarget = loc.slice(0, 120);
+      result.redirectTarget = finalUrl.slice(0, 120);
     }
   } catch {}
 
