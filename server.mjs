@@ -1987,7 +1987,7 @@ Rules:
     if(!url||typeof url!=='string'||!url.trim())return json(res,{error:'url required'},400);
     // Create job record immediately so result survives browser close
     const jobName='Audit: '+(url.trim().replace(/^https?:\/\//,'').split('/')[0]).slice(0,60);
-    const jr=S.iJ.run(uid,jobName,'pagespeed','website-audit',url.trim(),0,'{}',1,null);
+    const jr=S.iJ.run(uid,jobName,'pagespeed','website-audit',url.trim(),0,'{}',1,null,null);
     const jid=Number(jr.lastInsertRowid);
     S.iR.run(jid,0,url.trim(),'Website audit',null);
     S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
@@ -2022,7 +2022,7 @@ Rules:
     const{urls,jobName,enableScreenshots=false}=JSON.parse(b);
     if(!Array.isArray(urls)||!urls.length)return json(res,{error:'urls array required'},400);
     const name=jobName||(urls.length+' sites bulk audit');
-    const jr=S.iJ.run(uid,name,'pagespeed','website-audit','',0,'{}',urls.length,null);
+    const jr=S.iJ.run(uid,name,'pagespeed','website-audit','',0,'{}',urls.length,null,null);
     const jid=Number(jr.lastInsertRowid);
     S.uJ.run(0,0,'running',0,0,0,0,0,0,jid);
     for(let i=0;i<urls.length;i++){const u=urls[i];S.iR.run(jid,i,u.url||String(u),u.company||u.url||String(u),null);}

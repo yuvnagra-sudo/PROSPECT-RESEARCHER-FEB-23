@@ -1283,11 +1283,12 @@ async function runCol(colKey,limit=0){
   }
   // Show progress in column header
   colRunStatus[colKey]='running';
-  colRunCount[colKey]={done:0,total:csvRows.length,errors:0};
+  const spinRows=limit>0?limit:csvRows.length;
+  colRunCount[colKey]={done:0,total:spinRows,errors:0};
   updateColBadge(colKey);
   $i('btn-cancel').classList.remove('hide');
-  // Show spinners in all empty cells for this column
-  for(let i=0;i<Math.min(csvRows.length,150);i++){
+  // Show spinners only for rows that will actually be processed
+  for(let i=0;i<Math.min(spinRows,150);i++){
     if(!rowStatuses[i]?.[colKey]||rowStatuses[i][colKey]==='pending'){updateCell(i,colKey,'running',null);}
   }
   // Connect SSE if not already open for this sheet job — wait for open before firing POST
