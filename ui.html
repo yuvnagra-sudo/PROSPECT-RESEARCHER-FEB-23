@@ -1466,7 +1466,7 @@ function renderSidePanel(csvIdx,focusKey){
     const st=rowStatuses[csvIdx]?.[col.key]||'pending';
     let content='';
     if(st==='running'){content='<div class="sp-fv" style="color:#94a3b8"><span class="spinner-sm"></span> Running…</div>';}
-    else if(st==='error'||st==='failed'){content=`<div class="sp-fv" style="color:#ef4444">${x(String(val||'Error'))}</div>`;}
+    else if(st==='error'||st==='failed'){const errMsg=research['_err_'+col.key]||val||'Unknown error';content=`<div class="sp-fv" style="color:#ef4444">${x(String(errMsg))}</div>`;}
     else if(val!=null&&val!==''){
       const s=String(val);
       // Try to render as JSON object prettily
@@ -2117,7 +2117,12 @@ function onSSEMsg(m){
   }else if(m.type==='cell-result'){
     colRunCount[m.colKey]=colRunCount[m.colKey]||{done:0,total:0,errors:0};
     colRunCount[m.colKey].done++;
-    if(m.status==='error')colRunCount[m.colKey].errors++;
+    if(m.status==='error'){
+      colRunCount[m.colKey].errors++;
+      // Store error message so side panel can display it
+      if(!rowResults[m.rowIdx])rowResults[m.rowIdx]={};
+      rowResults[m.rowIdx]['_err_'+m.colKey]=m.error||'Unknown error';
+    }
     updateCell(m.rowIdx,m.colKey,m.status==='success'?'done':'error',m.value);
     updateColBadge(m.colKey);
   }else if(m.type==='col-done'){

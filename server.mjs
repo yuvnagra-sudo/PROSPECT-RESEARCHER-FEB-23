@@ -1283,7 +1283,7 @@ async function runColJob(jobId,colKey,limit=0,rowIdxFilter=null){
             if(isGrounding&&retries>=2){fail++;done=true;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:'Gemini skipped web search after 2 retries'});}
             else{retries++;await sleep(Math.min(3000*retries,15000));}
           }
-          else{fail++;done=true;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr});}
+          else{fail++;done=true;emit({type:'log',level:'error',msg:`✗ "${row.company}" failed: ${lastErr}`});emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr});}
         }
       }
       if(!done){fail++;emit({type:'cell-result',rowIdx:row.idx,colKey,status:'error',value:null,error:lastErr||'Max retries'});}
