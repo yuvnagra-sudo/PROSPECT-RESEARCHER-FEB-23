@@ -60,6 +60,30 @@ function parseJsonLD(html) {
     || /\bitemscope\b[^>]*\bitemtype\s*=/i.test(html)
     || /\bvocab\s*=\s*["']https?:\/\/schema\.org/i.test(html);
 }
+function parseStructuredDataType(html) {
+  // Extracts the first @type value from inline JSON-LD blocks
+  const m = html.match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!m) return null;
+  try {
+    const data = JSON.parse(m[1]);
+    const items = Array.isArray(data) ? data : [data];
+    for (const item of items) if (item?.['@type']) return item['@type'];
+  } catch {}
+  return null;
+}
+function parseViewportZoom(html) {
+  // Returns false if the viewport tag explicitly disables user zoom
+  const m = html.match(/<meta\s+(?:[^>]*?\s+)?name=["']viewport["'][^>]*content=["']([^"']*)/i)
+    || html.match(/<meta\s+(?:[^>]*?\s+)?content=["']([^"']*)[^>]*name=["']viewport["']/i);
+  if (!m) return true; // no viewport tag — separate issue
+  return !/user-scalable\s*=\s*no|maximum-scale\s*=\s*1(?!\d)/i.test(m[1]);
+}
+function parseLang(html) {
+  return /<html\b[^>]+\blang\s*=/i.test(html);
+}
+function parseHeadingLevels(html) {
+  return [...html.matchAll(/<(h[1-6])\b/gi)].map(m => parseInt(m[1][1]));
+}
 function parseImageAltCoverage(html) {
   const allImgs = [...html.matchAll(/<img\b[^>]*>/gi)];
   if (!allImgs.length) return { total: 0, withAlt: 0, coverage: 1 };
@@ -334,6 +358,7 @@ async function checkHTTP(url) {
       xFrame: hdrs['x-frame-options'] || null,
       referrerPolicy: hdrs['referrer-policy'] || null,
       server: hdrs['server'] || null,
+      xRobotsTag: hdrs['x-robots-tag'] || null,
     },
     html: {
       title,
@@ -348,6 +373,10 @@ async function checkHTTP(url) {
       altCoverage,
       hasCanonical: parseCanonical(html),
       isNoindex: parseRobotsNoindex(html),
+      viewportDisablesZoom: parseViewport(html) && !parseViewportZoom(html),
+      hasLang: parseLang(html),
+      structuredDataType: parseJsonLD(html) ? parseStructuredDataType(html) : null,
+      headingLevels: parseHeadingLevels(html),
       mixedContent,
       analytics,
       hasFavicon: parseFavicon(html),
@@ -758,11 +787,10 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
     // Cloudflare challenge — skip HTML-derived checks to avoid false positives
     const htmlBodyValid = html.docSizeKB >= 2;
 
-    // Performance — response time includes body download so only flag clear outliers
-    if (h.responseMs > 5000) add('high', 'Performance', 'Very slow server response time',
-      `Server took ${h.responseMs}ms to load. This includes page download time, but even so this is unusually slow. Visitors abandon pages that take more than 3 seconds, directly reducing conversions.`);
-    else if (h.responseMs > 3000) add('medium', 'Performance', 'Slow server response time',
-      `Server took ${h.responseMs}ms to respond. Faster servers (under 500ms TTFB) improve both user experience and Google rankings.`);
+    // Performance — responseMs is total body download time; only flag extreme outliers here.
+    // Accurate TTFB is checked below from PageSpeed lab data when available.
+    if (h.responseMs > 8000) add('high', 'Performance', 'Very slow server response time',
+      `Server took ${h.responseMs}ms to fully load. Even accounting for page size this is extreme — visitors abandon pages taking over 3 seconds, directly costing leads.`);
 
     if (htmlBodyValid && html.docSizeKB > 500) add('medium', 'Performance', `Large page size (${html.docSizeKB}KB HTML)`,
       `Page HTML alone is ${html.docSizeKB}KB. Large pages load slowly on mobile networks, losing prospects before the page finishes rendering.`);
@@ -796,10 +824,40 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
 
       if (!html.hasJsonLD) add('low', 'SEO', 'No structured data detected',
         'No JSON-LD, Microdata, or RDFa structured data found. Structured data makes the site eligible for rich results (star ratings, FAQs, breadcrumbs) in Google Search.');
+      else if (html.structuredDataType && ['WebSite','WebPage','Organization'].includes(html.structuredDataType)) add('low', 'SEO', `Structured data uses generic type (${html.structuredDataType})`,
+        `The site has structured data but uses a generic "${html.structuredDataType}" type. For a local business, "LocalBusiness" (or a subtype like "AccountingFirm", "LegalService", etc.) unlocks richer Google result features including address, hours, and star ratings.`);
+
+      // X-Robots-Tag header noindex check
+      if (h.headers.xRobotsTag && /noindex/i.test(h.headers.xRobotsTag)) add('critical', 'SEO', 'X-Robots-Tag header is set to noindex',
+        `The server is sending an X-Robots-Tag: ${h.headers.xRobotsTag} HTTP header, which prevents Google from indexing this page. This is separate from the HTML meta tag and is often an accidental server misconfiguration.`);
+
+      // Heading hierarchy
+      const hLevels = html.headingLevels || [];
+      if (hLevels.length > 1) {
+        for (let i = 1; i < hLevels.length; i++) {
+          if (hLevels[i] - hLevels[i - 1] > 1) {
+            add('low', 'SEO', `Heading hierarchy skips levels (H${hLevels[i-1]}→H${hLevels[i]})`,
+              `The page jumps from H${hLevels[i-1]} directly to H${hLevels[i]}, skipping a heading level. A logical H1→H2→H3 outline helps Google understand content structure and improves screen reader navigation.`);
+            break;
+          }
+        }
+      }
+
+      // Language attribute
+      if (!html.hasLang) add('low', 'Accessibility', 'Missing lang attribute on <html> element',
+        'The <html> tag has no lang attribute. Screen readers use this to determine the correct language profile for pronunciation. Also required for WCAG 2.1 compliance.');
+
+      // Copyright year — flag if older than previous calendar year
+      const currentYear = new Date().getFullYear();
+      const copyYear = parseInt(html.copyrightYear);
+      if (copyYear && copyYear < currentYear - 1) add('medium', 'Trust', `Outdated copyright year (${copyYear})`,
+        `The site footer shows a ${copyYear} copyright — it's ${currentYear}. An outdated copyright year is an immediate trust signal failure: prospects assume the site (and business) is dormant or poorly maintained.`);
 
       // Mobile / UX
       if (!html.viewport) add('high', 'UX', 'No viewport meta tag — not mobile-optimized',
         'Missing viewport meta tag means the site is not mobile-optimized. Google uses mobile-first indexing, so non-mobile-friendly sites rank significantly lower. 60%+ of web traffic is on mobile.');
+      else if (html.viewportDisablesZoom) add('medium', 'Accessibility', 'Viewport disables user zoom',
+        'The viewport meta tag includes user-scalable=no or maximum-scale=1, preventing users from zooming in. This is a WCAG 2.1 accessibility violation and particularly harmful for visually impaired mobile users.');
 
       // Social
       const missingOG = ['og:title', 'og:description', 'og:image'].filter(p => !html.ogTags[p]);
@@ -808,9 +866,9 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
       else if (missingOG.includes('og:image')) add('low', 'Social', 'Missing og:image for social sharing',
         'No og:image tag means shared links have no thumbnail, reducing engagement when the site is shared on social media.');
 
-      // Accessibility — only flag if many images are missing alt (not just decorative ones)
-      if (html.altCoverage.total > 5 && html.altCoverage.coverage < 0.5) add('medium', 'Accessibility', `Low image alt text coverage (${Math.round(html.altCoverage.coverage * 100)}%)`,
-        `${Math.round((1 - html.altCoverage.coverage) * html.altCoverage.total)} of ${html.altCoverage.total} images have no alt attribute at all. This harms accessibility for visually impaired users and prevents Google Images from indexing content.`);
+      // Accessibility — WCAG requires 100% alt coverage; flag at < 90% (allows a few decorative exceptions)
+      if (html.altCoverage.total > 3 && html.altCoverage.coverage < 0.9) add('medium', 'Accessibility', `Low image alt text coverage (${Math.round(html.altCoverage.coverage * 100)}%)`,
+        `${Math.round((1 - html.altCoverage.coverage) * html.altCoverage.total)} of ${html.altCoverage.total} images have no alt attribute. WCAG requires alt text on all non-decorative images — missing it harms screen reader users and prevents Google Images indexing.`);
 
       // Analytics — note this only detects HTML-visible scripts
       if (!html.analytics.hasGA && !html.analytics.hasGTM && !html.analytics.hasOther) add('low', 'Analytics', 'No analytics tracking detected in HTML',
@@ -838,6 +896,12 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
     // HSTS: CDNs inject this for browsers but not API responses — LOW only
     if (!h.headers.hsts && ssl?.httpsWorks) add('low', 'Security', 'HSTS header not detected',
       'HTTP Strict Transport Security header not found in server response. Note: many CDNs (Cloudflare, Fastly) inject HSTS for browsers but not API requests — verify manually before flagging.');
+    else if (h.headers.hsts) {
+      const maxAgeMatch = h.headers.hsts.match(/max-age\s*=\s*(\d+)/i);
+      const maxAge = maxAgeMatch ? parseInt(maxAgeMatch[1]) : 0;
+      if (maxAge < 31536000) add('low', 'Security', `HSTS max-age too short (${maxAge}s)`,
+        `HSTS header present but max-age is ${maxAge} seconds — less than the recommended minimum of 31,536,000 (1 year). A short max-age means browsers re-check HTTP access frequently, weakening the protection.`);
+    }
 
     if (!h.headers.xContentType) add('low', 'Security', 'Missing X-Content-Type-Options header',
       'Missing security header allows MIME-type sniffing attacks. May already be set by CDN for browser requests.');
@@ -861,16 +925,51 @@ function generateIssues(httpData, pageSpeed, ssl, robots) {
   // PageSpeed issues
   if (pageSpeed?.ok) {
     const ps = pageSpeed.metrics;
+
+    // Performance score — Google's "Good" threshold is 90
     if (ps.performance !== null && ps.performance !== undefined) {
       if (ps.performance < 50) add('high', 'Performance', `Poor mobile PageSpeed score (${ps.performance}/100)`,
-        `Mobile PageSpeed score of ${ps.performance}/100 means the site loads very slowly on phones. Google uses Core Web Vitals as a ranking factor — low scores directly suppress search rankings and increase bounce rates.`);
-      else if (ps.performance < 70) add('medium', 'Performance', `Below-average mobile PageSpeed score (${ps.performance}/100)`,
-        `Mobile PageSpeed score of ${ps.performance}/100 is below Google's "Good" threshold of 90. Competitors with faster mobile sites will outrank and convert better.`);
+        `Mobile PageSpeed score of ${ps.performance}/100 means the site loads very slowly on phones. Google uses Core Web Vitals as a direct ranking factor — scores this low cause measurable ranking suppression and dramatically increase bounce rates.`);
+      else if (ps.performance < 90) add('medium', 'Performance', `Below-average mobile PageSpeed score (${ps.performance}/100)`,
+        `Mobile PageSpeed score of ${ps.performance}/100 is below Google's "Good" threshold of 90. Every point below 90 correlates with higher bounce rates and lower ad Quality Scores — directly costing leads and ad spend.`);
     }
+
+    // TTFB — accurate server-only measurement from Lighthouse lab data
+    if (ps.ttfbMs != null && ps.ttfbMs > 1800) add('high', 'Performance', `Very slow server TTFB (${ps.ttfbMs}ms)`,
+      `Time to First Byte of ${ps.ttfbMs}ms means the server takes nearly ${(ps.ttfbMs/1000).toFixed(1)}s before sending any content. Google's threshold for "Good" TTFB is 800ms. This is often caused by slow hosting, no CDN, or unoptimized server-side code.`);
+    else if (ps.ttfbMs != null && ps.ttfbMs > 800) add('medium', 'Performance', `Slow server TTFB (${ps.ttfbMs}ms)`,
+      `Time to First Byte of ${ps.ttfbMs}ms exceeds Google's 800ms "Good" threshold. Slow TTFB delays every other performance metric — it's the ceiling that limits how fast any other optimization can make the page.`);
+
+    // INP — live Google ranking signal since March 2024
+    if (ps.cruxINPMs != null && ps.cruxINPMs > 500) add('high', 'Performance', `Poor Interaction to Next Paint — INP ${ps.cruxINPMs}ms`,
+      `INP of ${ps.cruxINPMs}ms (real user data) exceeds Google's "Poor" threshold of 500ms. INP replaced FID as a Core Web Vital in March 2024 and is a confirmed ranking signal. Slow INP means the page feels unresponsive to clicks and taps — directly hurting conversions.`);
+    else if (ps.cruxINPMs != null && ps.cruxINPMs > 200) add('medium', 'Performance', `Needs improvement: INP ${ps.cruxINPMs}ms`,
+      `INP of ${ps.cruxINPMs}ms falls in Google's "Needs Improvement" range (200–500ms). As a Core Web Vital ranking factor, improving INP below 200ms can directly improve search rankings.`);
+
+    // Unused JavaScript
+    if (ps.unusedJsKB != null && ps.unusedJsKB > 250) add('medium', 'Performance', `${ps.unusedJsKB}KB unused JavaScript`,
+      `Lighthouse found ${ps.unusedJsKB}KB of JavaScript that loads but is never executed on this page. Unused JS delays the main thread, worsens TTI, and wastes mobile data. Removing or code-splitting unused scripts is one of the highest-impact performance fixes.`);
+
+    // Third-party blocking time
+    if (ps.thirdPartyBlockingMs != null && ps.thirdPartyBlockingMs > 500) add('medium', 'Performance', `Third-party scripts blocking ${ps.thirdPartyBlockingMs}ms`,
+      `Third-party scripts (chat widgets, analytics, ad trackers) are blocking the main thread for ${ps.thirdPartyBlockingMs}ms. Each 100ms of blocking time increases bounce rate by ~1%. Loading these asynchronously or deferring them can dramatically improve TBT.`);
+
+    // Accessibility score — Google's "Good" threshold is 90+
+    if (ps.accessibility !== null && ps.accessibility !== undefined) {
+      if (ps.accessibility < 90) add('medium', 'Accessibility', `Low accessibility score (${ps.accessibility}/100)`,
+        `Accessibility score of ${ps.accessibility}/100 indicates WCAG failures that make the site difficult or impossible to use for people with disabilities. ADA compliance is a legal requirement for many US businesses — lawsuits targeting small businesses for accessibility failures have increased significantly.`);
+    }
+
+    // Color contrast
+    if (ps.colorContrast != null && ps.colorContrast < 100) add('medium', 'Accessibility', `Color contrast failures detected`,
+      `Lighthouse found text that fails WCAG color contrast requirements (4.5:1 ratio for normal text). Poor contrast makes content unreadable for users with low vision or in bright sunlight — affects roughly 8% of men and 0.5% of women with color vision deficiency.`);
+
+    // Tap targets
+    if (ps.tapTargets != null && ps.tapTargets < 100) add('medium', 'Accessibility', `Tap targets too small for mobile`,
+      `Lighthouse found touch targets (buttons, links) that are smaller than the recommended 48×48px minimum. Small tap targets cause mis-taps on mobile, frustrating users and increasing bounce rates on phones.`);
+
     if (ps.seo !== null && ps.seo !== undefined && ps.seo < 80) add('medium', 'SEO', `Low technical SEO audit score (${ps.seo}/100)`,
       `Technical SEO score of ${ps.seo}/100 indicates crawlability or on-page issues that are reducing search visibility.`);
-    if (ps.accessibility !== null && ps.accessibility !== undefined && ps.accessibility < 70) add('medium', 'Accessibility', `Low accessibility score (${ps.accessibility}/100)`,
-      `Accessibility score of ${ps.accessibility}/100 means the site is difficult to use for people with disabilities, creating legal risk (ADA/WCAG compliance) for US-based businesses.`);
   }
 
   return issues;
